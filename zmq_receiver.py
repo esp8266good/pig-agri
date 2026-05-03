@@ -25,6 +25,8 @@ class ZMQReceiver:
         self._running = False
         if self._thread:
             self._thread.join(timeout=3)
+            if self._thread.is_alive():
+                logger.warning("ZMQ receiver thread did not stop within timeout")
         logger.info("ZMQ receiver stopped")
 
     def _run(self) -> None:
@@ -48,8 +50,12 @@ class ZMQReceiver:
                     f"[{topic}] frame={frame_id} ts={ts:.3f} "
                     f"rgb={len(parts[2])}B thermal={len(parts[3])}B"
                 )
+            except zmq.ZMQError as e:
+                logger.error(f"ZMQ fatal error, stopping receiver: {e}")
+                self._running = False
+                break
             except Exception as e:
-                logger.error(f"ZMQ error: {e}")
+                logger.warning(f"ZMQ frame parse error: {e}")
 
         sock.close()
         ctx.term()
