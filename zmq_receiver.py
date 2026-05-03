@@ -5,6 +5,7 @@ from typing import Optional
 import zmq
 from loguru import logger
 
+import hls_manager as hls_mod
 from config import settings
 
 
@@ -29,6 +30,22 @@ class ZMQReceiver:
                 logger.warning("ZMQ receiver thread did not stop within timeout")
         logger.info("ZMQ receiver stopped")
 
+    def _process_frame(self, parts: list) -> None:
+        if len(parts) < 4:
+            return
+        topic = parts[0].decode()
+        ts, frame_id = struct.unpack("dQ", parts[1])
+        rgb_bytes: bytes = parts[2]
+        thermal_bytes: bytes = parts[3]
+        logger.info(
+            f"[{topic}] frame={frame_id} ts={ts:.3f} "
+            f"rgb={len(rgb_bytes)}B thermal={len(thermal_bytes)}B"
+        )
+        if rgb_bytes:
+            hls_mod.hls_manager.feed(topic, "rgb", rgb_bytes)
+        if thermal_bytes:
+            hls_mod.hls_manager.feed(topic, "thermal", thermal_bytes)
+
     def _run(self) -> None:
         ctx = zmq.Context()
         sock = ctx.socket(zmq.SUB)
@@ -42,14 +59,7 @@ class ZMQReceiver:
                 continue
             try:
                 parts = sock.recv_multipart()
-                if len(parts) < 4:
-                    continue
-                topic = parts[0].decode()
-                ts, frame_id = struct.unpack("dQ", parts[1])
-                logger.info(
-                    f"[{topic}] frame={frame_id} ts={ts:.3f} "
-                    f"rgb={len(parts[2])}B thermal={len(parts[3])}B"
-                )
+                self._process_frame(parts)
             except zmq.ZMQError as e:
                 logger.error(f"ZMQ fatal error, stopping receiver: {e}")
                 self._running = False
