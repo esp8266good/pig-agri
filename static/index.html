@@ -117,7 +117,13 @@
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const { url } = await res.json();
         if (Hls.isSupported()) {
-          hls = new Hls({ lowLatencyMode: false });
+          hls = new Hls({
+            lowLatencyMode: false,
+            liveSyncDurationCount: 2,
+            liveMaxLatencyDurationCount: 5,
+            maxBufferLength: 30,
+            backBufferLength: 0,
+          });
           hls.loadSource(url);
           hls.attachMedia(video);
           hls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -125,7 +131,15 @@
             setStatus('● 連線中', 'live');
           });
           hls.on(Hls.Events.ERROR, (_, data) => {
-            if (data.fatal) setStatus(`串流錯誤：${data.details}`, 'error');
+            if (data.fatal) {
+              if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+                hls.startLoad();
+              } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+                hls.recoverMediaError();
+              } else {
+                setStatus(`串流錯誤：${data.details}`, 'error');
+              }
+            }
           });
         } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
           video.src = url;

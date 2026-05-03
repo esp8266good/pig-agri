@@ -14,9 +14,9 @@ StreamKey = Tuple[str, str]
 
 def _make_ffmpeg_cmd(out_dir: Path) -> list[str]:
     return [
-        "ffmpeg", "-y", "-f", "mjpeg", "-i", "pipe:0",
+        "ffmpeg", "-y", "-f", "mjpeg", "-r", "10", "-i", "pipe:0",
         "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
-        "-hls_time", "4", "-hls_list_size", "3",
+        "-hls_time", "4", "-hls_list_size", "5",
         "-hls_flags", "delete_segments+append_list",
         "-hls_segment_filename", str(out_dir / "seg_%03d.ts"),
         str(out_dir / "index.m3u8"),
