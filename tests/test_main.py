@@ -59,3 +59,12 @@ def test_notes_get_returns_stub(client):
     resp = client.get("/notes")
     assert resp.status_code == 200
     assert resp.json() == {"status": "not implemented"}
+
+
+def test_cameras_returns_list(client):
+    resp = client.get("/cameras")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "cameras" in data
+    assert isinstance(data["cameras"], list)
+    assert len(data["cameras"]) > 0
