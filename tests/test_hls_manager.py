@@ -96,3 +96,44 @@ def test_feed_is_noop_when_stream_not_started(manager):
     m, fake_proc = manager
     m.feed("cam_99", "rgb", b"\xff\xd8\xff")
     fake_proc.stdin.write.assert_not_called()
+
+
+def test_evict_stale_removes_expired_stream(tmp_path, monkeypatch):
+    monkeypatch.setattr("hls_manager.settings.hls_base_dir", str(tmp_path))
+    fake_proc = MagicMock()
+    fake_proc.stdin = MagicMock()
+    with patch("hls_manager._start_ffmpeg", return_value=fake_proc):
+        from hls_manager import HLSManager
+        m = HLSManager()
+        m.ensure_started("cam_01", "rgb")
+    m._streams[("cam_01", "rgb")].last_feed_time = time.time() - 60
+    m._evict_stale()
+    assert ("cam_01", "rgb") not in m._streams
+    fake_proc.terminate.assert_called()
+
+
+def test_evict_stale_keeps_fresh_stream(tmp_path, monkeypatch):
+    monkeypatch.setattr("hls_manager.settings.hls_base_dir", str(tmp_path))
+    fake_proc = MagicMock()
+    fake_proc.stdin = MagicMock()
+    with patch("hls_manager._start_ffmpeg", return_value=fake_proc):
+        from hls_manager import HLSManager
+        m = HLSManager()
+        m.ensure_started("cam_01", "rgb")
+    m._evict_stale()
+    assert ("cam_01", "rgb") in m._streams
+
+
+def test_stop_all_terminates_all_streams(tmp_path, monkeypatch):
+    monkeypatch.setattr("hls_manager.settings.hls_base_dir", str(tmp_path))
+    proc1, proc2 = MagicMock(), MagicMock()
+    proc1.stdin, proc2.stdin = MagicMock(), MagicMock()
+    with patch("hls_manager._start_ffmpeg", side_effect=[proc1, proc2]):
+        from hls_manager import HLSManager
+        m = HLSManager()
+        m.ensure_started("cam_01", "rgb")
+        m.ensure_started("cam_02", "rgb")
+        m.stop_all()
+    proc1.terminate.assert_called()
+    proc2.terminate.assert_called()
+    assert len(m._streams) == 0
