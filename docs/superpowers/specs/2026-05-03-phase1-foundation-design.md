@@ -69,7 +69,7 @@ services:
       - pg_data:/var/lib/postgresql/data
       - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql
     ports:
-      - "5432:5432"
+      - "15432:5432"
     restart: unless-stopped
 
 volumes:
@@ -196,7 +196,7 @@ ZMQ SUB socket
 `.env` 新增 `RPI_IP` 設定項（規格未列但 Phase 1 必要）：
 
 ```env
-DATABASE_URL=postgresql://pig:pig_password@localhost:5432/pig_monitoring
+DATABASE_URL=postgresql://pig:pig_password@localhost:15432/pig_monitoring
 ZMQ_PORT=5555
 RPI_IP=100.73.233.110
 CAMERA_TOPICS=cam_01,cam_02,cam_03,cam_04,cam_05,cam_06

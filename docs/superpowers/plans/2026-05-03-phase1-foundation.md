@@ -136,7 +136,7 @@ services:
       - pg_data:/var/lib/postgresql/data
       - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql
     ports:
-      - "5432:5432"
+      - "15432:5432"
     restart: unless-stopped
 
 volumes:
@@ -269,7 +269,7 @@ from config import Settings
 
 def test_default_zmq_port():
     s = Settings(
-        database_url="postgresql://pig:pig_password@localhost:5432/pig_monitoring",
+        database_url="postgresql://pig:pig_password@localhost:15432/pig_monitoring",
         rpi_ip="127.0.0.1",
     )
     assert s.zmq_port == 5555
@@ -277,7 +277,7 @@ def test_default_zmq_port():
 
 def test_default_mot_worker_threads():
     s = Settings(
-        database_url="postgresql://pig:pig_password@localhost:5432/pig_monitoring",
+        database_url="postgresql://pig:pig_password@localhost:15432/pig_monitoring",
         rpi_ip="127.0.0.1",
     )
     assert s.mot_worker_threads == 20
@@ -285,7 +285,7 @@ def test_default_mot_worker_threads():
 
 def test_default_anomaly_threshold():
     s = Settings(
-        database_url="postgresql://pig:pig_password@localhost:5432/pig_monitoring",
+        database_url="postgresql://pig:pig_password@localhost:15432/pig_monitoring",
         rpi_ip="127.0.0.1",
     )
     assert s.anomaly_std_threshold == 3.0
@@ -293,7 +293,7 @@ def test_default_anomaly_threshold():
 
 def test_camera_topics_default_six():
     s = Settings(
-        database_url="postgresql://pig:pig_password@localhost:5432/pig_monitoring",
+        database_url="postgresql://pig:pig_password@localhost:15432/pig_monitoring",
         rpi_ip="127.0.0.1",
         camera_topics="cam_01,cam_02,cam_03,cam_04,cam_05,cam_06",
     )
@@ -302,7 +302,7 @@ def test_camera_topics_default_six():
 
 def test_camera_topics_comma_parsing():
     s = Settings(
-        database_url="postgresql://pig:pig_password@localhost:5432/pig_monitoring",
+        database_url="postgresql://pig:pig_password@localhost:15432/pig_monitoring",
         rpi_ip="127.0.0.1",
         camera_topics="cam_01,cam_02",
     )
@@ -311,7 +311,7 @@ def test_camera_topics_comma_parsing():
 
 def test_camera_topics_strips_whitespace():
     s = Settings(
-        database_url="postgresql://pig:pig_password@localhost:5432/pig_monitoring",
+        database_url="postgresql://pig:pig_password@localhost:15432/pig_monitoring",
         rpi_ip="127.0.0.1",
         camera_topics="cam_01, cam_02 , cam_03",
     )
@@ -340,7 +340,7 @@ class Settings(BaseSettings):
         env_file=".env", env_file_encoding="utf-8", extra="ignore"
     )
 
-    database_url: str = "postgresql://pig:pig_password@localhost:5432/pig_monitoring"
+    database_url: str = "postgresql://pig:pig_password@localhost:15432/pig_monitoring"
     zmq_port: int = 5555
     rpi_ip: str = "127.0.0.1"
     camera_topics: List[str] = [
@@ -377,7 +377,7 @@ settings = Settings()
 
 ```env
 # 資料庫
-DATABASE_URL=postgresql://pig:pig_password@localhost:5432/pig_monitoring
+DATABASE_URL=postgresql://pig:pig_password@localhost:15432/pig_monitoring
 
 # ZMQ
 ZMQ_PORT=5555

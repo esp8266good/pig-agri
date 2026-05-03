@@ -16,6 +16,7 @@ outputs/tensorboard/
 notebooks/outputs/
 _docs/
 tools/
+ref/
 HybridSORT/
 
 # Git worktrees
