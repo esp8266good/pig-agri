@@ -15,10 +15,9 @@ router = APIRouter(prefix="/stream", tags=["stream"])
 async def serve_hls(
     camera_id: str, stream_type: str, date_hour: str, filename: str
 ):
-    file_path = (
-        Path(settings.hls_base_dir) / camera_id / stream_type / date_hour / filename
-    )
-    if not file_path.exists():
+    base = Path(settings.hls_base_dir).resolve()
+    file_path = (base / camera_id / stream_type / date_hour / filename).resolve()
+    if not file_path.is_relative_to(base) or not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
     return FileResponse(file_path)
 
