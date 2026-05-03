@@ -14,7 +14,7 @@ StreamKey = Tuple[str, str]
 
 def _make_ffmpeg_cmd(out_dir: Path) -> list[str]:
     return [
-        "ffmpeg", "-y", "-f", "mjpeg", "-r", "10", "-i", "pipe:0",
+        "ffmpeg", "-y", "-f", "mjpeg", "-use_wallclock_as_timestamps", "1", "-i", "pipe:0",
         "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
         "-hls_time", "4", "-hls_list_size", "5",
         "-hls_flags", "delete_segments+append_list",
