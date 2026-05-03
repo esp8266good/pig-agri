@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     camera_topics: List[str] = [
         "cam_01", "cam_02", "cam_03", "cam_04", "cam_05", "cam_06"
     ]
-    hls_base_dir: str = "/data/pig_monitoring/hls"
+    hls_base_dir: str = "data/pig_monitoring/hls"
     hls_retention_days: int = 90
     jpeg_quality: int = 70
     model_weights: str = "./ref/HybridSORT/pretrained/best_ckpt.pth.tar"
