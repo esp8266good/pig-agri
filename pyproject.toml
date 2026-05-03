@@ -10,6 +10,7 @@ dependencies = [
     "pydantic-settings>=2.0",
     "loguru>=0.7",
     "opencv-python-headless>=4.9",
+    "aiofiles>=23",
 ]
 
 [project.optional-dependencies]

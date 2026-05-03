@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>豬隻監測 Live</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #111;
+      color: #e0e0e0;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 24px 16px;
+      min-height: 100vh;
+    }
+    h1 { font-size: 1.3rem; margin-bottom: 20px; letter-spacing: 0.05em; }
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    label { font-size: 0.9rem; color: #aaa; }
+    select {
+      background: #222;
+      color: #e0e0e0;
+      border: 1px solid #444;
+      border-radius: 4px;
+      padding: 6px 10px;
+      font-size: 0.9rem;
+      cursor: pointer;
+    }
+    .type-btn {
+      background: #222;
+      color: #aaa;
+      border: 1px solid #444;
+      border-radius: 4px;
+      padding: 6px 16px;
+      font-size: 0.9rem;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .type-btn.active {
+      background: #2a6;
+      color: #fff;
+      border-color: #2a6;
+    }
+    #video-wrap {
+      width: 100%;
+      max-width: 800px;
+      background: #000;
+      border-radius: 6px;
+      overflow: hidden;
+      aspect-ratio: 4/3;
+    }
+    video {
+      width: 100%;
+      height: 100%;
+      display: block;
+      background: #000;
+    }
+    #status {
+      margin-top: 12px;
+      font-size: 0.85rem;
+      color: #888;
+    }
+    #status.live { color: #2a6; }
+    #status.error { color: #c44; }
+  </style>
+</head>
+<body>
+  <h1>豬隻監測 Live</h1>
+  <div class="controls">
+    <label for="cam-select">Camera:</label>
+    <select id="cam-select"></select>
+    <button class="type-btn active" id="btn-rgb" onclick="setType('rgb')">RGB</button>
+    <button class="type-btn" id="btn-thermal" onclick="setType('thermal')">Thermal</button>
+  </div>
+  <div id="video-wrap">
+    <video id="video" autoplay muted playsinline controls></video>
+  </div>
+  <div id="status">初始化中…</div>
+
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <script>
+    let hls = null;
+    let currentCamera = null;
+    let currentType = 'rgb';
+
+    const video = document.getElementById('video');
+    const camSelect = document.getElementById('cam-select');
+    const statusEl = document.getElementById('status');
+
+    function setStatus(msg, cls = '') {
+      statusEl.textContent = msg;
+      statusEl.className = cls;
+    }
+
+    function setType(type) {
+      currentType = type;
+      document.getElementById('btn-rgb').classList.toggle('active', type === 'rgb');
+      document.getElementById('btn-thermal').classList.toggle('active', type === 'thermal');
+      loadStream();
+    }
+
+    async function loadStream() {
+      if (!currentCamera) return;
+      if (hls) { hls.destroy(); hls = null; }
+      setStatus('正在連線…');
+      try {
+        const res = await fetch(`/stream/${currentCamera}/live?type=${currentType}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const { url } = await res.json();
+        if (Hls.isSupported()) {
+          hls = new Hls({ lowLatencyMode: false });
+          hls.loadSource(url);
+          hls.attachMedia(video);
+          hls.on(Hls.Events.MANIFEST_PARSED, () => {
+            video.play();
+            setStatus('● 連線中', 'live');
+          });
+          hls.on(Hls.Events.ERROR, (_, data) => {
+            if (data.fatal) setStatus(`串流錯誤：${data.details}`, 'error');
+          });
+        } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+          video.src = url;
+          video.play();
+          setStatus('● 連線中', 'live');
+        } else {
+          setStatus('瀏覽器不支援 HLS', 'error');
+        }
+      } catch (e) {
+        setStatus(`無法取得串流：${e.message}`, 'error');
+      }
+    }
+
+    async function init() {
+      try {
+        const res = await fetch('/cameras');
+        const { cameras } = await res.json();
+        cameras.forEach(cam => {
+          const opt = document.createElement('option');
+          opt.value = cam;
+          opt.textContent = cam;
+          camSelect.appendChild(opt);
+        });
+        if (cameras.length > 0) {
+          currentCamera = cameras[0];
+          loadStream();
+        }
+      } catch (e) {
+        setStatus('無法取得 camera 清單', 'error');
+      }
+    }
+
+    camSelect.addEventListener('change', () => {
+      currentCamera = camSelect.value;
+      loadStream();
+    });
+
+    init();
+  </script>
+</body>
+</html>
