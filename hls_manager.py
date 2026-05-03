@@ -88,3 +88,68 @@ class HLSStream:
             self.proc.wait(timeout=3)
         except subprocess.TimeoutExpired:
             self.proc.kill()
+
+
+class HLSManager:
+    NO_FRAME_TIMEOUT: int = 30
+    WATCHDOG_INTERVAL: int = 10
+
+    def __init__(self) -> None:
+        self._streams: Dict[StreamKey, HLSStream] = {}
+        self._lock = threading.Lock()
+        self._watchdog = threading.Thread(
+            target=self._watchdog_loop, daemon=True, name="hls-watchdog"
+        )
+        self._watchdog.start()
+
+    def ensure_started(self, camera_id: str, stream_type: str) -> Path:
+        key: StreamKey = (camera_id, stream_type)
+        with self._lock:
+            if key not in self._streams:
+                out_dir = (
+                    Path(settings.hls_base_dir)
+                    / camera_id
+                    / stream_type
+                    / datetime.now().strftime("%Y-%m-%d-%H")
+                )
+                out_dir.mkdir(parents=True, exist_ok=True)
+                proc = _start_ffmpeg(out_dir)
+                self._streams[key] = HLSStream(camera_id, stream_type, proc, out_dir)
+                logger.info(f"Started HLS stream {camera_id}/{stream_type} → {out_dir}")
+            return self._streams[key].out_dir
+
+    def feed(self, camera_id: str, stream_type: str, jpeg_bytes: bytes) -> None:
+        key: StreamKey = (camera_id, stream_type)
+        with self._lock:
+            stream = self._streams.get(key)
+        if stream is not None:
+            stream.feed(jpeg_bytes)
+
+    def stop_all(self) -> None:
+        with self._lock:
+            streams = list(self._streams.values())
+            self._streams.clear()
+        for stream in streams:
+            stream.stop()
+            logger.info(f"Stopped HLS stream {stream.camera_id}/{stream.stream_type}")
+
+    def _evict_stale(self) -> None:
+        now = time.time()
+        with self._lock:
+            stale = [
+                key
+                for key, stream in self._streams.items()
+                if now - stream.last_feed_time > self.NO_FRAME_TIMEOUT
+            ]
+            for key in stale:
+                stream = self._streams.pop(key)
+                stream.stop()
+                logger.warning(f"Watchdog evicted stale stream {key[0]}/{key[1]}")
+
+    def _watchdog_loop(self) -> None:
+        while True:
+            time.sleep(self.WATCHDOG_INTERVAL)
+            self._evict_stale()
+
+
+hls_manager = HLSManager()

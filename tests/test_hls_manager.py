@@ -48,3 +48,51 @@ def test_hlsstream_stop_closes_stdin_and_terminates(tmp_path, monkeypatch):
     stream.stop()
     proc.stdin.close.assert_called_once()
     proc.terminate.assert_called_once()
+
+
+@pytest.fixture
+def fake_proc():
+    proc = MagicMock()
+    proc.stdin = MagicMock()
+    return proc
+
+
+@pytest.fixture
+def manager(tmp_path, monkeypatch, fake_proc):
+    monkeypatch.setattr("hls_manager.settings.hls_base_dir", str(tmp_path))
+    from hls_manager import HLSManager
+    m = HLSManager()
+    yield m, fake_proc
+    m.stop_all()
+
+
+def test_ensure_started_creates_dir_and_launches_ffmpeg(manager):
+    m, fake_proc = manager
+    with patch("hls_manager._start_ffmpeg", return_value=fake_proc) as mock_start:
+        out_dir = m.ensure_started("cam_01", "rgb")
+    assert mock_start.call_count == 1
+    assert out_dir.exists()
+    assert ("cam_01", "rgb") in m._streams
+
+
+def test_ensure_started_is_idempotent(manager):
+    m, fake_proc = manager
+    with patch("hls_manager._start_ffmpeg", return_value=fake_proc) as mock_start:
+        dir1 = m.ensure_started("cam_01", "rgb")
+        dir2 = m.ensure_started("cam_01", "rgb")
+    assert dir1 == dir2
+    assert mock_start.call_count == 1
+
+
+def test_feed_writes_bytes_when_stream_exists(manager):
+    m, fake_proc = manager
+    with patch("hls_manager._start_ffmpeg", return_value=fake_proc):
+        m.ensure_started("cam_01", "rgb")
+    m.feed("cam_01", "rgb", b"\xff\xd8\xff")
+    fake_proc.stdin.write.assert_called_once_with(b"\xff\xd8\xff")
+
+
+def test_feed_is_noop_when_stream_not_started(manager):
+    m, fake_proc = manager
+    m.feed("cam_99", "rgb", b"\xff\xd8\xff")
+    fake_proc.stdin.write.assert_not_called()
