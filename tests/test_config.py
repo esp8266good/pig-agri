@@ -53,11 +53,10 @@ def test_camera_topics_strips_whitespace():
 
 
 def test_settings_has_fast_reid_config():
-    from config import settings
-    assert hasattr(settings, "fast_reid_config")
-    assert "fast_reid" in settings.fast_reid_config
+    s = Settings()
+    assert s.fast_reid_config == "./ref/HybridSORT/fast_reid/configs/CUHKSYSU_DanceTrack/sbs_S50.yml"
+
 
 def test_settings_has_fast_reid_weights():
-    from config import settings
-    assert hasattr(settings, "fast_reid_weights")
-    assert ".pth" in settings.fast_reid_weights
+    s = Settings()
+    assert s.fast_reid_weights == "./ref/HybridSORT/pretrained/model_0054.pth"
