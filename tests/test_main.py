@@ -1,4 +1,5 @@
 import pytest
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 
@@ -13,6 +14,7 @@ def client():
         patch.object(database, "disconnect", new_callable=AsyncMock),
         patch.object(zmq_mod.zmq_receiver, "start"),
         patch.object(zmq_mod.zmq_receiver, "stop"),
+        patch("hls_manager.hls_manager.stop_all"),
     ):
         from main import app
         with TestClient(app) as c:
@@ -25,10 +27,13 @@ def test_health_returns_ok(client):
     assert resp.json() == {"status": "ok"}
 
 
-def test_stream_live_returns_stub(client):
-    resp = client.get("/stream/cam_01/live")
+def test_stream_live_returns_m3u8_url(client):
+    fake_dir = Path("/data/pig_monitoring/hls/cam_01/rgb/2026-05-04-14")
+    with patch("hls_manager.hls_manager.ensure_started", return_value=fake_dir):
+        resp = client.get("/stream/cam_01/live")
     assert resp.status_code == 200
-    assert resp.json() == {"status": "not implemented"}
+    assert "url" in resp.json()
+    assert resp.json()["url"] == "/stream/hls/cam_01/rgb/2026-05-04-14/index.m3u8"
 
 
 def test_stream_vod_returns_stub(client):
