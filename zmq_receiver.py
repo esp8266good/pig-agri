@@ -37,7 +37,7 @@ class ZMQReceiver:
         ts, frame_id = struct.unpack("dQ", parts[1])
         rgb_bytes: bytes = parts[2]
         thermal_bytes: bytes = parts[3]
-        logger.info(
+        logger.debug(
             f"[{topic}] frame={frame_id} ts={ts:.3f} "
             f"rgb={len(rgb_bytes)}B thermal={len(thermal_bytes)}B"
         )
