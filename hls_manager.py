@@ -135,6 +135,7 @@ class HLSManager:
 
     def _evict_stale(self) -> None:
         now = time.time()
+        evicted: list[HLSStream] = []
         with self._lock:
             stale = [
                 key
@@ -142,9 +143,10 @@ class HLSManager:
                 if now - stream.last_feed_time > self.NO_FRAME_TIMEOUT
             ]
             for key in stale:
-                stream = self._streams.pop(key)
-                stream.stop()
-                logger.warning(f"Watchdog evicted stale stream {key[0]}/{key[1]}")
+                evicted.append(self._streams.pop(key))
+        for stream in evicted:
+            stream.stop()
+            logger.warning(f"Watchdog evicted stale stream {stream.camera_id}/{stream.stream_type}")
 
     def _watchdog_loop(self) -> None:
         while True:

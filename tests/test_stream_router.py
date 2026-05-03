@@ -70,3 +70,8 @@ def test_serve_hls_file_returns_404_when_missing(tmp_path, monkeypatch):
         with TestClient(app) as c:
             resp = c.get("/stream/hls/cam_01/rgb/2026-05-04-14/seg_999.ts")
     assert resp.status_code == 404
+
+
+def test_live_unknown_camera_returns_404(client):
+    resp = client.get("/stream/unknown_cam/live")
+    assert resp.status_code == 404

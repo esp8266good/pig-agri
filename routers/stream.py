@@ -29,6 +29,8 @@ async def get_live_stream(
 ):
     if stream_type not in ("rgb", "thermal"):
         raise HTTPException(status_code=400, detail="type must be 'rgb' or 'thermal'")
+    if camera_id not in settings.camera_topics:
+        raise HTTPException(status_code=404, detail="Camera not found")
     out_dir = hls_manager.ensure_started(camera_id, stream_type)
     return {
         "url": f"/stream/hls/{camera_id}/{stream_type}/{out_dir.name}/index.m3u8"
