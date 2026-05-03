@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     model_config_path: str = (
         "./ref/HybridSORT/exps/example/mot/yolox_oink_test_hybrid_sort_reid.py"
     )
+    fast_reid_config: str = (
+        "ref/HybridSORT/fast_reid/configs/CUHKSYSU_DanceTrack/sbs_S50.yml"
+    )
+    fast_reid_weights: str = "ref/HybridSORT/pretrained/model_0054.pth"
     device: str = "cuda"
     mot_worker_threads: int = 20
     analysis_interval_minutes: int = 30

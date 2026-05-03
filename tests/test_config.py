@@ -50,3 +50,14 @@ def test_camera_topics_strips_whitespace():
         camera_topics="cam_01, cam_02 , cam_03",
     )
     assert s.camera_topics == ["cam_01", "cam_02", "cam_03"]
+
+
+def test_settings_has_fast_reid_config():
+    from config import settings
+    assert hasattr(settings, "fast_reid_config")
+    assert "fast_reid" in settings.fast_reid_config
+
+def test_settings_has_fast_reid_weights():
+    from config import settings
+    assert hasattr(settings, "fast_reid_weights")
+    assert ".pth" in settings.fast_reid_weights
