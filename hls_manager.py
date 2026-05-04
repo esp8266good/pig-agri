@@ -61,8 +61,8 @@ def _make_ffmpeg_cmd(out_dir: Path) -> list[str]:
         "-g", str(gop),                 # GOP 大小對齊 HLS segment
         # HLS 輸出
         "-hls_time", "4",
-        "-hls_list_size", "5",
-        "-hls_flags", "delete_segments+append_list",
+        "-hls_list_size", "0",
+        "-hls_flags", "append_list",
         "-hls_segment_filename", str(out_dir / "seg_%03d.ts"),
         # FFmpeg 自身的 log 等級
         "-loglevel", FFMPEG_LOG_LEVEL,

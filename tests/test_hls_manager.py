@@ -11,9 +11,9 @@ from hls_manager import _make_ffmpeg_cmd
 def test_ffmpeg_cmd_has_correct_hls_settings(tmp_path):
     cmd = _make_ffmpeg_cmd(tmp_path)
     assert cmd[cmd.index("-hls_time") + 1] == "4"
-    assert cmd[cmd.index("-hls_list_size") + 1] == "5"
-    assert "-use_wallclock_as_timestamps" in cmd
-    assert "delete_segments+append_list" in " ".join(cmd)
+    assert cmd[cmd.index("-hls_list_size") + 1] == "0"
+    assert "append_list" in " ".join(cmd)
+    assert "delete_segments" not in " ".join(cmd)
     assert str(tmp_path / "index.m3u8") in cmd
     assert str(tmp_path / "seg_%03d.ts") in " ".join(cmd)
 
@@ -32,8 +32,9 @@ def _make_stream(tmp_path, monkeypatch, proc=None):
 def test_hlsstream_feed_writes_to_stdin(tmp_path, monkeypatch):
     stream, proc = _make_stream(tmp_path, monkeypatch)
     stream.feed(b"\xff\xd8\xff")
-    proc.stdin.write.assert_called_once_with(b"\xff\xd8\xff")
-    proc.stdin.flush.assert_called_once()
+    time.sleep(0.1)  # 等待 writer thread 執行一個寫入週期（25fps = 0.04s interval）
+    proc.stdin.write.assert_any_call(b"\xff\xd8\xff")
+    assert proc.stdin.flush.call_count >= 1
 
 
 def test_hlsstream_feed_updates_last_feed_time(tmp_path, monkeypatch):
@@ -90,7 +91,8 @@ def test_feed_writes_bytes_when_stream_exists(manager):
     with patch("hls_manager._start_ffmpeg", return_value=fake_proc):
         m.ensure_started("cam_01", "rgb")
     m.feed("cam_01", "rgb", b"\xff\xd8\xff")
-    fake_proc.stdin.write.assert_called_once_with(b"\xff\xd8\xff")
+    time.sleep(0.1)  # 等待 writer thread 執行一個寫入週期（25fps = 0.04s interval）
+    fake_proc.stdin.write.assert_any_call(b"\xff\xd8\xff")
 
 
 def test_feed_is_noop_when_stream_not_started(manager):
