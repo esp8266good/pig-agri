@@ -2,6 +2,7 @@ import sys
 import asyncio
 import threading
 import numpy as np
+import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 
 for _mod in [
@@ -118,3 +119,29 @@ def test_process_batch_skips_on_exception():
     p._process_batch(snapshot)
     p._event_loop.close()
     p._executor.shutdown(wait=False)
+
+
+def test_compute_thermal_intensity_returns_mean_of_region():
+    import numpy as np
+    from inference.pipeline import _compute_thermal_intensity
+    thermal = np.zeros((120, 160), dtype=np.uint8)
+    thermal[10:20, 10:20] = 200  # 該區域均值為 200
+    # bbox 在 640×480 空間：x1=40,y1=40,x2=80,y2=80
+    # 縮放到 160×120：tx1=10,ty1=10,tx2=20,ty2=20 (scale=0.25)
+    result = _compute_thermal_intensity(thermal, 40.0, 40.0, 80.0, 80.0)
+    assert result == pytest.approx(200.0)
+
+
+def test_compute_thermal_intensity_returns_none_when_no_thermal():
+    from inference.pipeline import _compute_thermal_intensity
+    result = _compute_thermal_intensity(None, 0.0, 0.0, 50.0, 50.0)
+    assert result is None
+
+
+def test_compute_thermal_intensity_clamps_bbox_to_image_bounds():
+    import numpy as np
+    from inference.pipeline import _compute_thermal_intensity
+    thermal = np.full((120, 160), 100, dtype=np.uint8)
+    # bbox 超出邊界：x2=800 > 640, y2=600 > 480
+    result = _compute_thermal_intensity(thermal, 0.0, 0.0, 800.0, 600.0)
+    assert result == pytest.approx(100.0)

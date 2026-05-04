@@ -9,6 +9,27 @@ import numpy as np
 from loguru import logger
 
 import inference  # triggers sys.path setup
+import database
+from db_writer import write_tracking_log
+
+
+def _compute_thermal_intensity(
+    thermal_np: "np.ndarray | None",
+    x1: float, y1: float, x2: float, y2: float,
+    orig_w: int = 640, orig_h: int = 480,
+    thermal_w: int = 160, thermal_h: int = 120,
+) -> "float | None":
+    if thermal_np is None:
+        return None
+    sx = thermal_w / orig_w
+    sy = thermal_h / orig_h
+    tx1 = int(max(0, x1 * sx))
+    ty1 = int(max(0, y1 * sy))
+    tx2 = int(min(thermal_w, x2 * sx))
+    ty2 = int(min(thermal_h, y2 * sy))
+    if tx2 <= tx1 or ty2 <= ty1:
+        return None
+    return float(np.mean(thermal_np[ty1:ty2, tx1:tx2]))
 
 
 @dataclass
@@ -130,11 +151,32 @@ class InferencePipeline:
                 objects = []
                 for t in online_targets:
                     x1, y1, x2, y2 = float(t[0]), float(t[1]), float(t[2]), float(t[3])
+                    obj_id = int(t[4])
+                    conf = float(t[5]) if len(t) > 5 else 0.0
+                    ti = _compute_thermal_intensity(frame_data.thermal_np, x1, y1, x2, y2)
                     objects.append({
-                        "object_id": int(t[4]),
+                        "object_id": obj_id,
                         "bbox": [x1, y1, x2 - x1, y2 - y1],
-                        "confidence": float(t[5]) if len(t) > 5 else 0.0,
+                        "confidence": conf,
                     })
+                    pool = database.get_pool()
+                    if pool is not None:
+                        asyncio.run_coroutine_threadsafe(
+                            write_tracking_log(
+                                pool,
+                                camera_id=cam,
+                                timestamp=frame_data.ts,
+                                frame_id=frame_data.frame_id,
+                                object_id=obj_id,
+                                bb_left=x1,
+                                bb_top=y1,
+                                bb_width=x2 - x1,
+                                bb_height=y2 - y1,
+                                confidence=conf,
+                                thermal_intensity=ti,
+                            ),
+                            self._event_loop,
+                        )
                 payload = {
                     "frame_id": frame_data.frame_id,
                     "timestamp": frame_data.ts,
