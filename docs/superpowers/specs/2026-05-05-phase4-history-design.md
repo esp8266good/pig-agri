@@ -36,6 +36,9 @@ async def query_tracking_logs(
     pool, camera_id: str, start: float, end: float,
     object_id: int | None = None
 ) -> list[dict]: ...
+# 每筆 dict 格式（與 WebSocket overlay 相容）：
+# { "object_id": int, "bbox": [bb_left, bb_top, bb_width, bb_height],
+#   "confidence": float, "timestamp": float, "frame_id": int }
 
 async def query_timeline_hours(
     pool, camera_id: str, start_ts: float, end_ts: float
@@ -64,11 +67,11 @@ def build_vod_m3u8(
 7. 尾端加 `#EXT-X-ENDLIST`
 8. 過濾後無 segment → 回傳 `None`
 
-輸出格式：
+輸出格式（`#EXT-X-TARGETDURATION` 從各小時 m3u8 的 `#EXT-X-TARGETDURATION` 取最大值，動態填入）：
 ```
 #EXTM3U
 #EXT-X-VERSION:3
-#EXT-X-TARGETDURATION:4
+#EXT-X-TARGETDURATION:{max_segment_duration}
 #EXT-X-PLAYLIST-TYPE:VOD
 #EXT-X-PROGRAM-DATE-TIME:2026-05-04T14:32:08Z
 #EXTINF:4.0,
@@ -160,13 +163,14 @@ isLive = false → 歷史 bbox query + VOD HLS
 
 ### VOD 模式下的 HLS 播放
 
-- 以 `GET /stream/{camera_id}/vod?start=&end=&type=rgb` 回傳的 URL 直接作為 hls.js source
+- VOD endpoint（`/stream/{camera_id}/vod?start=&end=&type=rgb`）直接回傳 m3u8 純文字（`PlainTextResponse`），與 live 的 JSON wrapper 不同
+- 前端直接呼叫 `hls.loadSource('/stream/{camera_id}/vod?start=&end=&type=rgb')`，不需中間 fetch 步驟
 - 狀態列顯示「回放中 YYYY-MM-DD HH:mm」
 
 ### 歷史 MOT Overlay
 
 - 監聽 `video.timeupdate` 事件（約每 250ms 觸發）
-- 讀取 `hls.playingDate`（Date 物件）取得精確播放時間
+- 讀取 `hls.playingDate`（Date 物件），換算為 Unix 秒：`const ts = hls.playingDate.getTime() / 1000`
 - 加 300ms debounce，避免過頻 request
 - 呼叫 `GET /tracking/{camera_id}?start={ts-0.5}&end={ts+0.5}`
 - 將回傳 objects 更新至 `latestBoxes`，由現有 `drawBoxes()` rAF 迴圈渲染
