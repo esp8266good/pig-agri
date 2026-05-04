@@ -87,4 +87,6 @@ class TrackerPool:
                 logger.info(f"Created tracker for {camera_id}")
             tracker = self._trackers[camera_id]
 
+        # tracker.update is called outside the lock; callers must ensure
+        # at most one concurrent update per camera_id (guaranteed by _process_batch).
         return tracker.update(dets, list(img_info), img_size, id_feature=id_feature)

@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import numpy as np
+import torch
 from loguru import logger
 
 import inference  # triggers sys.path setup
@@ -15,7 +16,8 @@ class ReIDExtractor:
     def __init__(self, config_file: str, weights_path: str) -> None:
         abs_cfg = str((_PROJECT_ROOT / config_file).resolve())
         abs_wts = str((_PROJECT_ROOT / weights_path).resolve())
-        self._encoder = FastReIDInterface(abs_cfg, abs_wts, "cuda")
+        _device = "cuda" if torch.cuda.is_available() else "cpu"
+        self._encoder = FastReIDInterface(abs_cfg, abs_wts, _device)
         logger.info("ReIDExtractor ready")
 
     def extract(self, image: np.ndarray, dets: np.ndarray | None) -> np.ndarray:
