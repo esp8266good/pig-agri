@@ -1,0 +1,90 @@
+import argparse
+import threading
+
+import numpy as np
+from loguru import logger
+from pathlib import Path
+
+import inference  # triggers sys.path setup
+from trackers.hybrid_sort_tracker.hybrid_sort_reid import Hybrid_Sort_ReID
+from yolox.exp import get_exp
+
+from config import settings
+
+_PROJECT_ROOT = Path(__file__).parent.parent
+
+
+def _build_tracker_args() -> argparse.Namespace:
+    abs_exp = str((_PROJECT_ROOT / settings.model_config_path).resolve())
+    exp = get_exp(abs_exp, None)
+    args = argparse.Namespace()
+    args.track_thresh = 0.6
+    args.iou_thresh = exp.iou_thresh
+    args.use_byte = exp.use_byte
+    args.inertia = exp.inertia
+    args.asso = exp.asso
+    args.deltat = 3
+    args.min_hits = 3
+    args.track_buffer = 30
+    args.TCM_first_step = exp.TCM_first_step
+    args.TCM_byte_step = exp.TCM_byte_step
+    args.TCM_first_step_weight = exp.TCM_first_step_weight
+    args.TCM_byte_step_weight = exp.TCM_byte_step_weight
+    args.EG_weight_high_score = exp.EG_weight_high_score
+    args.EG_weight_low_score = exp.EG_weight_low_score
+    args.low_thresh = 0.1
+    args.high_score_matching_thresh = 0.8
+    args.low_score_matching_thresh = 0.5
+    args.alpha = 0.8
+    args.with_fastreid = exp.with_fastreid
+    args.fast_reid_config = str((_PROJECT_ROOT / settings.fast_reid_config).resolve())
+    args.fast_reid_weights = str((_PROJECT_ROOT / settings.fast_reid_weights).resolve())
+    args.with_longterm_reid = False
+    args.longterm_reid_weight = 0.0
+    args.longterm_reid_weight_low = 0.0
+    args.with_longterm_reid_correction = exp.with_longterm_reid_correction
+    args.longterm_reid_correction_thresh = exp.longterm_reid_correction_thresh
+    args.longterm_reid_correction_thresh_low = exp.longterm_reid_correction_thresh_low
+    args.longterm_bank_length = 30
+    args.adapfs = False
+    args.ECC = False
+    args.max_id_num = 40
+    args.dataset = exp.dataset
+    args.hybrid_sort_with_reid = exp.hybrid_sort_with_reid
+    args.min_box_area = 100
+    return args
+
+
+class TrackerPool:
+    def __init__(self) -> None:
+        self._trackers: dict[str, Hybrid_Sort_ReID] = {}
+        self._lock = threading.Lock()
+        self._args = _build_tracker_args()
+        logger.info("TrackerPool initialised")
+
+    def update(
+        self,
+        camera_id: str,
+        dets: np.ndarray | None,
+        img_info: tuple[int, int],
+        img_size: tuple[int, int],
+        id_feature: np.ndarray,
+    ) -> list:
+        if dets is None:
+            dets = np.empty((0, 6), dtype=np.float32)
+            id_feature = np.zeros((0, 2048), dtype=np.float32)
+
+        with self._lock:
+            if camera_id not in self._trackers:
+                self._trackers[camera_id] = Hybrid_Sort_ReID(
+                    self._args,
+                    det_thresh=self._args.track_thresh,
+                    iou_threshold=self._args.iou_thresh,
+                    asso_func=self._args.asso,
+                    delta_t=self._args.deltat,
+                    inertia=self._args.inertia,
+                )
+                logger.info(f"Created tracker for {camera_id}")
+            tracker = self._trackers[camera_id]
+
+        return tracker.update(dets, list(img_info), img_size, id_feature=id_feature)
