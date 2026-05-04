@@ -1,5 +1,8 @@
+from pathlib import Path
+
 import numpy as np
 import torch
+from loguru import logger
 
 import inference  # triggers sys.path setup
 from yolox.data.data_augment import preproc
@@ -7,8 +10,6 @@ from yolox.exp import get_exp
 from yolox.utils import postprocess
 
 from config import settings
-from pathlib import Path
-from loguru import logger
 
 _PROJECT_ROOT = Path(__file__).parent.parent
 _RGB_MEANS = (0.485, 0.456, 0.406)
