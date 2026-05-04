@@ -33,6 +33,7 @@ async def write_tracking_log(
         confidence: Detection confidence score
         thermal_intensity: Optional thermal intensity value
     """
+    # timestamp: Unix epoch seconds stored as DOUBLE PRECISION
     sql = """
     INSERT INTO tracking_logs
     (camera_id, timestamp, frame_id, object_id, bb_left, bb_top, bb_width, bb_height, confidence, thermal_intensity)
@@ -63,6 +64,8 @@ async def query_tracking_logs(
 ) -> list[dict]:
     """Query tracking logs for a camera in a time range.
 
+    timestamp is stored as DOUBLE PRECISION (Unix epoch seconds).
+
     Args:
         pool: asyncpg connection pool
         camera_id: Camera identifier
@@ -73,24 +76,19 @@ async def query_tracking_logs(
     Returns:
         List of dicts with keys: object_id, bbox, confidence, timestamp, frame_id
     """
-    if object_id is None:
-        sql = """
-        SELECT object_id, bb_left, bb_top, bb_width, bb_height,
-               confidence, timestamp, frame_id
-        FROM tracking_logs
-        WHERE camera_id=$1 AND timestamp >= $2 AND timestamp < $3
-        ORDER BY timestamp
-        """
-        rows = await pool.fetch(sql, camera_id, start, end)
-    else:
-        sql = """
-        SELECT object_id, bb_left, bb_top, bb_width, bb_height,
-               confidence, timestamp, frame_id
-        FROM tracking_logs
-        WHERE camera_id=$1 AND timestamp >= $2 AND timestamp < $3 AND object_id=$4
-        ORDER BY timestamp
-        """
-        rows = await pool.fetch(sql, camera_id, start, end, object_id)
+    filters = "camera_id=$1 AND timestamp >= $2 AND timestamp < $3"
+    params: list = [camera_id, start, end]
+    if object_id is not None:
+        filters += " AND object_id=$4"
+        params.append(object_id)
+
+    sql = f"""SELECT object_id, bb_left, bb_top, bb_width, bb_height,
+                     confidence, timestamp, frame_id
+              FROM tracking_logs
+              WHERE {filters}
+              ORDER BY timestamp"""
+
+    rows = await pool.fetch(sql, *params)
 
     result = []
     for row in rows:

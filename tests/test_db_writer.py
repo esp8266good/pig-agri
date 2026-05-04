@@ -14,8 +14,8 @@ def test_write_tracking_log_executes_insert(mock_pool):
 
     asyncio.run(write_tracking_log(
         mock_pool,
-        camera_id="cam1",
-        timestamp=1000.5,
+        camera_id="cam_01",
+        timestamp=1000.0,
         frame_id=42,
         object_id=10,
         bb_left=10.0,
@@ -23,13 +23,20 @@ def test_write_tracking_log_executes_insert(mock_pool):
         bb_width=30.0,
         bb_height=40.0,
         confidence=0.95,
-        thermal_intensity=35.5,
+        thermal_intensity=128.5,
     ))
 
     mock_pool.execute.assert_called_once()
     call_args = mock_pool.execute.call_args
     sql = call_args[0][0]
     assert "INSERT INTO tracking_logs" in sql
+
+    # Verify the 10 data parameters (sql + 10 params = 11 positional args)
+    args = mock_pool.execute.call_args[0]
+    assert len(args) == 11  # sql + 10 params
+    assert args[1] == "cam_01"     # camera_id
+    assert args[2] == 1000.0       # timestamp
+    assert args[-1] == 128.5       # thermal_intensity
 
 
 def test_write_tracking_log_passes_none_thermal(mock_pool):
@@ -107,6 +114,11 @@ def test_query_tracking_logs_with_object_id_uses_fourth_param(mock_pool):
     call_args = mock_pool.fetch.call_args
     sql = call_args[0][0]
     assert "$4" in sql
+
+    # Verify object_id is passed as the 4th data parameter
+    args = mock_pool.fetch.call_args[0]
+    # args[0]=sql, args[1]=camera_id, args[2]=start, args[3]=end, args[4]=object_id
+    assert args[4] == 5
 
 
 def test_query_tracking_logs_without_object_id_omits_fourth_param(mock_pool):
