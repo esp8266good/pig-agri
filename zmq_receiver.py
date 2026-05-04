@@ -2,10 +2,13 @@ import struct
 import threading
 from typing import Optional
 
+import cv2
+import numpy as np
 import zmq
 from loguru import logger
 
 import hls_manager as hls_mod
+import inference.pipeline as pipeline_mod
 from config import settings
 
 
@@ -41,10 +44,22 @@ class ZMQReceiver:
             f"[{topic}] frame={frame_id} ts={ts:.3f} "
             f"rgb={len(rgb_bytes)}B thermal={len(thermal_bytes)}B"
         )
+
+        rgb_np: np.ndarray | None = None
+        thermal_np: np.ndarray | None = None
+
         if rgb_bytes:
+            arr = np.frombuffer(rgb_bytes, dtype=np.uint8)
+            rgb_np = cv2.imdecode(arr, cv2.IMREAD_COLOR)
             hls_mod.hls_manager.feed(topic, "rgb", rgb_bytes)
+
         if thermal_bytes:
+            arr = np.frombuffer(thermal_bytes, dtype=np.uint8)
+            thermal_np = cv2.imdecode(arr, cv2.IMREAD_COLOR)
             hls_mod.hls_manager.feed(topic, "thermal", thermal_bytes)
+
+        if rgb_np is not None:
+            pipeline_mod.inference_pipeline.update_frame(topic, rgb_np, thermal_np, ts)
 
     def _run(self) -> None:
         ctx = zmq.Context()

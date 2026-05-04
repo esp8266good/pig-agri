@@ -70,3 +70,49 @@ def test_process_frame_skips_empty_thermal(monkeypatch):
 
     calls = mock_manager.feed.call_args_list
     assert not any(c.args[1] == "thermal" for c in calls)
+
+
+def test_process_frame_calls_pipeline_update_frame(monkeypatch):
+    import numpy as np
+    import inference.pipeline as pipeline_mod
+
+    mock_pipeline = MagicMock()
+    monkeypatch.setattr(pipeline_mod, "inference_pipeline", mock_pipeline)
+
+    fake_rgb_np = np.zeros((480, 640, 3), dtype=np.uint8)
+    monkeypatch.setattr("zmq_receiver.cv2.imdecode", lambda arr, flag: fake_rgb_np)
+
+    mock_manager = MagicMock()
+    monkeypatch.setattr(hls_mod, "hls_manager", mock_manager)
+
+    receiver = ZMQReceiver()
+    topic = b"cam_01"
+    metadata = struct.pack("dQ", 1234567890.0, 42)
+    rgb = b"\xff\xd8\xff" + b"\x00" * 10
+    receiver._process_frame([topic, metadata, rgb, b""])
+
+    mock_pipeline.update_frame.assert_called_once()
+    call_args = mock_pipeline.update_frame.call_args[0]
+    assert call_args[0] == "cam_01"
+    assert call_args[1] is fake_rgb_np
+
+
+def test_process_frame_skips_pipeline_when_decode_fails(monkeypatch):
+    import inference.pipeline as pipeline_mod
+
+    mock_pipeline = MagicMock()
+    monkeypatch.setattr(pipeline_mod, "inference_pipeline", mock_pipeline)
+
+    # imdecode returns None (invalid JPEG)
+    monkeypatch.setattr("zmq_receiver.cv2.imdecode", lambda arr, flag: None)
+
+    mock_manager = MagicMock()
+    monkeypatch.setattr(hls_mod, "hls_manager", mock_manager)
+
+    receiver = ZMQReceiver()
+    topic = b"cam_01"
+    metadata = struct.pack("dQ", 1234567890.0, 42)
+    rgb = b"\xff\xd8\xff" + b"\x00" * 10
+    receiver._process_frame([topic, metadata, rgb, b""])
+
+    mock_pipeline.update_frame.assert_not_called()
