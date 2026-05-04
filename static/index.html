@@ -394,13 +394,13 @@
     // ── State ─────────────────────────────────────────────────
     let hls = null;
     let ws = null;
+    let wsGeneration = 0;   // increment on every connectWS; onclose checks this
     let wsRetryTimer = null;
     let wsRetryCount = 0;
     const MAX_WS_RETRY = 5;
     const WS_RETRY_BASE_MS = 2000;
 
     let latestBoxes = [];
-    const ORIG_W = 640, ORIG_H = 480;
     let currentCamera = null;
     let currentType = 'rgb';
     let animFrameId = null;
@@ -452,33 +452,35 @@
       if (ws) { ws.close(); ws = null; }
       if (!cameraId) return;
 
+      const gen = ++wsGeneration;  // each call gets a unique generation token
       const url = `ws://${location.host}/ws/tracking/${cameraId}`;
-
       ws = new WebSocket(url);
 
       ws.onopen = () => {
+        if (gen !== wsGeneration) return;
         wsRetryCount = 0;
       };
 
       ws.onmessage = (e) => {
+        if (gen !== wsGeneration) return;  // stale connection, discard
         try {
           const data = JSON.parse(e.data);
           latestBoxes = data.objects || [];
-          // 顯示豬隻數量
           countBadge.textContent = latestBoxes.length;
-          // 顯示伺服器時間戳延遲（若有）
-          if (data.ts) {
-            const delay = Date.now() - data.ts;
+          if (data.timestamp) {
+            const delay = Date.now() - data.timestamp * 1000;
             latencyChip.style.display = '';
-            latencyVal.textContent = delay;
+            latencyVal.textContent = Math.round(delay);
           }
         } catch (_) {}
       };
 
       ws.onclose = () => {
+        // If gen no longer matches, this close was intentional (camera switched).
+        // Do NOT reconnect — that would fight the new connection.
+        if (gen !== wsGeneration) return;
         latestBoxes = [];
         countBadge.textContent = '—';
-        // 自動 retry（指數退避）
         if (wsRetryCount < MAX_WS_RETRY) {
           const delay = WS_RETRY_BASE_MS * Math.pow(1.5, wsRetryCount);
           wsRetryCount++;
@@ -495,22 +497,40 @@
     }
 
     // ── Canvas overlay ────────────────────────────────────────
-    // 依來源類型選色：RGB 用綠、Thermal 用橘
     function getBoxColor() {
       return currentType === 'thermal' ? '#ff8c42' : '#22bb77';
     }
 
     function drawBoxes() {
       const canvas = document.getElementById('overlay');
-      canvas.width  = video.offsetWidth  || 1;
-      canvas.height = video.offsetHeight || 1;
+      const elW = video.offsetWidth  || 1;
+      const elH = video.offsetHeight || 1;
+
+      // Avoid thrashing canvas state (resetting width/height clears the context)
+      if (canvas.width !== elW)  canvas.width  = elW;
+      if (canvas.height !== elH) canvas.height = elH;
+
       const ctx = canvas.getContext('2d');
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.clearRect(0, 0, elW, elH);
 
-      const sx = canvas.width  / ORIG_W;
-      const sy = canvas.height / ORIG_H;
+      const vidW = video.videoWidth;
+      const vidH = video.videoHeight;
+
+      // Can't draw until video metadata is known or there are no boxes
+      if (!vidW || !vidH || !latestBoxes.length) {
+        animFrameId = requestAnimationFrame(drawBoxes);
+        return;
+      }
+
+      // Compute the actual rendered video rect inside the element.
+      // object-fit:contain scales the video to fit, centred, with black bars.
+      const scale = Math.min(elW / vidW, elH / vidH);
+      const renderW = vidW * scale;
+      const renderH = vidH * scale;
+      const offX = (elW - renderW) / 2;
+      const offY = (elH - renderH) / 2;
+
       const color = getBoxColor();
-
       ctx.strokeStyle = color;
       ctx.fillStyle   = color;
       ctx.lineWidth   = 1.5;
@@ -518,13 +538,14 @@
 
       for (const o of latestBoxes) {
         const [x, y, w, h] = o.bbox;
-        const px = x * sx, py = y * sy, pw = w * sx, ph = h * sy;
+        const px = offX + x * scale;
+        const py = offY + y * scale;
+        const pw = w * scale;
+        const ph = h * scale;
 
-        // 圓角輔助 box（比直接 strokeRect 更精緻）
         roundRect(ctx, px, py, pw, ph, 3);
         ctx.stroke();
 
-        // 標籤背景
         const label = `#${o.object_id}`;
         const tw = ctx.measureText(label).width;
         ctx.fillStyle = color;
@@ -662,7 +683,9 @@
 
     camSelect.addEventListener('change', () => {
       currentCamera = camSelect.value;
-      wsRetryCount = 0;  // reset retry 計數
+      wsRetryCount = 0;
+      latestBoxes = [];       // clear immediately so stale boxes don't flash
+      countBadge.textContent = '—';
       loadStream();
     });
 
