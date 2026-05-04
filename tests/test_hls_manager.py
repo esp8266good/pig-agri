@@ -32,7 +32,11 @@ def _make_stream(tmp_path, monkeypatch, proc=None):
 def test_hlsstream_feed_writes_to_stdin(tmp_path, monkeypatch):
     stream, proc = _make_stream(tmp_path, monkeypatch)
     stream.feed(b"\xff\xd8\xff")
-    time.sleep(0.1)  # 等待 writer thread 執行一個寫入週期（25fps = 0.04s interval）
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline:
+        if proc.stdin.write.called:
+            break
+        time.sleep(0.005)
     proc.stdin.write.assert_any_call(b"\xff\xd8\xff")
     assert proc.stdin.flush.call_count >= 1
 
@@ -91,7 +95,11 @@ def test_feed_writes_bytes_when_stream_exists(manager):
     with patch("hls_manager._start_ffmpeg", return_value=fake_proc):
         m.ensure_started("cam_01", "rgb")
     m.feed("cam_01", "rgb", b"\xff\xd8\xff")
-    time.sleep(0.1)  # 等待 writer thread 執行一個寫入週期（25fps = 0.04s interval）
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline:
+        if fake_proc.stdin.write.called:
+            break
+        time.sleep(0.005)
     fake_proc.stdin.write.assert_any_call(b"\xff\xd8\xff")
 
 
