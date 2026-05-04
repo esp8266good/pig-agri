@@ -4,220 +4,665 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>豬隻監測 Live</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300..600&display=swap" rel="stylesheet">
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    /* ── Design Tokens ─────────────────────────────────────── */
+    :root {
+      --font-body: 'DM Sans', 'Segoe UI', system-ui, sans-serif;
+
+      --text-xs:   clamp(0.75rem,  0.7rem  + 0.25vw, 0.875rem);
+      --text-sm:   clamp(0.875rem, 0.8rem  + 0.35vw, 1rem);
+      --text-base: clamp(1rem,     0.95rem + 0.25vw, 1.125rem);
+      --text-lg:   clamp(1.125rem, 1rem    + 0.75vw, 1.5rem);
+
+      --space-1: 0.25rem; --space-2: 0.5rem; --space-3: 0.75rem;
+      --space-4: 1rem;    --space-6: 1.5rem; --space-8: 2rem;
+
+      --radius-sm: 0.375rem; --radius-md: 0.5rem;
+      --radius-lg: 0.75rem;  --radius-full: 9999px;
+
+      --transition: 160ms cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    /* ── Dark palette (monitor/CCTV dashboard 風格) ─────────── */
+    :root {
+      --bg:           #0d0d0f;
+      --surface:      #141416;
+      --surface-2:    #1a1a1d;
+      --surface-3:    #222226;
+      --border:       rgba(255,255,255,0.08);
+      --divider:      rgba(255,255,255,0.05);
+
+      --text:         #e8e8ea;
+      --text-muted:   #8a8a90;
+      --text-faint:   #4a4a52;
+
+      --accent:       #22bb77;   /* 綠色 — live 狀態 */
+      --accent-dim:   rgba(34,187,119,0.15);
+      --accent-hover: #1da868;
+
+      --thermal:      #ff8c42;   /* 熱成像橘 */
+      --thermal-dim:  rgba(255,140,66,0.15);
+
+      --error:        #e05252;
+      --error-dim:    rgba(224,82,82,0.15);
+      --warning:      #e0a030;
+
+      --shadow-md: 0 4px 16px rgba(0,0,0,0.4);
+      --shadow-lg: 0 12px 40px rgba(0,0,0,0.6);
+    }
+
+    /* ── Reset ──────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
     body {
-      background: #111;
-      color: #e0e0e0;
-      font-family: 'Segoe UI', system-ui, sans-serif;
+      font-family: var(--font-body);
+      font-size: var(--text-sm);
+      color: var(--text);
+      background: var(--bg);
+      min-height: 100dvh;
       display: flex;
       flex-direction: column;
       align-items: center;
-      padding: 24px 16px;
-      min-height: 100vh;
+      padding: var(--space-6) var(--space-4);
+      gap: var(--space-4);
     }
-    h1 { font-size: 1.3rem; margin-bottom: 20px; letter-spacing: 0.05em; }
-    .controls {
+    button { cursor: pointer; border: none; background: none; font: inherit; color: inherit; }
+    select { font: inherit; }
+    :focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+      border-radius: var(--radius-sm);
+    }
+
+    /* ── Header ─────────────────────────────────────────────── */
+    header {
+      width: 100%;
+      max-width: 840px;
       display: flex;
       align-items: center;
-      gap: 12px;
-      margin-bottom: 16px;
-      flex-wrap: wrap;
-      justify-content: center;
+      gap: var(--space-3);
     }
-    label { font-size: 0.9rem; color: #aaa; }
-    select {
-      background: #222;
-      color: #e0e0e0;
-      border: 1px solid #444;
-      border-radius: 4px;
-      padding: 6px 10px;
-      font-size: 0.9rem;
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      flex-shrink: 0;
+    }
+    .logo-mark {
+      width: 28px; height: 28px;
+      color: var(--accent);
+    }
+    .logo-text {
+      font-size: var(--text-base);
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      color: var(--text);
+    }
+
+    /* ── Controls ───────────────────────────────────────────── */
+    .controls {
+      width: 100%;
+      max-width: 840px;
+      display: flex;
+      align-items: center;
+      gap: var(--space-3);
+      flex-wrap: wrap;
+    }
+    .control-group {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+    }
+    .control-label {
+      font-size: var(--text-xs);
+      color: var(--text-muted);
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      white-space: nowrap;
+    }
+    .cam-select {
+      background: var(--surface-3);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: var(--space-2) var(--space-3);
+      font-size: var(--text-sm);
       cursor: pointer;
+      transition: border-color var(--transition);
+      min-width: 120px;
+    }
+    .cam-select:hover { border-color: rgba(255,255,255,0.18); }
+
+    /* ── Toggle button group ────────────────────────────────── */
+    .type-toggle {
+      display: flex;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 3px;
+      gap: 2px;
     }
     .type-btn {
-      background: #222;
-      color: #aaa;
-      border: 1px solid #444;
-      border-radius: 4px;
-      padding: 6px 16px;
-      font-size: 0.9rem;
-      cursor: pointer;
-      transition: background 0.15s, color 0.15s;
+      padding: var(--space-1) var(--space-4);
+      border-radius: calc(var(--radius-md) - 2px);
+      font-size: var(--text-xs);
+      font-weight: 500;
+      letter-spacing: 0.04em;
+      color: var(--text-muted);
+      transition: background var(--transition), color var(--transition);
+      white-space: nowrap;
     }
-    .type-btn.active {
-      background: #2a6;
-      color: #fff;
-      border-color: #2a6;
+    .type-btn:hover:not(.active) { color: var(--text); }
+    .type-btn.active[data-type="rgb"] {
+      background: var(--accent-dim);
+      color: var(--accent);
     }
+    .type-btn.active[data-type="thermal"] {
+      background: var(--thermal-dim);
+      color: var(--thermal);
+    }
+
+    /* ── Video card ─────────────────────────────────────────── */
+    .video-card {
+      width: 100%;
+      max-width: 840px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      box-shadow: var(--shadow-lg);
+    }
+
     #video-wrap {
       position: relative;
       width: 100%;
-      max-width: 800px;
-      background: #000;
-      border-radius: 6px;
-      overflow: hidden;
       aspect-ratio: 4/3;
+      background: #000;
+      overflow: hidden;
+    }
+    video {
+      width: 100%; height: 100%;
+      display: block;
+      object-fit: contain;
+      background: #000;
     }
     #overlay {
       position: absolute;
-      top: 0; left: 0;
-      width: 100%; height: 100%;
+      inset: 0;
       pointer-events: none;
     }
-    video {
-      width: 100%;
-      height: 100%;
-      display: block;
-      background: #000;
+
+    /* 初始化時的 skeleton shimmer */
+    .video-skeleton {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--surface-2);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 200ms;
+      z-index: 2;
     }
-    #status {
-      margin-top: 12px;
-      font-size: 0.85rem;
-      color: #888;
+    .video-skeleton.visible { opacity: 1; }
+    .skeleton-pulse {
+      width: 40px; height: 40px;
+      border-radius: var(--radius-full);
+      border: 2px solid var(--text-faint);
+      border-top-color: var(--text-muted);
+      animation: spin 0.9s linear infinite;
     }
-    #status.live { color: #2a6; }
-    #status.error { color: #c44; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Video footer bar ───────────────────────────────────── */
+    .video-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: var(--space-3) var(--space-4);
+      border-top: 1px solid var(--divider);
+      background: var(--surface-2);
+      gap: var(--space-3);
+      flex-wrap: wrap;
+    }
+
+    /* ── Status pill ────────────────────────────────────────── */
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-2);
+      font-size: var(--text-xs);
+      font-weight: 500;
+      letter-spacing: 0.02em;
+      color: var(--text-muted);
+      padding: var(--space-1) var(--space-3);
+      border-radius: var(--radius-full);
+      background: var(--surface-3);
+      border: 1px solid var(--border);
+      transition: background var(--transition), color var(--transition), border-color var(--transition);
+    }
+    .status-pill.live {
+      color: var(--accent);
+      background: var(--accent-dim);
+      border-color: rgba(34,187,119,0.25);
+    }
+    .status-pill.error {
+      color: var(--error);
+      background: var(--error-dim);
+      border-color: rgba(224,82,82,0.25);
+    }
+    .status-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+      flex-shrink: 0;
+    }
+    .status-pill.live .status-dot {
+      animation: pulse-dot 1.8s ease-in-out infinite;
+    }
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%       { opacity: 0.5; transform: scale(0.7); }
+    }
+
+    /* ── Stats chips ─────────────────────────────────────────── */
+    .stats-row {
+      display: flex;
+      align-items: center;
+      gap: var(--space-3);
+    }
+    .stat-chip {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: var(--text-xs);
+      color: var(--text-muted);
+      font-variant-numeric: tabular-nums;
+    }
+    .stat-chip strong {
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    /* ── WS reconnect toast ─────────────────────────────────── */
+    .toast {
+      position: fixed;
+      bottom: var(--space-6);
+      left: 50%;
+      transform: translateX(-50%) translateY(16px);
+      background: var(--surface-3);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: var(--space-2) var(--space-4);
+      font-size: var(--text-xs);
+      color: var(--text-muted);
+      box-shadow: var(--shadow-md);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 200ms, transform 200ms;
+      white-space: nowrap;
+      z-index: 100;
+    }
+    .toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    /* ── Responsive ─────────────────────────────────────────── */
+    @media (max-width: 480px) {
+      body { padding: var(--space-4) var(--space-3); gap: var(--space-3); }
+      .stats-row { display: none; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
   </style>
 </head>
 <body>
-  <h1>豬隻監測 Live</h1>
-  <div class="controls">
-    <label for="cam-select">Camera:</label>
-    <select id="cam-select"></select>
-    <button class="type-btn active" id="btn-rgb" onclick="setType('rgb')">RGB</button>
-    <button class="type-btn" id="btn-thermal" onclick="setType('thermal')">Thermal</button>
+
+  <!-- Header -->
+  <header>
+    <div class="logo">
+      <svg class="logo-mark" viewBox="0 0 28 28" fill="none" aria-label="豬隻監測系統">
+        <!-- 豬鼻輪廓 SVG logo -->
+        <circle cx="14" cy="14" r="12" stroke="currentColor" stroke-width="1.5"/>
+        <ellipse cx="14" cy="15" rx="6" ry="5" stroke="currentColor" stroke-width="1.5"/>
+        <circle cx="11.5" cy="15" r="1.5" fill="currentColor"/>
+        <circle cx="16.5" cy="15" r="1.5" fill="currentColor"/>
+        <path d="M9 9.5 C9 7.5 11 6 11 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        <path d="M19 9.5 C19 7.5 17 6 17 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      <span class="logo-text">豬隻監測 Live</span>
+    </div>
+  </header>
+
+  <!-- Controls -->
+  <div class="controls" role="toolbar" aria-label="串流控制">
+    <div class="control-group">
+      <label class="control-label" for="cam-select">Camera</label>
+      <select id="cam-select" class="cam-select" aria-label="選擇攝影機"></select>
+    </div>
+    <div class="type-toggle" role="group" aria-label="影像類型">
+      <button class="type-btn active" id="btn-rgb" data-type="rgb"
+              onclick="setType('rgb')" aria-pressed="true">RGB</button>
+      <button class="type-btn" id="btn-thermal" data-type="thermal"
+              onclick="setType('thermal')" aria-pressed="false">Thermal</button>
+    </div>
   </div>
-  <div id="video-wrap">
-    <video id="video" autoplay muted playsinline controls></video>
-    <canvas id="overlay"></canvas>
+
+  <!-- Video card -->
+  <div class="video-card">
+    <div id="video-wrap">
+      <video id="video" autoplay muted playsinline></video>
+      <canvas id="overlay" aria-hidden="true"></canvas>
+      <div class="video-skeleton visible" id="skeleton" aria-hidden="true">
+        <div class="skeleton-pulse"></div>
+      </div>
+    </div>
+
+    <!-- Footer bar -->
+    <div class="video-footer">
+      <div id="status" class="status-pill" aria-live="polite" aria-atomic="true">
+        <span class="status-dot"></span>
+        <span id="status-text">初始化中...</span>
+      </div>
+      <div class="stats-row">
+        <div class="stat-chip">
+          豬隻：<strong id="count-badge">—</strong>
+        </div>
+        <div class="stat-chip" id="latency-chip" style="display:none">
+          延遲：<strong id="latency-val">—</strong> ms
+        </div>
+      </div>
+    </div>
   </div>
-  <div id="status">初始化中…</div>
+
+  <!-- WS reconnect toast -->
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
   <script>
+    // ── State ─────────────────────────────────────────────────
     let hls = null;
     let ws = null;
+    let wsRetryTimer = null;
+    let wsRetryCount = 0;
+    const MAX_WS_RETRY = 5;
+    const WS_RETRY_BASE_MS = 2000;
+
     let latestBoxes = [];
     const ORIG_W = 640, ORIG_H = 480;
     let currentCamera = null;
     let currentType = 'rgb';
+    let animFrameId = null;
 
-    const video = document.getElementById('video');
+    // ── DOM refs ──────────────────────────────────────────────
+    const video     = document.getElementById('video');
     const camSelect = document.getElementById('cam-select');
-    const statusEl = document.getElementById('status');
+    const statusEl  = document.getElementById('status');
+    const statusTxt = document.getElementById('status-text');
+    const skeleton  = document.getElementById('skeleton');
+    const countBadge = document.getElementById('count-badge');
+    const latencyChip = document.getElementById('latency-chip');
+    const latencyVal  = document.getElementById('latency-val');
+    const toastEl   = document.getElementById('toast');
 
+    // ── Status helpers ────────────────────────────────────────
     function setStatus(msg, cls = '') {
-      statusEl.textContent = msg;
-      statusEl.className = cls;
+      statusTxt.textContent = msg;
+      statusEl.className = 'status-pill' + (cls ? ' ' + cls : '');
     }
 
+    let toastTimer = null;
+    function showToast(msg, duration = 3000) {
+      toastEl.textContent = msg;
+      toastEl.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toastEl.classList.remove('show'), duration);
+    }
+
+    function setSkeleton(visible) {
+      skeleton.classList.toggle('visible', visible);
+    }
+
+    // ── Type toggle ───────────────────────────────────────────
+    function setType(type) {
+      currentType = type;
+      const btnRgb     = document.getElementById('btn-rgb');
+      const btnThermal = document.getElementById('btn-thermal');
+      btnRgb.classList.toggle('active', type === 'rgb');
+      btnThermal.classList.toggle('active', type === 'thermal');
+      btnRgb.setAttribute('aria-pressed', type === 'rgb');
+      btnThermal.setAttribute('aria-pressed', type === 'thermal');
+      loadStream();
+    }
+
+    // ── WebSocket (tracking) with auto-reconnect ──────────────
     function connectWS(cameraId) {
+      clearTimeout(wsRetryTimer);
       if (ws) { ws.close(); ws = null; }
       if (!cameraId) return;
-      ws = new WebSocket(`ws://${location.host}/ws/tracking/${cameraId}`);
-      ws.onmessage = (e) => {
-        try { latestBoxes = JSON.parse(e.data).objects || []; } catch (_) {}
+
+      const url = `ws://${location.host}/ws/tracking/${cameraId}`;
+
+      ws = new WebSocket(url);
+
+      ws.onopen = () => {
+        wsRetryCount = 0;
       };
-      ws.onclose = () => { latestBoxes = []; };
+
+      ws.onmessage = (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          latestBoxes = data.objects || [];
+          // 顯示豬隻數量
+          countBadge.textContent = latestBoxes.length;
+          // 顯示伺服器時間戳延遲（若有）
+          if (data.ts) {
+            const delay = Date.now() - data.ts;
+            latencyChip.style.display = '';
+            latencyVal.textContent = delay;
+          }
+        } catch (_) {}
+      };
+
+      ws.onclose = () => {
+        latestBoxes = [];
+        countBadge.textContent = '—';
+        // 自動 retry（指數退避）
+        if (wsRetryCount < MAX_WS_RETRY) {
+          const delay = WS_RETRY_BASE_MS * Math.pow(1.5, wsRetryCount);
+          wsRetryCount++;
+          showToast(`追蹤連線中斷，${(delay/1000).toFixed(1)}s 後重試...`);
+          wsRetryTimer = setTimeout(() => connectWS(cameraId), delay);
+        } else {
+          showToast('追蹤連線失敗，請重新整理頁面', 8000);
+        }
+      };
+
+      ws.onerror = () => {
+        // onerror 後必定會觸發 onclose，交給 onclose 處理
+      };
+    }
+
+    // ── Canvas overlay ────────────────────────────────────────
+    // 依來源類型選色：RGB 用綠、Thermal 用橘
+    function getBoxColor() {
+      return currentType === 'thermal' ? '#ff8c42' : '#22bb77';
     }
 
     function drawBoxes() {
       const canvas = document.getElementById('overlay');
-      const video = document.getElementById('video');
       canvas.width  = video.offsetWidth  || 1;
       canvas.height = video.offsetHeight || 1;
       const ctx = canvas.getContext('2d');
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      const sx = canvas.width / ORIG_W;
+
+      const sx = canvas.width  / ORIG_W;
       const sy = canvas.height / ORIG_H;
-      ctx.strokeStyle = '#0f0';
-      ctx.fillStyle   = '#0f0';
-      ctx.lineWidth   = 2;
-      ctx.font        = '13px monospace';
+      const color = getBoxColor();
+
+      ctx.strokeStyle = color;
+      ctx.fillStyle   = color;
+      ctx.lineWidth   = 1.5;
+      ctx.font        = 'bold 11px "DM Sans", monospace';
+
       for (const o of latestBoxes) {
         const [x, y, w, h] = o.bbox;
-        ctx.strokeRect(x * sx, y * sy, w * sx, h * sy);
-        ctx.fillText(`#${o.object_id}`, x * sx + 2, y * sy - 4);
+        const px = x * sx, py = y * sy, pw = w * sx, ph = h * sy;
+
+        // 圓角輔助 box（比直接 strokeRect 更精緻）
+        roundRect(ctx, px, py, pw, ph, 3);
+        ctx.stroke();
+
+        // 標籤背景
+        const label = `#${o.object_id}`;
+        const tw = ctx.measureText(label).width;
+        ctx.fillStyle = color;
+        ctx.fillRect(px - 0.5, py - 16, tw + 6, 15);
+        ctx.fillStyle = '#000';
+        ctx.fillText(label, px + 2, py - 4);
+        ctx.fillStyle = color;
       }
-      requestAnimationFrame(drawBoxes);
-    }
-    requestAnimationFrame(drawBoxes);
 
-    function setType(type) {
-      currentType = type;
-      document.getElementById('btn-rgb').classList.toggle('active', type === 'rgb');
-      document.getElementById('btn-thermal').classList.toggle('active', type === 'thermal');
-      loadStream();
+      animFrameId = requestAnimationFrame(drawBoxes);
     }
 
+    function roundRect(ctx, x, y, w, h, r) {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.lineTo(x + w - r, y);
+      ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+      ctx.lineTo(x + w, y + h - r);
+      ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+      ctx.lineTo(x + r, y + h);
+      ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+      ctx.lineTo(x, y + r);
+      ctx.quadraticCurveTo(x, y, x + r, y);
+      ctx.closePath();
+    }
+
+    animFrameId = requestAnimationFrame(drawBoxes);
+
+    // ── HLS stream ────────────────────────────────────────────
     async function loadStream() {
       if (!currentCamera) return;
+
+      // 清理舊的 HLS instance
       if (hls) { hls.destroy(); hls = null; }
+      video.src = '';
+      setSkeleton(true);
+      setStatus('正在連線...');
       connectWS(currentCamera);
-      setStatus('正在連線…');
+
       try {
         const res = await fetch(`/stream/${currentCamera}/live?type=${currentType}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const { url } = await res.json();
+
         if (Hls.isSupported()) {
           hls = new Hls({
-            lowLatencyMode: false,
-            liveSyncDurationCount: 2,
-            liveMaxLatencyDurationCount: 5,
-            maxBufferLength: 30,
-            backBufferLength: 0,
+            // ── 穩定播放（與後端 stable FPS 設計一致） ──
+            lowLatencyMode: false,         // 不需要極低延遲
+            liveSyncDurationCount: 3,      // buffer 3 個 segment（12s）讓播放更穩
+            liveMaxLatencyDurationCount: 8,// 最多容忍 8 個 segment 延遲
+            maxBufferLength: 40,
+            maxMaxBufferLength: 80,
+            backBufferLength: 60,          // 保留 60s 回播 buffer
+            // ── 網路抖動容忍 ──
+            levelLoadingTimeOut: 10000,
+            fragLoadingTimeOut: 20000,
+            // ── 遇到 stall 時積極追趕 ──
+            maxStarvationDelay: 4,
+            maxLoadingDelay: 4,
           });
+
           hls.loadSource(url);
           hls.attachMedia(video);
+
           hls.on(Hls.Events.MANIFEST_PARSED, () => {
-            video.play();
-            setStatus('● 連線中', 'live');
+            video.play().catch(() => {});
+            setSkeleton(false);
+            setStatus('連線中', 'live');
           });
+
+          hls.on(Hls.Events.LEVEL_LOADED, () => {
+            // 每次 segment 載入成功就更新一下狀態（讓人知道串流仍在進行）
+            if (statusEl.classList.contains('live')) {
+              setStatus('連線中', 'live');
+            }
+          });
+
           hls.on(Hls.Events.ERROR, (_, data) => {
             if (data.fatal) {
+              setSkeleton(true);
               if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-                hls.startLoad();
+                setStatus('網路錯誤，嘗試重新載入...', '');
+                setTimeout(() => hls && hls.startLoad(), 1500);
               } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+                setStatus('影像錯誤，嘗試修復...', '');
                 hls.recoverMediaError();
               } else {
                 setStatus(`串流錯誤：${data.details}`, 'error');
               }
             }
           });
+
+          // video 恢復播放後隱藏 skeleton
+          video.addEventListener('playing', () => setSkeleton(false), { once: false });
+          video.addEventListener('waiting', () => setSkeleton(true),   { once: false });
+
         } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+          // Safari native HLS
           video.src = url;
-          video.play();
-          setStatus('● 連線中', 'live');
+          video.play().catch(() => {});
+          setSkeleton(false);
+          setStatus('連線中', 'live');
         } else {
+          setSkeleton(false);
           setStatus('瀏覽器不支援 HLS', 'error');
         }
       } catch (e) {
+        setSkeleton(false);
         setStatus(`無法取得串流：${e.message}`, 'error');
       }
     }
 
+    // ── Init ──────────────────────────────────────────────────
     async function init() {
       try {
         const res = await fetch('/cameras');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const { cameras } = await res.json();
+        if (cameras.length === 0) throw new Error('no cameras');
+
         cameras.forEach(cam => {
           const opt = document.createElement('option');
           opt.value = cam;
           opt.textContent = cam;
           camSelect.appendChild(opt);
         });
-        if (cameras.length > 0) {
-          currentCamera = cameras[0];
-          loadStream();
-        }
+
+        currentCamera = cameras[0];
+        loadStream();
       } catch (e) {
-        setStatus('無法取得 camera 清單', 'error');
+        setSkeleton(false);
+        setStatus(`無法取得 camera 清單：${e.message}`, 'error');
       }
     }
 
     camSelect.addEventListener('change', () => {
       currentCamera = camSelect.value;
+      wsRetryCount = 0;  // reset retry 計數
       loadStream();
     });
 
