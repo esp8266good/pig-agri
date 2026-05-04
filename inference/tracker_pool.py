@@ -2,6 +2,7 @@ import argparse
 import threading
 
 import numpy as np
+import torch
 from loguru import logger
 from pathlib import Path
 
@@ -87,6 +88,9 @@ class TrackerPool:
                 logger.info(f"Created tracker for {camera_id}")
             tracker = self._trackers[camera_id]
 
+        # Hybrid_Sort_ReID.update expects a tensor; BatchDetector returns numpy.
+        if isinstance(dets, np.ndarray):
+            dets = torch.from_numpy(dets)
         # tracker.update is called outside the lock; callers must ensure
         # at most one concurrent update per camera_id (guaranteed by _process_batch).
         return tracker.update(dets, list(img_info), img_size, id_feature=id_feature)
