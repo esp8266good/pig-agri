@@ -1,3 +1,15 @@
+import sys
+from unittest.mock import MagicMock
+
+for _mod in [
+    "yolox", "yolox.exp", "yolox.utils", "yolox.data", "yolox.data.data_augment",
+    "trackers", "trackers.hybrid_sort_tracker",
+    "trackers.hybrid_sort_tracker.hybrid_sort_reid",
+    "fast_reid", "fast_reid.fast_reid_interfece",
+]:
+    if _mod not in sys.modules:
+        sys.modules[_mod] = MagicMock()
+
 import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -9,11 +21,14 @@ import zmq_receiver as zmq_mod
 
 @pytest.fixture
 def client():
+    import inference.pipeline as pipeline_mod
     with (
         patch.object(database, "connect", new_callable=AsyncMock),
         patch.object(database, "disconnect", new_callable=AsyncMock),
         patch.object(zmq_mod.zmq_receiver, "start"),
         patch.object(zmq_mod.zmq_receiver, "stop"),
+        patch.object(pipeline_mod.inference_pipeline, "start"),
+        patch.object(pipeline_mod.inference_pipeline, "stop"),
         patch("hls_manager.hls_manager.stop_all"),
     ):
         from main import app

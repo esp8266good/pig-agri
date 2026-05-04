@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -8,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 import database
 from config import settings as app_settings
 from hls_manager import hls_manager
+from inference.pipeline import inference_pipeline
 from routers import alerts, notes, stream, tracking
 from routers import settings as settings_router
 from zmq_receiver import zmq_receiver
@@ -16,9 +18,12 @@ from zmq_receiver import zmq_receiver
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await database.connect()
+    loop = asyncio.get_event_loop()
+    inference_pipeline.start(loop)
     zmq_receiver.start()
     yield
     zmq_receiver.stop()
+    inference_pipeline.stop()
     hls_manager.stop_all()
     await database.disconnect()
 

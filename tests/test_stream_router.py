@@ -6,11 +6,14 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture
 def client():
+    import inference.pipeline as pipeline_mod
     with (
         patch("database.connect", new_callable=AsyncMock),
         patch("database.disconnect", new_callable=AsyncMock),
         patch("zmq_receiver.zmq_receiver.start"),
         patch("zmq_receiver.zmq_receiver.stop"),
+        patch.object(pipeline_mod.inference_pipeline, "start"),
+        patch.object(pipeline_mod.inference_pipeline, "stop"),
         patch("hls_manager.hls_manager.stop_all"),
     ):
         from main import app
@@ -40,6 +43,7 @@ def test_live_invalid_type_returns_400(client):
 
 
 def test_serve_hls_file_returns_200(tmp_path, monkeypatch):
+    import inference.pipeline as pipeline_mod
     monkeypatch.setattr("routers.stream.settings.hls_base_dir", str(tmp_path))
     ts_file = tmp_path / "cam_01" / "rgb" / "2026-05-04-14" / "seg_000.ts"
     ts_file.parent.mkdir(parents=True)
@@ -49,6 +53,8 @@ def test_serve_hls_file_returns_200(tmp_path, monkeypatch):
         patch("database.disconnect", new_callable=AsyncMock),
         patch("zmq_receiver.zmq_receiver.start"),
         patch("zmq_receiver.zmq_receiver.stop"),
+        patch.object(pipeline_mod.inference_pipeline, "start"),
+        patch.object(pipeline_mod.inference_pipeline, "stop"),
         patch("hls_manager.hls_manager.stop_all"),
     ):
         from main import app
@@ -58,12 +64,15 @@ def test_serve_hls_file_returns_200(tmp_path, monkeypatch):
 
 
 def test_serve_hls_file_returns_404_when_missing(tmp_path, monkeypatch):
+    import inference.pipeline as pipeline_mod
     monkeypatch.setattr("routers.stream.settings.hls_base_dir", str(tmp_path))
     with (
         patch("database.connect", new_callable=AsyncMock),
         patch("database.disconnect", new_callable=AsyncMock),
         patch("zmq_receiver.zmq_receiver.start"),
         patch("zmq_receiver.zmq_receiver.stop"),
+        patch.object(pipeline_mod.inference_pipeline, "start"),
+        patch.object(pipeline_mod.inference_pipeline, "stop"),
         patch("hls_manager.hls_manager.stop_all"),
     ):
         from main import app
