@@ -16,6 +16,11 @@ class Settings(BaseSettings):
         env_file=".env", env_file_encoding="utf-8", extra="ignore"
     )
 
+    hls_target_fps: int = 20
+    hls_frame_buffer_size: int = 10
+    ffmpeg_log_level: str = "error"  # debug/info/warning/error/quiet
+    log_level: str = "INFO"
+    
     database_url: str = "postgresql://pig:pig_password@localhost:15432/pig_monitoring"
     zmq_port: int = 5555
     rpi_ip: str = "127.0.0.1"
