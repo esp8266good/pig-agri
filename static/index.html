@@ -51,12 +51,19 @@
       border-color: #2a6;
     }
     #video-wrap {
+      position: relative;
       width: 100%;
       max-width: 800px;
       background: #000;
       border-radius: 6px;
       overflow: hidden;
       aspect-ratio: 4/3;
+    }
+    #overlay {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      pointer-events: none;
     }
     video {
       width: 100%;
@@ -83,12 +90,16 @@
   </div>
   <div id="video-wrap">
     <video id="video" autoplay muted playsinline controls></video>
+    <canvas id="overlay"></canvas>
   </div>
   <div id="status">初始化中…</div>
 
   <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
   <script>
     let hls = null;
+    let ws = null;
+    let latestBoxes = [];
+    const ORIG_W = 640, ORIG_H = 480;
     let currentCamera = null;
     let currentType = 'rgb';
 
@@ -101,6 +112,38 @@
       statusEl.className = cls;
     }
 
+    function connectWS(cameraId) {
+      if (ws) { ws.close(); ws = null; }
+      if (!cameraId) return;
+      ws = new WebSocket(`ws://${location.host}/ws/tracking/${cameraId}`);
+      ws.onmessage = (e) => {
+        try { latestBoxes = JSON.parse(e.data).objects || []; } catch (_) {}
+      };
+      ws.onclose = () => { latestBoxes = []; };
+    }
+
+    function drawBoxes() {
+      const canvas = document.getElementById('overlay');
+      const video = document.getElementById('video');
+      canvas.width  = video.offsetWidth  || 1;
+      canvas.height = video.offsetHeight || 1;
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const sx = canvas.width / ORIG_W;
+      const sy = canvas.height / ORIG_H;
+      ctx.strokeStyle = '#0f0';
+      ctx.fillStyle   = '#0f0';
+      ctx.lineWidth   = 2;
+      ctx.font        = '13px monospace';
+      for (const o of latestBoxes) {
+        const [x, y, w, h] = o.bbox;
+        ctx.strokeRect(x * sx, y * sy, w * sx, h * sy);
+        ctx.fillText(`#${o.object_id}`, x * sx + 2, y * sy - 4);
+      }
+      requestAnimationFrame(drawBoxes);
+    }
+    requestAnimationFrame(drawBoxes);
+
     function setType(type) {
       currentType = type;
       document.getElementById('btn-rgb').classList.toggle('active', type === 'rgb');
@@ -111,6 +154,7 @@
     async function loadStream() {
       if (!currentCamera) return;
       if (hls) { hls.destroy(); hls = null; }
+      connectWS(currentCamera);
       setStatus('正在連線…');
       try {
         const res = await fetch(`/stream/${currentCamera}/live?type=${currentType}`);
