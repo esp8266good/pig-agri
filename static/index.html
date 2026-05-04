@@ -453,7 +453,8 @@
       if (!cameraId) return;
 
       const gen = ++wsGeneration;  // each call gets a unique generation token
-      const url = `ws://${location.host}/ws/tracking/${cameraId}`;
+      const wsProtocol = location.protocol === "https:" ? "wss:" : "ws:";
+      const url = `${wsProtocol}//${location.host}/ws/tracking/${cameraId}`;
       ws = new WebSocket(url);
 
       ws.onopen = () => {
