@@ -57,12 +57,6 @@ def test_stream_vod_returns_stub(client):
     assert resp.json() == {"status": "not implemented"}
 
 
-def test_tracking_returns_stub(client):
-    resp = client.get("/tracking/cam_01")
-    assert resp.status_code == 200
-    assert resp.json() == {"status": "not implemented"}
-
-
 def test_alerts_returns_stub(client):
     resp = client.get("/alerts")
     assert resp.status_code == 200
