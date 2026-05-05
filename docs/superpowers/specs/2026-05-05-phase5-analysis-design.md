@@ -102,10 +102,34 @@ async def query_health_alerts(
       id, camera_id, object_id, metric, current_value, mean_value, std_value,
       is_read, triggered_at_unix (float, Unix epoch seconds)
     """
-```
+    conditions = []
+    params: list = []
+    idx = 1
 
-- `triggered_at` 存為 TIMESTAMPTZ，查詢時 `EXTRACT(EPOCH FROM triggered_at) AS triggered_at_unix` 轉為 float 回傳
-- `start_ts` / `end_ts` 過濾：`EXTRACT(EPOCH FROM triggered_at) >= start_ts AND EXTRACT(EPOCH FROM triggered_at) < end_ts`
+    if camera_id is not None:
+        conditions.append(f"camera_id=${idx}"); params.append(camera_id); idx += 1
+    if unread_only:
+        conditions.append("is_read = FALSE")
+    if start_ts is not None:
+        conditions.append(f"EXTRACT(EPOCH FROM triggered_at) >= ${idx}"); params.append(start_ts); idx += 1
+    if end_ts is not None:
+        conditions.append(f"EXTRACT(EPOCH FROM triggered_at) < ${idx}"); params.append(end_ts); idx += 1
+
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    params.append(limit); limit_ph = f"${idx}"
+
+    sql = f"""
+        SELECT id, camera_id, object_id, metric,
+               current_value, mean_value, std_value, is_read,
+               EXTRACT(EPOCH FROM triggered_at)::float AS triggered_at_unix
+        FROM health_alerts
+        {where}
+        ORDER BY triggered_at DESC
+        LIMIT {limit_ph}
+    """
+    rows = await pool.fetch(sql, *params)
+    return [dict(r) for r in rows]
+```
 
 ### `mark_alert_read`
 
@@ -190,8 +214,8 @@ async def _run_analysis(self) -> None:
 
         # 活動量：連續 frame bbox 中心位移
         centers = [
-            (r["bb_left"] + r["bb_width"] / 2, r["bb_top"] + r["bb_height"] / 2)
-            for r in logs
+            (log["bb_left"] + log["bb_width"] / 2, log["bb_top"] + log["bb_height"] / 2)
+            for log in logs
         ]
         displacements = [
             math.hypot(centers[i][0] - centers[i-1][0], centers[i][1] - centers[i-1][1])
@@ -199,7 +223,7 @@ async def _run_analysis(self) -> None:
         ]
 
         # 體溫：thermal_intensity 序列（過濾 None）
-        temps = [r["thermal_intensity"] for r in logs if r["thermal_intensity"] is not None]
+        temps = [log["thermal_intensity"] for log in logs if log["thermal_intensity"] is not None]
 
         entry = _anomaly_cache.setdefault(camera_id, {}).setdefault(object_id, {
             "activity_anomaly": False, "temp_anomaly": False,
@@ -284,7 +308,7 @@ await scheduler.stop()
 </header>
 ```
 
-`bell-badge` 數字來自 `GET /alerts?unread_only=true&camera_id=`，每 30 秒更新（與 anomalyMap 同一個 interval）。
+`bell-badge` 數字來自 `GET /alerts?unread_only=true`（不帶 `camera_id`，顯示所有 camera 的未讀總數），每 30 秒更新（與 anomalyMap 同一個 interval）。
 
 ---
 
