@@ -89,7 +89,7 @@ def test_disconnect_removes_ws():
 
 # ── HTTP endpoint 確認（via TestClient）──
 
-def test_ws_tracking_http_endpoint_still_works(app_client):
+def test_get_tracking_requires_query_params(app_client):
+    # start/end 現在是必要參數；缺少時回傳 422
     resp = app_client.get("/tracking/cam_01")
-    assert resp.status_code == 200
-    assert resp.json() == {"status": "not implemented"}
+    assert resp.status_code == 422
