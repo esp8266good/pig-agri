@@ -55,7 +55,7 @@ GET /stream/{camera_id}/timeline?start_ts=...&end_ts=...
 → { "hours": [1746403200, 1746406800, ...] }
 ```
 
-實作：掃 `{HLS_BASE_DIR}/{camera_id}/rgb/` 下的子目錄名，用 `datetime.strptime(dir_name, "%Y-%m-%d-%H")` 解析為本地時間，再轉 Unix 整點時間戳，回傳落在 `[start_ts, end_ts)` 的小時列表。
+實作：掃 `{HLS_BASE_DIR}/{camera_id}/rgb/` 下的子目錄名（以 `rgb` 為正式串流型別，thermal 不列入時間軸），用 `datetime.strptime(dir_name, "%Y-%m-%d-%H")` 解析為本地時間，再轉 Unix 整點時間戳，回傳落在 `[start_ts, end_ts)` 的小時列表。若目錄不存在則回傳空列表。
 
 前端 `loadTimeline()` 改呼叫 `/stream/{camera_id}/timeline`，時間軸只標示真正有 HLS 資料可回放的小時。
 
