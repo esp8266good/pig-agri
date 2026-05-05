@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     device: str = "cuda"
     mot_worker_threads: int = 20
     analysis_interval_minutes: int = 30
-    analysis_window_hours: int = 6
+    analysis_window_minutes: int = 30
     anomaly_std_threshold: float = 3.0
     anomaly_min_samples: int = 50
 
