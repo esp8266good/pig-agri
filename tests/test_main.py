@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 
 import database
 import zmq_receiver as zmq_mod
+from analysis import scheduler as scheduler_mod
 
 
 @pytest.fixture
@@ -30,6 +31,8 @@ def client():
         patch.object(pipeline_mod.inference_pipeline, "start"),
         patch.object(pipeline_mod.inference_pipeline, "stop"),
         patch("hls_manager.hls_manager.stop_all"),
+        patch.object(scheduler_mod.Scheduler, "start", new_callable=AsyncMock),
+        patch.object(scheduler_mod.Scheduler, "stop", new_callable=AsyncMock),
     ):
         from main import app
         with TestClient(app) as c:
@@ -76,3 +79,9 @@ def test_cameras_returns_list(client):
     assert "cameras" in data
     assert isinstance(data["cameras"], list)
     assert len(data["cameras"]) > 0
+
+
+def test_alerts_active_returns_empty_cache(client):
+    resp = client.get("/alerts/active")
+    assert resp.status_code == 200
+    assert resp.json() == {"cache": {}}

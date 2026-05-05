@@ -7,6 +7,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 import database
+from analysis.scheduler import Scheduler
 from config import settings as app_settings
 from hls_manager import hls_manager
 from inference.pipeline import inference_pipeline
@@ -18,6 +19,8 @@ from zmq_receiver import zmq_receiver
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await database.connect()
+    scheduler = Scheduler(database.get_pool(), app_settings)
+    await scheduler.start()
     loop = asyncio.get_event_loop()
     inference_pipeline.start(loop)
     zmq_receiver.start()
@@ -25,6 +28,7 @@ async def lifespan(app: FastAPI):
     zmq_receiver.stop()
     inference_pipeline.stop()
     hls_manager.stop_all()
+    await scheduler.stop()
     await database.disconnect()
 
 
