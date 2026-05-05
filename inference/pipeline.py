@@ -158,6 +158,7 @@ class InferencePipeline:
                         "object_id": obj_id,
                         "bbox": [x1, y1, x2 - x1, y2 - y1],
                         "confidence": conf,
+                        # thermal_intensity is DB-only; not included in live WS payload
                     })
                     pool = database.get_pool()
                     if pool is not None:
