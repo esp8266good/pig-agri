@@ -486,6 +486,10 @@
     let isLive = true;
     let currentWeekStart = null;   // 本週週一 00:00:00 UTC 的 Unix 秒
     let vodDebounceTimer = null;
+    let anomalyMap = {};           // { object_id: { activity_anomaly, temp_anomaly, ... } }
+    let vodAlerts = [];            // VOD 模式下的歷史 alerts
+    let liveAnomalyIntervalId = null;
+    let currentObjectIds = new Set();  // 最近一次 WS frame 出現的 object_id
 
     // ── DOM refs ──────────────────────────────────────────────
     const video     = document.getElementById('video');
@@ -602,6 +606,18 @@
       countBadge.textContent = '—';
       latencyChip.style.display = 'none';
       clearTimeout(vodDebounceTimer);
+      clearInterval(liveAnomalyIntervalId);
+      liveAnomalyIntervalId = null;
+      anomalyMap = {};
+      vodAlerts  = [];
+      currentObjectIds.clear();
+
+      // 抓此 VOD 時段的歷史 alerts（含前 30 分鐘）
+      const vodEnd = startTs + 3600;
+      fetch(`/alerts?camera_id=${currentCamera}&start_ts=${startTs - 1800}&end_ts=${vodEnd + 300}`)
+        .then(r => r.json())
+        .then(data => { vodAlerts = data.alerts || []; })
+        .catch(() => {});
 
       // 斷開 WS（不重連）
       clearTimeout(wsRetryTimer);
@@ -649,11 +665,17 @@
       liveBtn.style.display = 'none';
       video.removeEventListener('timeupdate', onVodTimeUpdate);
       clearTimeout(vodDebounceTimer);
+      clearInterval(liveAnomalyIntervalId);
+      anomalyMap = {};
+      vodAlerts  = [];
       latestBoxes = [];
+      currentObjectIds.clear();
       document.querySelectorAll('.timeline-slot.selected')
         .forEach(s => s.classList.remove('selected'));
       wsRetryCount = 0;
       loadStream();
+      liveAnomalyIntervalId = setInterval(refreshAnomalyMap, 30000);
+      refreshAnomalyMap();
     }
 
     // ── Historical MOT overlay ────────────────────────────────
@@ -672,8 +694,37 @@
           const data = await resp.json();
           latestBoxes = data.logs || [];
           countBadge.textContent = latestBoxes.length;
+          currentObjectIds = new Set(latestBoxes.map(o => o.object_id));
+          updateVodAnomalyMap(ts);
         } catch (_) {}
       }, 300);
+    }
+
+    // ── Anomaly map ───────────────────────────────────────────
+    async function refreshAnomalyMap() {
+      if (!currentCamera) return;
+      try {
+        const data = await fetch(`/alerts/active?camera_id=${currentCamera}`).then(r => r.json());
+        const camCache = data.cache?.[currentCamera] ?? {};
+        anomalyMap = {};
+        for (const [oid, info] of Object.entries(camCache)) {
+          anomalyMap[parseInt(oid)] = info;
+        }
+      } catch (_) {}
+    }
+
+    function updateVodAnomalyMap(currentTs) {
+      anomalyMap = {};
+      for (const alert of vodAlerts) {
+        const winStart = alert.triggered_at_unix - 1800;
+        const winEnd   = alert.triggered_at_unix;
+        if (currentTs >= winStart && currentTs <= winEnd) {
+          const entry = anomalyMap[alert.object_id] ?? { activity_anomaly: false, temp_anomaly: false };
+          if (alert.metric === 'activity')    entry.activity_anomaly = true;
+          if (alert.metric === 'temperature') entry.temp_anomaly = true;
+          anomalyMap[alert.object_id] = entry;
+        }
+      }
     }
 
     // ── Type toggle ───────────────────────────────────────────
@@ -714,6 +765,7 @@
           const data = JSON.parse(e.data);
           latestBoxes = data.objects || [];
           countBadge.textContent = latestBoxes.length;
+          currentObjectIds = new Set(latestBoxes.map(o => o.object_id));
           if (data.timestamp) {
             const delay = Date.now() - data.timestamp * 1000;
             latencyChip.style.display = '';
@@ -752,36 +804,24 @@
       const canvas = document.getElementById('overlay');
       const elW = video.offsetWidth  || 1;
       const elH = video.offsetHeight || 1;
-
-      // Avoid thrashing canvas state (resetting width/height clears the context)
-      if (canvas.width !== elW)  canvas.width  = elW;
+      if (canvas.width  !== elW) canvas.width  = elW;
       if (canvas.height !== elH) canvas.height = elH;
-
       const ctx = canvas.getContext('2d');
       ctx.clearRect(0, 0, elW, elH);
-
       const vidW = video.videoWidth;
       const vidH = video.videoHeight;
-
-      // Can't draw until video metadata is known or there are no boxes
       if (!vidW || !vidH || !latestBoxes.length) {
         animFrameId = requestAnimationFrame(drawBoxes);
         return;
       }
-
-      // Compute the actual rendered video rect inside the element.
-      // object-fit:contain scales the video to fit, centred, with black bars.
-      const scale = Math.min(elW / vidW, elH / vidH);
+      const scale   = Math.min(elW / vidW, elH / vidH);
       const renderW = vidW * scale;
       const renderH = vidH * scale;
       const offX = (elW - renderW) / 2;
       const offY = (elH - renderH) / 2;
-
-      const color = getBoxColor();
-      ctx.strokeStyle = color;
-      ctx.fillStyle   = color;
-      ctx.lineWidth   = 1.5;
-      ctx.font        = 'bold 11px "DM Sans", monospace';
+      const baseColor = getBoxColor();
+      ctx.lineWidth = 1.5;
+      ctx.font = 'bold 11px "DM Sans", monospace';
 
       for (const o of latestBoxes) {
         const [x, y, w, h] = o.bbox;
@@ -789,10 +829,16 @@
         const py = offY + y * scale;
         const pw = w * scale;
         const ph = h * scale;
+        const anomaly     = anomalyMap[o.object_id];
+        const isAnomalous = anomaly && (anomaly.activity_anomaly || anomaly.temp_anomaly);
+        const color       = isAnomalous ? '#ff4444' : baseColor;
 
+        ctx.strokeStyle = color;
+        ctx.fillStyle   = color;
         roundRect(ctx, px, py, pw, ph, 3);
         ctx.stroke();
 
+        // 豬隻 ID 標籤
         const label = `#${o.object_id}`;
         const tw = ctx.measureText(label).width;
         ctx.fillStyle = color;
@@ -800,8 +846,15 @@
         ctx.fillStyle = '#000';
         ctx.fillText(label, px + 2, py - 4);
         ctx.fillStyle = color;
-      }
 
+        // 異常圖示（bbox 左下角）
+        if (anomaly) {
+          let icons = '';
+          if (anomaly.activity_anomaly) icons += '⚠';
+          if (anomaly.temp_anomaly)     icons += '🌡';
+          if (icons) ctx.fillText(icons, px + 2, py + ph - 2);
+        }
+      }
       animFrameId = requestAnimationFrame(drawBoxes);
     }
 
@@ -925,6 +978,8 @@
         currentWeekStart = getWeekStart(new Date());
         updateWeekNavButtons();
         loadTimeline();
+        liveAnomalyIntervalId = setInterval(refreshAnomalyMap, 30000);
+        refreshAnomalyMap();
       } catch (e) {
         setSkeleton(false);
         setStatus(`無法取得 camera 清單：${e.message}`, 'error');
@@ -933,6 +988,10 @@
 
     camSelect.addEventListener('change', () => {
       currentCamera = camSelect.value;
+      clearInterval(liveAnomalyIntervalId);
+      anomalyMap = {};
+      vodAlerts  = [];
+      currentObjectIds.clear();
       wsRetryCount = 0;
       latestBoxes = [];
       countBadge.textContent = '—';
@@ -946,6 +1005,8 @@
       }
       loadStream();
       loadTimeline();
+      liveAnomalyIntervalId = setInterval(refreshAnomalyMap, 30000);
+      refreshAnomalyMap();
     });
 
     init();
