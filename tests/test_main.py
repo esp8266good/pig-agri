@@ -52,10 +52,9 @@ def test_stream_live_returns_m3u8_url(client):
 
 
 
-def test_alerts_returns_stub(client):
+def test_alerts_no_pool_returns_503(client):
     resp = client.get("/alerts")
-    assert resp.status_code == 200
-    assert resp.json() == {"status": "not implemented"}
+    assert resp.status_code == 503
 
 
 def test_settings_get_returns_stub(client):
