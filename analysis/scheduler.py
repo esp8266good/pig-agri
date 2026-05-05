@@ -126,12 +126,13 @@ class Scheduler:
                     "activity_std": std_a,
                 })
                 if std_a > 0 and current_a < mean_a - self._settings.anomaly_std_threshold * std_a:
+                    if not entry["activity_anomaly"]:
+                        await write_health_alert(
+                            self._pool, camera_id=camera_id, object_id=object_id,
+                            metric="activity", current_value=current_a,
+                            mean_value=mean_a, std_value=std_a,
+                        )
                     entry["activity_anomaly"] = True
-                    await write_health_alert(
-                        self._pool, camera_id=camera_id, object_id=object_id,
-                        metric="activity", current_value=current_a,
-                        mean_value=mean_a, std_value=std_a,
-                    )
                 else:
                     entry["activity_anomaly"] = False
 
@@ -145,11 +146,12 @@ class Scheduler:
                     "temp_std": std_t,
                 })
                 if std_t > 0 and abs(current_t - mean_t) > self._settings.anomaly_std_threshold * std_t:
+                    if not entry["temp_anomaly"]:
+                        await write_health_alert(
+                            self._pool, camera_id=camera_id, object_id=object_id,
+                            metric="temperature", current_value=current_t,
+                            mean_value=mean_t, std_value=std_t,
+                        )
                     entry["temp_anomaly"] = True
-                    await write_health_alert(
-                        self._pool, camera_id=camera_id, object_id=object_id,
-                        metric="temperature", current_value=current_t,
-                        mean_value=mean_t, std_value=std_t,
-                    )
                 else:
                     entry["temp_anomaly"] = False
