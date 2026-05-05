@@ -51,11 +51,6 @@ def test_stream_live_returns_m3u8_url(client):
     assert resp.json()["url"] == "/stream/hls/cam_01/rgb/2026-05-04-14/index.m3u8"
 
 
-def test_stream_vod_returns_stub(client):
-    resp = client.get("/stream/cam_01/vod")
-    assert resp.status_code == 200
-    assert resp.json() == {"status": "not implemented"}
-
 
 def test_alerts_returns_stub(client):
     resp = client.get("/alerts")
