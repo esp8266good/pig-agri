@@ -129,3 +129,75 @@ async def query_timeline_hours(
 
     rows = await pool.fetch(sql, camera_id, start_ts, end_ts)
     return [int(row["hour"]) for row in rows]
+
+
+async def write_health_alert(
+    pool: asyncpg.Pool,
+    *,
+    camera_id: str,
+    object_id: int,
+    metric: str,
+    current_value: float,
+    mean_value: float,
+    std_value: float,
+) -> int:
+    row = await pool.fetchrow(
+        """INSERT INTO health_alerts
+           (camera_id, object_id, metric, current_value, mean_value, std_value)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           RETURNING id""",
+        camera_id, object_id, metric, current_value, mean_value, std_value,
+    )
+    return row["id"]
+
+
+async def query_health_alerts(
+    pool: asyncpg.Pool,
+    camera_id: Optional[str] = None,
+    unread_only: bool = False,
+    limit: int = 50,
+    start_ts: Optional[float] = None,
+    end_ts: Optional[float] = None,
+) -> list[dict]:
+    conditions = []
+    params: list = []
+    idx = 1
+
+    if camera_id is not None:
+        conditions.append(f"camera_id=${idx}")
+        params.append(camera_id)
+        idx += 1
+    if unread_only:
+        conditions.append("is_read = FALSE")
+    if start_ts is not None:
+        conditions.append(f"EXTRACT(EPOCH FROM triggered_at) >= ${idx}")
+        params.append(start_ts)
+        idx += 1
+    if end_ts is not None:
+        conditions.append(f"EXTRACT(EPOCH FROM triggered_at) < ${idx}")
+        params.append(end_ts)
+        idx += 1
+
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    params.append(limit)
+    limit_ph = f"${idx}"
+
+    sql = f"""
+        SELECT id, camera_id, object_id, metric,
+               current_value, mean_value, std_value, is_read,
+               EXTRACT(EPOCH FROM triggered_at)::float AS triggered_at_unix
+        FROM health_alerts
+        {where}
+        ORDER BY triggered_at DESC
+        LIMIT {limit_ph}
+    """
+    rows = await pool.fetch(sql, *params)
+    return [dict(r) for r in rows]
+
+
+async def mark_alert_read(pool: asyncpg.Pool, alert_id: int) -> bool:
+    result = await pool.execute(
+        "UPDATE health_alerts SET is_read = TRUE WHERE id = $1",
+        alert_id,
+    )
+    return result != "UPDATE 0"

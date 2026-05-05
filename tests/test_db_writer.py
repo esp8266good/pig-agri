@@ -162,3 +162,69 @@ def test_query_timeline_hours_returns_int_list(mock_pool):
     assert isinstance(result, list)
     assert result == [1000000, 1003600]
     assert all(isinstance(h, int) for h in result)
+
+
+def test_write_health_alert_returns_id(mock_pool):
+    from db_writer import write_health_alert
+    mock_pool.fetchrow.return_value = {"id": 42}
+
+    result = asyncio.run(write_health_alert(
+        mock_pool,
+        camera_id="cam_01",
+        object_id=3,
+        metric="activity",
+        current_value=12.4,
+        mean_value=38.1,
+        std_value=8.5,
+    ))
+
+    assert result == 42
+    mock_pool.fetchrow.assert_called_once()
+    sql = mock_pool.fetchrow.call_args[0][0]
+    assert "INSERT INTO health_alerts" in sql
+
+
+def test_query_health_alerts_returns_list(mock_pool):
+    from db_writer import query_health_alerts
+    mock_pool.fetch.return_value = [
+        {
+            "id": 1, "camera_id": "cam_01", "object_id": 3,
+            "metric": "activity", "current_value": 12.4,
+            "mean_value": 38.1, "std_value": 8.5,
+            "is_read": False, "triggered_at_unix": 1746444720.0,
+        }
+    ]
+
+    result = asyncio.run(query_health_alerts(mock_pool, camera_id="cam_01"))
+
+    assert len(result) == 1
+    assert result[0]["camera_id"] == "cam_01"
+    assert result[0]["triggered_at_unix"] == 1746444720.0
+
+
+def test_query_health_alerts_time_filter_uses_extract(mock_pool):
+    from db_writer import query_health_alerts
+    mock_pool.fetch.return_value = []
+
+    asyncio.run(query_health_alerts(mock_pool, start_ts=1000.0, end_ts=2000.0))
+
+    sql = mock_pool.fetch.call_args[0][0]
+    assert "EXTRACT(EPOCH FROM triggered_at)" in sql
+
+
+def test_mark_alert_read_returns_true_when_found(mock_pool):
+    from db_writer import mark_alert_read
+    mock_pool.execute.return_value = "UPDATE 1"
+
+    result = asyncio.run(mark_alert_read(mock_pool, 42))
+
+    assert result is True
+
+
+def test_mark_alert_read_returns_false_when_not_found(mock_pool):
+    from db_writer import mark_alert_read
+    mock_pool.execute.return_value = "UPDATE 0"
+
+    result = asyncio.run(mark_alert_read(mock_pool, 999))
+
+    assert result is False
