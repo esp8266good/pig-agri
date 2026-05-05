@@ -325,6 +325,74 @@
         transition-duration: 0.01ms !important;
       }
     }
+
+    /* ── Timeline ──────────────────────────────────────────── */
+    #timeline-section {
+      width: 100%;
+      max-width: 840px;
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-2);
+    }
+    #week-nav {
+      display: flex;
+      align-items: center;
+      gap: var(--space-3);
+      flex-wrap: wrap;
+    }
+    .week-nav-btn {
+      padding: var(--space-1) var(--space-3);
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text);
+      font-size: var(--text-sm);
+      transition: background var(--transition);
+    }
+    .week-nav-btn:hover:not(:disabled) { background: var(--surface-3); }
+    .week-nav-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+    #week-label {
+      flex: 1;
+      text-align: center;
+      font-size: var(--text-sm);
+      color: var(--text-muted);
+    }
+    #live-btn {
+      padding: var(--space-1) var(--space-3);
+      background: var(--accent);
+      border-radius: var(--radius-full);
+      border: none;
+      color: #000;
+      font-weight: 600;
+      font-size: var(--text-xs);
+      letter-spacing: 0.04em;
+      cursor: pointer;
+    }
+    #timeline-bar {
+      display: flex;
+      width: 100%;
+      height: 24px;
+      background: var(--surface-2);
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      gap: 1px;
+    }
+    .timeline-slot {
+      flex: 1;
+      background: var(--surface-3);
+    }
+    .timeline-slot.has-data {
+      background: var(--accent-dim);
+      cursor: pointer;
+      transition: background var(--transition);
+    }
+    .timeline-slot.has-data:hover { background: rgba(34,187,119,0.35); }
+    .timeline-slot.selected { background: var(--accent); }
+    .status-pill.vod {
+      color: var(--warning);
+      background: rgba(224,160,48,0.15);
+      border-color: rgba(224,160,48,0.3);
+    }
   </style>
 </head>
 <body>
@@ -386,6 +454,17 @@
     </div>
   </div>
 
+  <!-- Timeline -->
+  <div id="timeline-section">
+    <div id="week-nav">
+      <button class="week-nav-btn" id="prev-week-btn" onclick="prevWeek()" aria-label="上一週">&#8249;</button>
+      <span id="week-label"></span>
+      <button class="week-nav-btn" id="next-week-btn" onclick="nextWeek()" aria-label="下一週">&#8250;</button>
+      <button id="live-btn" onclick="switchToLive()" style="display:none">● Live</button>
+    </div>
+    <div id="timeline-bar" role="list" aria-label="時間軸（每格代表一小時）"></div>
+  </div>
+
   <!-- WS reconnect toast -->
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
@@ -404,6 +483,9 @@
     let currentCamera = null;
     let currentType = 'rgb';
     let animFrameId = null;
+    let isLive = true;
+    let currentWeekStart = null;   // 本週週一 00:00:00 UTC 的 Unix 秒
+    let vodDebounceTimer = null;
 
     // ── DOM refs ──────────────────────────────────────────────
     const video     = document.getElementById('video');
@@ -415,6 +497,11 @@
     const latencyChip = document.getElementById('latency-chip');
     const latencyVal  = document.getElementById('latency-val');
     const toastEl   = document.getElementById('toast');
+    const liveBtn        = document.getElementById('live-btn');
+    const prevWeekBtn    = document.getElementById('prev-week-btn');
+    const nextWeekBtn    = document.getElementById('next-week-btn');
+    const weekLabelEl    = document.getElementById('week-label');
+    const timelineBar    = document.getElementById('timeline-bar');
 
     // ── Status helpers ────────────────────────────────────────
     function setStatus(msg, cls = '') {
@@ -434,6 +521,160 @@
       skeleton.classList.toggle('visible', visible);
     }
 
+    // ── Timeline helpers ──────────────────────────────────────
+    function getWeekStart(date) {
+      const d = new Date(date);
+      const day = d.getUTCDay();               // 0=Sun, 1=Mon...
+      const diff = day === 0 ? -6 : 1 - day;  // 距離週一的天數
+      d.setUTCDate(d.getUTCDate() + diff);
+      d.setUTCHours(0, 0, 0, 0);
+      return d.getTime() / 1000;
+    }
+
+    function formatWeekLabel(weekStartTs) {
+      const s = new Date(weekStartTs * 1000);
+      const e = new Date((weekStartTs + 6 * 86400) * 1000);
+      const pad = n => String(n).padStart(2, '0');
+      const startStr = `${pad(s.getUTCMonth()+1)}/${pad(s.getUTCDate())}`;
+      const endStr   = `${pad(e.getUTCMonth()+1)}/${pad(e.getUTCDate())}`;
+      return `${s.getUTCFullYear()}年${s.getUTCMonth()+1}月 ${startStr} – ${endStr}`;
+    }
+
+    function updateWeekNavButtons() {
+      const nowWeekStart = getWeekStart(new Date());
+      const minWeekStart = getWeekStart(new Date(Date.now() - 90 * 86400 * 1000));
+      prevWeekBtn.disabled = currentWeekStart <= minWeekStart;
+      nextWeekBtn.disabled = currentWeekStart >= nowWeekStart;
+      weekLabelEl.textContent = formatWeekLabel(currentWeekStart);
+    }
+
+    function prevWeek() {
+      currentWeekStart -= 7 * 86400;
+      updateWeekNavButtons();
+      loadTimeline();
+    }
+
+    function nextWeek() {
+      currentWeekStart += 7 * 86400;
+      updateWeekNavButtons();
+      loadTimeline();
+    }
+
+    async function loadTimeline() {
+      if (!currentCamera || !currentWeekStart) return;
+      const startTs = currentWeekStart;
+      const endTs   = currentWeekStart + 7 * 24 * 3600;
+      try {
+        const resp = await fetch(`/tracking/${currentCamera}/timeline?start_ts=${startTs}&end_ts=${endTs}`);
+        if (!resp.ok) return;
+        const { hours } = await resp.json();
+        renderTimeline(hours);
+      } catch (_) {}
+    }
+
+    function renderTimeline(hours) {
+      timelineBar.innerHTML = '';
+      const hourSet = new Set(hours);
+      for (let i = 0; i < 168; i++) {
+        const slotTs = currentWeekStart + i * 3600;
+        const hasData = hourSet.has(slotTs);
+        const slot = document.createElement('div');
+        slot.className = 'timeline-slot' + (hasData ? ' has-data' : '');
+        slot.setAttribute('role', 'listitem');
+        slot.title = new Date(slotTs * 1000).toLocaleString('zh-TW');
+        if (hasData) {
+          slot.addEventListener('click', () => {
+            document.querySelectorAll('.timeline-slot.selected')
+              .forEach(s => s.classList.remove('selected'));
+            slot.classList.add('selected');
+            loadVod(slotTs);
+          });
+        }
+        timelineBar.appendChild(slot);
+      }
+    }
+
+    // ── VOD mode ──────────────────────────────────────────────
+    function loadVod(startTs) {
+      isLive = false;
+      liveBtn.style.display = '';
+      latestBoxes = [];
+      countBadge.textContent = '—';
+      latencyChip.style.display = 'none';
+
+      // 斷開 WS（不重連）
+      clearTimeout(wsRetryTimer);
+      wsGeneration++;
+      if (ws) { ws.close(); ws = null; }
+
+      video.removeEventListener('timeupdate', onVodTimeUpdate);
+      if (hls) { hls.destroy(); hls = null; }
+      video.src = '';
+      setSkeleton(true);
+      setStatus('載入回放...', '');
+
+      const vodUrl = `/stream/${currentCamera}/vod?start=${startTs}&end=${startTs + 3600}&type=${currentType}`;
+
+      if (Hls.isSupported()) {
+        hls = new Hls({ lowLatencyMode: false, backBufferLength: 0 });
+        hls.loadSource(vodUrl);
+        hls.attachMedia(video);
+
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          video.play().catch(() => {});
+          setSkeleton(false);
+          const dt = new Date(startTs * 1000);
+          const label = dt.toLocaleString('zh-TW', {
+            year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit',
+          });
+          setStatus(`回放中 ${label}`, 'vod');
+        });
+
+        hls.on(Hls.Events.ERROR, (_, data) => {
+          if (data.fatal) {
+            setSkeleton(false);
+            setStatus(`回放錯誤：${data.details}`, 'error');
+          }
+        });
+
+        video.addEventListener('timeupdate', onVodTimeUpdate);
+      }
+    }
+
+    function switchToLive() {
+      if (isLive) return;
+      isLive = true;
+      liveBtn.style.display = 'none';
+      video.removeEventListener('timeupdate', onVodTimeUpdate);
+      clearTimeout(vodDebounceTimer);
+      latestBoxes = [];
+      document.querySelectorAll('.timeline-slot.selected')
+        .forEach(s => s.classList.remove('selected'));
+      wsRetryCount = 0;
+      loadStream();
+    }
+
+    // ── Historical MOT overlay ────────────────────────────────
+    function onVodTimeUpdate() {
+      if (isLive || !hls) return;
+      clearTimeout(vodDebounceTimer);
+      vodDebounceTimer = setTimeout(async () => {
+        const pd = hls.playingDate;
+        if (!pd) return;
+        const ts = pd.getTime() / 1000;
+        try {
+          const resp = await fetch(
+            `/tracking/${currentCamera}?start=${ts - 0.5}&end=${ts + 0.5}`
+          );
+          if (!resp.ok) return;
+          const data = await resp.json();
+          latestBoxes = data.logs || [];
+          countBadge.textContent = latestBoxes.length;
+        } catch (_) {}
+      }, 300);
+    }
+
     // ── Type toggle ───────────────────────────────────────────
     function setType(type) {
       currentType = type;
@@ -443,7 +684,11 @@
       btnThermal.classList.toggle('active', type === 'thermal');
       btnRgb.setAttribute('aria-pressed', type === 'rgb');
       btnThermal.setAttribute('aria-pressed', type === 'thermal');
-      loadStream();
+      if (!isLive) {
+        switchToLive();
+      } else {
+        loadStream();
+      }
     }
 
     // ── WebSocket (tracking) with auto-reconnect ──────────────
@@ -676,6 +921,9 @@
 
         currentCamera = cameras[0];
         loadStream();
+        currentWeekStart = getWeekStart(new Date());
+        updateWeekNavButtons();
+        loadTimeline();
       } catch (e) {
         setSkeleton(false);
         setStatus(`無法取得 camera 清單：${e.message}`, 'error');
@@ -685,9 +933,18 @@
     camSelect.addEventListener('change', () => {
       currentCamera = camSelect.value;
       wsRetryCount = 0;
-      latestBoxes = [];       // clear immediately so stale boxes don't flash
+      latestBoxes = [];
       countBadge.textContent = '—';
+      if (!isLive) {
+        isLive = true;
+        liveBtn.style.display = 'none';
+        video.removeEventListener('timeupdate', onVodTimeUpdate);
+        clearTimeout(vodDebounceTimer);
+        document.querySelectorAll('.timeline-slot.selected')
+          .forEach(s => s.classList.remove('selected'));
+      }
       loadStream();
+      loadTimeline();
     });
 
     init();
