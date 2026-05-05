@@ -84,3 +84,28 @@ def test_serve_hls_file_returns_404_when_missing(tmp_path, monkeypatch):
 def test_live_unknown_camera_returns_404(client):
     resp = client.get("/stream/unknown_cam/live")
     assert resp.status_code == 404
+
+
+def test_vod_returns_m3u8_content(client):
+    fake_m3u8 = "#EXTM3U\n#EXT-X-ENDLIST\n"
+    with patch("routers.stream.build_vod_m3u8", return_value=fake_m3u8):
+        resp = client.get("/stream/rpi_sensors/vod?start=1000&end=4600&type=rgb")
+    assert resp.status_code == 200
+    assert resp.text == fake_m3u8
+    assert resp.headers["content-type"].startswith("application/vnd.apple.mpegurl")
+
+
+def test_vod_returns_404_when_no_segments(client):
+    with patch("routers.stream.build_vod_m3u8", return_value=None):
+        resp = client.get("/stream/rpi_sensors/vod?start=1000&end=4600&type=rgb")
+    assert resp.status_code == 404
+
+
+def test_vod_returns_400_for_invalid_type(client):
+    resp = client.get("/stream/rpi_sensors/vod?start=1000&end=4600&type=invalid")
+    assert resp.status_code == 400
+
+
+def test_vod_returns_404_for_unknown_camera(client):
+    resp = client.get("/stream/unknown_cam/vod?start=1000&end=4600")
+    assert resp.status_code == 404

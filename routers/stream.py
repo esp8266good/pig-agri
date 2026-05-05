@@ -1,10 +1,11 @@
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 
 from config import settings
 from hls_manager import hls_manager
+from vod_generator import build_vod_m3u8
 
 router = APIRouter(prefix="/stream", tags=["stream"])
 
@@ -38,5 +39,17 @@ async def get_live_stream(
 
 
 @router.get("/{camera_id}/vod")
-async def get_vod_stream(camera_id: str, start: float = 0, end: float = 0):
-    return {"status": "not implemented"}
+async def get_vod_stream(
+    camera_id: str,
+    start: float,
+    end: float,
+    stream_type: str = Query("rgb", alias="type"),
+):
+    if stream_type not in ("rgb", "thermal"):
+        raise HTTPException(status_code=400, detail="type must be 'rgb' or 'thermal'")
+    if camera_id not in settings.camera_topics:
+        raise HTTPException(status_code=404, detail="Camera not found")
+    m3u8 = build_vod_m3u8(camera_id, stream_type, start, end)
+    if m3u8 is None:
+        raise HTTPException(status_code=404, detail="No segments found for this time range")
+    return PlainTextResponse(m3u8, media_type="application/vnd.apple.mpegurl")
