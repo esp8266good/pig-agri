@@ -349,6 +349,24 @@ await scheduler.stop()
 
 ---
 
+### Bbox 與異常狀態同步保證
+
+`drawBoxes(objects)` 在每次呼叫時同時取用兩個資料來源：
+
+| 資料 | Live 來源 | VOD 來源 |
+|------|-----------|----------|
+| bbox 座標 | WebSocket `objects` payload（即時） | `/tracking/{cam}?start=&end=` 查詢結果 |
+| 異常狀態 | `anomalyMap`（30 秒 poll） | `vodAlerts` 依播放時間計算 |
+
+由於圖示畫在當次 `objects` 裡的 `(x, y)` 座標上，不論異常狀態多久更新一次，位置永遠對應當下可見的 bbox。30 秒的 anomaly 狀態落差對 30 分鐘視窗的異常判斷而言可忽略不計。
+
+**必須清空 anomalyMap 的時機：**
+- 切換 camera（`camSelect` onChange）：先清空 `anomalyMap = {}`，再呼叫 `refreshAnomalyMap()`，避免舊 camera 的異常狀態套用到新 camera 的 bbox
+- 切換至 Live 模式（`switchToLive()`）：先清空 `anomalyMap = {}`，再啟動 30 秒 poll
+- 進入 VOD 模式（`loadVod()`）：停止 Live poll，清空 `anomalyMap = {}`，改由 `updateVodAnomalyMap()` 管理
+
+---
+
 ### anomalyMap 管理
 
 ```javascript
