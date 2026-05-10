@@ -21,6 +21,7 @@ async def lifespan(app: FastAPI):
     await database.connect()
     scheduler = Scheduler(database.get_pool(), app_settings)
     await scheduler.start()
+    app.state.scheduler = scheduler
     loop = asyncio.get_event_loop()
     inference_pipeline.start(loop)
     zmq_receiver.start()

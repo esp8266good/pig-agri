@@ -60,10 +60,11 @@ def test_alerts_no_pool_returns_503(client):
     assert resp.status_code == 503
 
 
-def test_settings_get_returns_stub(client):
+def test_settings_get_returns_defaults_when_no_pool(client):
     resp = client.get("/settings")
     assert resp.status_code == 200
-    assert resp.json() == {"status": "not implemented"}
+    data = resp.json()
+    assert "jpeg_quality" in data
 
 
 def test_notes_get_returns_stub(client):
