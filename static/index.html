@@ -511,6 +511,35 @@
     .mark-read-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
     .mark-read-btn:disabled { opacity: 0.4; cursor: default; }
     .notif-empty { color: var(--text-faint); font-style: italic; padding: var(--space-3); text-align: center; }
+    /* ── Settings tab ───────────────────────────────────────── */
+    #tab-settings { padding: var(--space-3) var(--space-4); }
+    .settings-form { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3) var(--space-5); }
+    .settings-field { display: flex; flex-direction: column; gap: var(--space-1); }
+    .settings-field label { font-size: var(--text-xs); font-weight: 500; color: var(--text-muted); }
+    .settings-field input, .settings-field select {
+      padding: var(--space-1) var(--space-2);
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      font-size: var(--text-xs);
+      color: var(--text);
+      width: 100%;
+    }
+    .settings-field input:focus, .settings-field select:focus {
+      outline: none; border-color: var(--accent);
+    }
+    .settings-save-row { grid-column: 1 / -1; display: flex; align-items: center; gap: var(--space-3); }
+    #save-settings-btn {
+      padding: var(--space-1) var(--space-4);
+      background: var(--accent);
+      color: #fff;
+      border-radius: var(--radius-sm);
+      font-size: var(--text-xs);
+      font-weight: 600;
+      cursor: pointer;
+    }
+    #save-settings-btn:hover { opacity: 0.85; }
+    #settings-status { font-size: var(--text-xs); color: var(--text-muted); }
   </style>
 </head>
 <body>
@@ -596,6 +625,8 @@
               onclick="switchTab('pig-status')">豬隻狀態</button>
       <button class="tab-btn" data-tab="notifications"
               onclick="switchTab('notifications')">通知中心</button>
+      <button class="tab-btn" data-tab="settings"
+              onclick="switchTab('settings')">設定</button>
     </div>
 
     <div id="tab-pig-status" class="tab-content active">
@@ -609,6 +640,35 @@
 
     <div id="tab-notifications" class="tab-content">
       <ul id="alert-list"></ul>
+    </div>
+
+    <div id="tab-settings" class="tab-content">
+      <div class="settings-form">
+        <div class="settings-field">
+          <label for="set-jpeg-quality">影像壓縮品質（50–95）</label>
+          <input type="number" id="set-jpeg-quality" min="50" max="95" step="1">
+        </div>
+        <div class="settings-field">
+          <label for="set-analysis-interval">分析間隔（分鐘）</label>
+          <select id="set-analysis-interval">
+            <option value="15">15 分鐘</option>
+            <option value="30">30 分鐘</option>
+            <option value="60">60 分鐘</option>
+          </select>
+        </div>
+        <div class="settings-field">
+          <label for="set-anomaly-threshold">異常閾值（σ，≥ 1.0）</label>
+          <input type="number" id="set-anomaly-threshold" min="1.0" step="0.1">
+        </div>
+        <div class="settings-field">
+          <label for="set-hls-retention">影像保留天數（1–365）</label>
+          <input type="number" id="set-hls-retention" min="1" max="365" step="1">
+        </div>
+        <div class="settings-save-row">
+          <button id="save-settings-btn" onclick="saveSettings()">儲存設定</button>
+          <span id="settings-status"></span>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -716,7 +776,7 @@
       const startTs = currentWeekStart;
       const endTs   = currentWeekStart + 7 * 24 * 3600;
       try {
-        const resp = await fetch(`/tracking/${currentCamera}/timeline?start_ts=${startTs}&end_ts=${endTs}`);
+        const resp = await fetch(`/stream/${currentCamera}/timeline?start_ts=${startTs}&end_ts=${endTs}`);
         if (!resp.ok) return;
         const { hours } = await resp.json();
         renderTimeline(hours);
@@ -823,6 +883,7 @@
       loadStream();
       liveAnomalyIntervalId = setInterval(refreshAnomalyMap, 30000);
       refreshAnomalyMap();
+      refreshNotifications();
     }
 
     // ── Historical MOT overlay ────────────────────────────────
@@ -839,12 +900,27 @@
           );
           if (!resp.ok) return;
           const data = await resp.json();
-          latestBoxes = data.logs || [];
+          latestBoxes = pickClosestFrame(data.logs || [], ts);
           countBadge.textContent = latestBoxes.length;
           currentObjectIds = new Set(latestBoxes.map(o => o.object_id));
           updateVodAnomalyMap(ts);
         } catch (_) {}
       }, 300);
+    }
+
+    function pickClosestFrame(logs, ts) {
+      if (!logs.length) return [];
+      const byFrame = new Map();
+      for (const log of logs) {
+        if (!byFrame.has(log.frame_id)) byFrame.set(log.frame_id, []);
+        byFrame.get(log.frame_id).push(log);
+      }
+      let bestFrame = null, bestDist = Infinity;
+      for (const [, frameLogs] of byFrame) {
+        const dist = Math.abs(frameLogs[0].timestamp - ts);
+        if (dist < bestDist) { bestDist = dist; bestFrame = frameLogs; }
+      }
+      return bestFrame || [];
     }
 
     // ── Anomaly map ───────────────────────────────────────────
@@ -979,6 +1055,49 @@
         bellBadge.textContent = n;
         bellBadge.style.display = n > 0 ? '' : 'none';
       } catch (_) {}
+    }
+
+    // ── Settings ──────────────────────────────────────────────
+    async function loadSettings() {
+      try {
+        const resp = await fetch('/settings');
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const q = document.getElementById('set-jpeg-quality');
+        const a = document.getElementById('set-analysis-interval');
+        const t = document.getElementById('set-anomaly-threshold');
+        const r = document.getElementById('set-hls-retention');
+        if (q && data.jpeg_quality !== undefined)              q.value = data.jpeg_quality;
+        if (a && data.analysis_interval_minutes !== undefined) a.value = data.analysis_interval_minutes;
+        if (t && data.anomaly_std_threshold !== undefined)     t.value = data.anomaly_std_threshold;
+        if (r && data.hls_retention_days !== undefined)        r.value = data.hls_retention_days;
+      } catch (_) {}
+    }
+
+    async function saveSettings() {
+      const body = {
+        jpeg_quality:              document.getElementById('set-jpeg-quality').value,
+        analysis_interval_minutes: document.getElementById('set-analysis-interval').value,
+        anomaly_std_threshold:     document.getElementById('set-anomaly-threshold').value,
+        hls_retention_days:        document.getElementById('set-hls-retention').value,
+      };
+      const statusEl = document.getElementById('settings-status');
+      try {
+        const resp = await fetch('/settings', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (resp.ok) {
+          statusEl.textContent = '✓ 已儲存';
+          setTimeout(() => { statusEl.textContent = ''; }, 3000);
+        } else {
+          const err = await resp.json();
+          statusEl.textContent = `✗ ${err.detail || '儲存失敗'}`;
+        }
+      } catch (e) {
+        statusEl.textContent = `✗ 網路錯誤`;
+      }
     }
 
     // ── Type toggle ───────────────────────────────────────────
@@ -1235,6 +1354,7 @@
         liveAnomalyIntervalId = setInterval(refreshAnomalyMap, 30000);
         refreshAnomalyMap();
         refreshNotifications();
+        loadSettings();
       } catch (e) {
         setSkeleton(false);
         setStatus(`無法取得 camera 清單：${e.message}`, 'error');
