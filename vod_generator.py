@@ -1,6 +1,6 @@
 # vod_generator.py
 import re
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -22,7 +22,7 @@ def build_vod_m3u8(
 
     current_hour = start_hour
     while current_hour <= end_hour:
-        dt = datetime.fromtimestamp(current_hour, tz=timezone.utc)
+        dt = datetime.fromtimestamp(current_hour)  # local time, aligned with hls_manager._hour_dir()
         dir_name = dt.strftime("%Y-%m-%d-%H")
         m3u8_path = base / camera_id / stream_type / dir_name / "index.m3u8"
         if m3u8_path.exists():
@@ -39,7 +39,10 @@ def build_vod_m3u8(
         return None
 
     first_ts = in_range[0][0]
-    pdt = datetime.fromtimestamp(first_ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    first_dt_local = datetime.fromtimestamp(first_ts).astimezone()
+    tz_str = first_dt_local.strftime("%z")  # e.g. +0800
+    tz_offset = tz_str[:3] + ":" + tz_str[3:]  # e.g. +08:00
+    pdt = first_dt_local.strftime("%Y-%m-%dT%H:%M:%S") + tz_offset
 
     lines = [
         "#EXTM3U",
