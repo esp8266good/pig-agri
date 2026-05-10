@@ -180,3 +180,14 @@ def test_rebuild_cache_sets_anomaly_flags():
     assert cache["cam_01"][3]["temp_anomaly"] is False
     assert cache["cam_01"][5]["temp_anomaly"] is True
     assert cache["cam_01"][5]["activity_anomaly"] is False
+
+
+def test_scheduler_reload_updates_interval_and_threshold():
+    from analysis.scheduler import Scheduler
+    pool = AsyncMock()
+    scheduler = Scheduler(pool, FakeSettings())
+    assert scheduler._interval == 30 * 60
+    assert scheduler._threshold == 1.0
+    scheduler.reload(interval_minutes=60, std_threshold=2.5)
+    assert scheduler._interval == 60 * 60
+    assert scheduler._threshold == 2.5

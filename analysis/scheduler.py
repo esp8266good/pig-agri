@@ -20,6 +20,8 @@ class Scheduler:
         self._pool = pool
         self._settings = settings
         self._task: Optional[asyncio.Task] = None
+        self._interval: int = settings.analysis_interval_minutes * 60
+        self._threshold: float = float(settings.anomaly_std_threshold)
 
     async def start(self) -> None:
         await self._rebuild_cache()
@@ -35,10 +37,13 @@ class Scheduler:
                 pass
         logger.info("Scheduler stopped")
 
+    def reload(self, interval_minutes: int, std_threshold: float) -> None:
+        self._interval = interval_minutes * 60
+        self._threshold = std_threshold
+
     async def _loop(self) -> None:
-        interval = self._settings.analysis_interval_minutes * 60
         while True:
-            await asyncio.sleep(interval)
+            await asyncio.sleep(self._interval)
             try:
                 await self._run_analysis()
             except Exception:
@@ -125,7 +130,7 @@ class Scheduler:
                     "activity_mean": mean_a,
                     "activity_std": std_a,
                 })
-                if std_a > 0 and current_a < mean_a - self._settings.anomaly_std_threshold * std_a:
+                if std_a > 0 and current_a < mean_a - self._threshold * std_a:
                     if not entry["activity_anomaly"]:
                         await write_health_alert(
                             self._pool, camera_id=camera_id, object_id=object_id,
@@ -145,7 +150,7 @@ class Scheduler:
                     "temp_mean": mean_t,
                     "temp_std": std_t,
                 })
-                if std_t > 0 and abs(current_t - mean_t) > self._settings.anomaly_std_threshold * std_t:
+                if std_t > 0 and abs(current_t - mean_t) > self._threshold * std_t:
                     if not entry["temp_anomaly"]:
                         await write_health_alert(
                             self._pool, camera_id=camera_id, object_id=object_id,

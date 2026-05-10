@@ -228,3 +228,24 @@ def test_mark_alert_read_returns_false_when_not_found(mock_pool):
     result = asyncio.run(mark_alert_read(mock_pool, 999))
 
     assert result is False
+
+
+def test_get_all_settings_returns_dict(mock_pool):
+    from db_writer import get_all_settings
+    mock_pool.fetch.return_value = [
+        {"key": "jpeg_quality", "value": "85"},
+        {"key": "analysis_interval_minutes", "value": "30"},
+    ]
+    result = asyncio.run(get_all_settings(mock_pool))
+    assert result == {"jpeg_quality": "85", "analysis_interval_minutes": "30"}
+
+
+def test_upsert_settings_calls_executemany(mock_pool):
+    from db_writer import upsert_settings
+    mock_pool.executemany.return_value = None
+    asyncio.run(upsert_settings(mock_pool, {"jpeg_quality": "90", "hls_retention_days": "7"}))
+    mock_pool.executemany.assert_called_once()
+    sql, pairs = mock_pool.executemany.call_args[0]
+    assert "INSERT INTO user_settings" in sql
+    assert ("jpeg_quality", "90") in pairs
+    assert ("hls_retention_days", "7") in pairs

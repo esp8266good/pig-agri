@@ -201,3 +201,17 @@ async def mark_alert_read(pool: asyncpg.Pool, alert_id: int) -> bool:
         alert_id,
     )
     return result != "UPDATE 0"
+
+
+async def get_all_settings(pool: asyncpg.Pool) -> dict[str, str]:
+    rows = await pool.fetch("SELECT key, value FROM user_settings")
+    return {r["key"]: r["value"] for r in rows}
+
+
+async def upsert_settings(pool: asyncpg.Pool, updates: dict[str, str]) -> None:
+    await pool.executemany(
+        """INSERT INTO user_settings (key, value, updated_at)
+           VALUES ($1, $2, NOW())
+           ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()""",
+        [(k, v) for k, v in updates.items()],
+    )
