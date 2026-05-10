@@ -109,3 +109,80 @@ def test_vod_returns_400_for_invalid_type(client):
 def test_vod_returns_404_for_unknown_camera(client):
     resp = client.get("/stream/unknown_cam/vod?start=1000&end=4600")
     assert resp.status_code == 404
+
+
+def test_timeline_returns_empty_when_no_dir(tmp_path, monkeypatch):
+    import inference.pipeline as pipeline_mod
+    monkeypatch.setattr("routers.stream.settings.hls_base_dir", str(tmp_path))
+    with (
+        patch("database.connect", new_callable=AsyncMock),
+        patch("database.disconnect", new_callable=AsyncMock),
+        patch("zmq_receiver.zmq_receiver.start"),
+        patch("zmq_receiver.zmq_receiver.stop"),
+        patch.object(pipeline_mod.inference_pipeline, "start"),
+        patch.object(pipeline_mod.inference_pipeline, "stop"),
+        patch("hls_manager.hls_manager.stop_all"),
+    ):
+        from main import app
+        with TestClient(app) as c:
+            resp = c.get("/stream/cam_01/timeline?start_ts=1746403200&end_ts=1746410000")
+    assert resp.status_code == 200
+    assert resp.json() == {"hours": []}
+
+
+def test_timeline_returns_matching_hours(tmp_path, monkeypatch):
+    import inference.pipeline as pipeline_mod
+    from datetime import datetime
+    monkeypatch.setattr("routers.stream.settings.hls_base_dir", str(tmp_path))
+    # 建立兩個 rgb 目錄（使用本地時間）
+    ts1 = 1746403200
+    ts2 = 1746406800
+    for ts in [ts1, ts2]:
+        dt = datetime.fromtimestamp(ts)
+        dir_name = dt.strftime("%Y-%m-%d-%H")
+        (tmp_path / "cam_01" / "rgb" / dir_name).mkdir(parents=True, exist_ok=True)
+    with (
+        patch("database.connect", new_callable=AsyncMock),
+        patch("database.disconnect", new_callable=AsyncMock),
+        patch("zmq_receiver.zmq_receiver.start"),
+        patch("zmq_receiver.zmq_receiver.stop"),
+        patch.object(pipeline_mod.inference_pipeline, "start"),
+        patch.object(pipeline_mod.inference_pipeline, "stop"),
+        patch("hls_manager.hls_manager.stop_all"),
+    ):
+        from main import app
+        with TestClient(app) as c:
+            resp = c.get(f"/stream/cam_01/timeline?start_ts={ts1}&end_ts={ts2 + 3600}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert ts1 in data["hours"]
+    assert ts2 in data["hours"]
+
+
+def test_timeline_excludes_out_of_range_hours(tmp_path, monkeypatch):
+    import inference.pipeline as pipeline_mod
+    from datetime import datetime
+    monkeypatch.setattr("routers.stream.settings.hls_base_dir", str(tmp_path))
+    ts_in = 1746403200
+    ts_out = 1746410000  # 不在範圍內的另一小時
+    for ts in [ts_in, int(ts_out // 3600) * 3600]:
+        dt = datetime.fromtimestamp(ts)
+        dir_name = dt.strftime("%Y-%m-%d-%H")
+        (tmp_path / "cam_01" / "rgb" / dir_name).mkdir(parents=True, exist_ok=True)
+    with (
+        patch("database.connect", new_callable=AsyncMock),
+        patch("database.disconnect", new_callable=AsyncMock),
+        patch("zmq_receiver.zmq_receiver.start"),
+        patch("zmq_receiver.zmq_receiver.stop"),
+        patch.object(pipeline_mod.inference_pipeline, "start"),
+        patch.object(pipeline_mod.inference_pipeline, "stop"),
+        patch("hls_manager.hls_manager.stop_all"),
+    ):
+        from main import app
+        with TestClient(app) as c:
+            # 只查詢 ts_in 的範圍
+            resp = c.get(f"/stream/cam_01/timeline?start_ts={ts_in}&end_ts={ts_in + 3600}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert ts_in in data["hours"]
+    assert len(data["hours"]) == 1

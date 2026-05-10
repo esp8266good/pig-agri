@@ -23,6 +23,33 @@ async def serve_hls(
     return FileResponse(file_path)
 
 
+@router.get("/{camera_id}/timeline")
+async def get_timeline(
+    camera_id: str,
+    start_ts: float,
+    end_ts: float,
+):
+    from datetime import datetime
+    base = Path(settings.hls_base_dir)
+    rgb_dir = base / camera_id / "rgb"
+    if not rgb_dir.exists():
+        return {"hours": []}
+
+    hours: list[int] = []
+    for entry in rgb_dir.iterdir():
+        if not entry.is_dir():
+            continue
+        try:
+            dt = datetime.strptime(entry.name, "%Y-%m-%d-%H")
+        except ValueError:
+            continue
+        ts = int(dt.timestamp())
+        if start_ts <= ts < end_ts:
+            hours.append(ts)
+
+    return {"hours": sorted(hours)}
+
+
 @router.get("/{camera_id}/live")
 async def get_live_stream(
     camera_id: str,
