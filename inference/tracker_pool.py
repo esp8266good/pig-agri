@@ -27,6 +27,16 @@ def _build_tracker_args() -> argparse.Namespace:
     args.deltat = 3
     args.min_hits = 3
     args.track_buffer = 30
+    # 軌跡在連續 max_age 幀沒有偵測後才會被刪除（10fps → 預設 300 幀 ≈ 30 秒）。
+    # 豬欄遮擋常達十幾秒，調大可避免「遮擋 → 刪 → 重建新 ID」的高頻 churn。
+    args.max_age = 300
+    # 被刪掉的軌跡會放進 ReID 失蹤庫保留這麼多幀（≈ 120 秒），期間若有外觀相符的
+    # 新偵測出現就復活舊 ID，而非開新號碼。
+    args.lost_track_buffer = 1200
+    # 失蹤庫最多保留幾條軌跡（避免長時間運行後無限成長 / 增加誤配面）。
+    args.lost_pool_max = 100
+    # ReID 復活的 cosine 距離閾值（越小越保守；寧可開新 ID 也不要把兩隻豬合併）。
+    args.reid_revive_thresh = 0.3
     args.TCM_first_step = exp.TCM_first_step
     args.TCM_byte_step = exp.TCM_byte_step
     args.TCM_first_step_weight = exp.TCM_first_step_weight
@@ -80,6 +90,7 @@ class TrackerPool:
                 self._trackers[camera_id] = Hybrid_Sort_ReID(
                     self._args,
                     det_thresh=self._args.track_thresh,
+                    max_age=getattr(self._args, "max_age", 300),
                     iou_threshold=self._args.iou_thresh,
                     asso_func=self._args.asso,
                     delta_t=self._args.deltat,
