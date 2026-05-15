@@ -52,7 +52,7 @@ async def health():
 
 @app.get("/cameras", tags=["system"])
 async def list_cameras():
-    return {"cameras": app_settings.camera_topics}
+    return {"cameras": [s.label for s in app_settings.zmq_sources]}
 
 
 app.include_router(stream.router)

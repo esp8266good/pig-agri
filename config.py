@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
 from typing import List
 
 from pydantic import field_validator
@@ -5,31 +8,76 @@ from pydantic_settings import BaseSettings, DotEnvSettingsSource, SettingsConfig
 
 
 class _NonJsonDotEnvSource(DotEnvSettingsSource):
-    """Disable JSON-decoding so comma-separated strings reach the validator."""
+    """Disable JSON-decoding so comma/semicolon-separated strings reach the validator."""
 
     def field_is_complex(self, field):  # type: ignore[override]
         return False
 
 
+# ================================================================
+# ZMQ Source 資料結構
+# ================================================================
+@dataclass(frozen=True)
+class ZmqSource:
+    name:      str
+    src_host:  str
+    src_port:  int
+    src_topic: str
+    label:     str   # HLS / inference 的辨識標籤
+
+    @classmethod
+    def from_str(cls, raw: str) -> "ZmqSource":
+        """
+        解析單一 source 字串。
+        格式：name:host:port:src_topic:label
+        範例：rpi_local:192.168.50.5:5555:rpi_sensors:cam_01
+        """
+        parts = [p.strip() for p in raw.split(":")]
+        if len(parts) != 5:
+            raise ValueError(
+                f"ZMQ_SOURCES 格式錯誤：'{raw}'\n"
+                "正確格式：name:host:port:src_topic:label"
+            )
+        name, host, port_str, topic, label = parts
+        try:
+            port = int(port_str)
+        except ValueError:
+            raise ValueError(f"ZMQ_SOURCES port 必須是整數，收到：'{port_str}'")
+        return cls(name=name, src_host=host, src_port=port, src_topic=topic, label=label)
+
+
+# ================================================================
+# Settings
+# ================================================================
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", extra="ignore"
     )
 
+    # ── HLS ────────────────────────────────────────────────────
     hls_target_fps: int = 20
     hls_frame_buffer_size: int = 10
-    ffmpeg_log_level: str = "error"  # debug/info/warning/error/quiet
-    log_level: str = "INFO"
-    
-    database_url: str = "postgresql://pig:pig_password@localhost:15432/pig_monitoring"
-    zmq_port: int = 5555
-    rpi_ip: str = "127.0.0.1"
-    camera_topics: List[str] = [
-        "cam_01", "cam_02", "cam_03", "cam_04", "cam_05", "cam_06"
-    ]
     hls_base_dir: str = "data/pig_monitoring/hls"
     hls_retention_days: int = 90
+
+    # ── Logging ────────────────────────────────────────────────
+    ffmpeg_log_level: str = "error"
+    log_level: str = "INFO"
+
+    # ── Database ───────────────────────────────────────────────
+    database_url: str = "postgresql://pig:pig_password@localhost:15432/pig_monitoring"
+
+    # ── ZMQ Multi-Source ───────────────────────────────────────
+    # 格式：name:host:port:src_topic:label  多個 source 以分號分隔
+    # 範例：rpi_local:192.168.50.5:5555:rpi_sensors:cam_01;rpi_tailscale:100.67.51.73:5555:rpi_sensors:rpi_sensors
+    zmq_sources: List[ZmqSource] = []
+    zmq_warmup_secs: float = 0.5   # slow joiner warm-up（秒）
+    zmq_stale_ms: float = 500.0    # 幀過期門檻（毫秒）
+
+    # ── 影像 ───────────────────────────────────────────────────
     jpeg_quality: int = 70
+
+    # ── 推論 ───────────────────────────────────────────────────
     model_weights: str = "./ref/HybridSORT/pretrained/best_ckpt.pth.tar"
     # Note: pydantic reserves 'model_config'; use model_config_path here.
     # In .env, write MODEL_CONFIG_PATH (not MODEL_CONFIG).
@@ -41,11 +89,26 @@ class Settings(BaseSettings):
     )
     fast_reid_weights: str = "./ref/HybridSORT/pretrained/model_0054.pth"
     device: str = "cuda"
-    mot_worker_threads: int = 20
+    mot_worker_threads: int = 12
+
+    # ── 分析排程 ───────────────────────────────────────────────
     analysis_interval_minutes: int = 30
     analysis_window_minutes: int = 30
     anomaly_std_threshold: float = 3.0
     anomaly_min_samples: int = 50
+
+    # ── Validators ────────────────────────────────────────────
+    @field_validator("zmq_sources", mode="before")
+    @classmethod
+    def parse_zmq_sources(cls, v: object) -> object:
+        """
+        接受字串（來自 .env）或已是 list（程式直接傳入）。
+        字串格式：source1;source2;...
+        每個 source：name:host:port:src_topic:label
+        """
+        if isinstance(v, str):
+            return [ZmqSource.from_str(s) for s in v.split(";") if s.strip()]
+        return v
 
     @classmethod
     def settings_customise_sources(
@@ -57,13 +120,6 @@ class Settings(BaseSettings):
         file_secret_settings,
     ):
         return (init_settings, _NonJsonDotEnvSource(settings_cls), file_secret_settings)
-
-    @field_validator("camera_topics", mode="before")
-    @classmethod
-    def parse_comma_separated(cls, v: object) -> object:
-        if isinstance(v, str):
-            return [t.strip() for t in v.split(",") if t.strip()]
-        return v
 
 
 settings = Settings()

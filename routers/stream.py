@@ -57,7 +57,7 @@ async def get_live_stream(
 ):
     if stream_type not in ("rgb", "thermal"):
         raise HTTPException(status_code=400, detail="type must be 'rgb' or 'thermal'")
-    if camera_id not in settings.camera_topics:
+    if camera_id not in [s.label for s in settings.zmq_sources]:
         raise HTTPException(status_code=404, detail="Camera not found")
     out_dir = hls_manager.ensure_started(camera_id, stream_type)
     return {
@@ -74,7 +74,7 @@ async def get_vod_stream(
 ):
     if stream_type not in ("rgb", "thermal"):
         raise HTTPException(status_code=400, detail="type must be 'rgb' or 'thermal'")
-    if camera_id not in settings.camera_topics:
+    if camera_id not in [s.label for s in settings.zmq_sources]:
         raise HTTPException(status_code=404, detail="Camera not found")
     m3u8 = build_vod_m3u8(camera_id, stream_type, start, end)
     if m3u8 is None:
