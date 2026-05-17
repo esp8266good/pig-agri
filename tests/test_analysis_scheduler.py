@@ -249,6 +249,24 @@ def test_rebuild_cache_starts_normal_not_latched():
     assert cache["cam_01"][5]["temp_state"] == "normal"
 
 
+def test_activity_mean_updated_even_when_herd_below_floor():
+    """herd gate 失敗時仍應更新 activity_mean（spec §1）；anomaly 維持 False。"""
+    from analysis.scheduler import Scheduler, get_anomaly_cache
+    pool = AsyncMock()
+    pool.fetch.side_effect = [
+        [{"camera_id": "cam_01", "object_id": 1},
+         {"camera_id": "cam_01", "object_id": 2},
+         {"camera_id": "cam_01", "object_id": 3}],
+        _track(30.0), _track(24.0), _track(6.0),  # rates≈0.25/0.2/0.05, median≈0.2 < abs_floor 2.0
+    ]
+
+    asyncio.run(Scheduler(pool, FakeSettings())._run_analysis())
+
+    cache = get_anomaly_cache()
+    assert cache["cam_01"][3]["activity_mean"] == pytest.approx(0.2, abs=0.05)
+    assert cache["cam_01"][3]["activity_anomaly"] is False
+
+
 def test_reload_updates_interval_threshold_window_temp():
     from analysis.scheduler import Scheduler
     pool = AsyncMock()

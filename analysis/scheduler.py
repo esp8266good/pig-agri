@@ -162,8 +162,9 @@ class Scheduler:
                 entry = _anomaly_cache[camera_id][object_id]
                 rate = rates.get(object_id)
 
+                entry["activity_mean"] = median_rate
+
                 if herd_ok and rate is not None:
-                    entry["activity_mean"] = median_rate
                     low = rate < median_rate * self._low_ratio
                     recovered = rate > median_rate * self._recover_ratio
                     if entry["activity_state"] == "normal":
