@@ -313,3 +313,39 @@ def test_restart_clears_frameid_state(tmp_path, monkeypatch):
     assert stream._fed_count == 0
     assert list(stream._fed_log) == []
     assert stream._seg_first_fid == {}
+
+
+def test_corrected_m3u8_inserts_pig_frameid_tag(tmp_path, monkeypatch):
+    stream, _ = _make_stream(tmp_path, monkeypatch)
+    stream._stopped = True
+    (stream.out_dir / "index.m3u8").write_text(_FFMPEG_M3U8)
+    stream._seg_pdt = {"seg_000.ts": 1_900_000_000.0}
+    stream._seg_first_fid = {"seg_000.ts": 4242}  # seg_001 故意未知
+    out = stream.corrected_m3u8(stream.out_dir.name)
+    assert out is not None
+    lines = out.splitlines()
+    i0 = lines.index("seg_000.ts")
+    i1 = lines.index("seg_001.ts")
+    # seg_000 緊鄰前一行（URI 行前）含 frameid 標籤
+    assert "#EXT-X-PIG-FRAMEID:4242" in lines[i0 - 3:i0]
+    # 未知段不插入標籤
+    assert not any("PIG-FRAMEID" in ln for ln in lines[i1 - 3:i1])
+    assert out.count("seg_000.ts") == 1 and out.count("#EXTINF:") == 2
+
+
+def test_manager_feed_threads_frame_id(tmp_path, monkeypatch):
+    from hls_manager import HLSManager
+    monkeypatch.setattr("hls_manager.settings.hls_base_dir", str(tmp_path))
+    with patch("hls_manager._start_ffmpeg", return_value=MagicMock(stdin=MagicMock())):
+        m = HLSManager()
+        m.ensure_started("cam_01", "rgb")
+        captured = {}
+        real = m._streams[("cam_01", "rgb")].feed
+
+        def spy(jpeg, capture_ts=None, frame_id=None):
+            captured["frame_id"] = frame_id
+            return real(jpeg, capture_ts, frame_id)
+
+        m._streams[("cam_01", "rgb")].feed = spy
+        m.feed("cam_01", "rgb", b"\xff\xd8\xff", capture_ts=1_700_000_000.0, frame_id=55)
+    assert captured["frame_id"] == 55

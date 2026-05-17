@@ -241,6 +241,7 @@ class HLSStream:
             return None
         with self._seg_lock:
             seg_pdt = dict(self._seg_pdt)
+            seg_fid = dict(self._seg_first_fid)
         out: list[str] = []
         last_pdt_idx: Optional[int] = None
         for raw in text.splitlines():
@@ -250,13 +251,17 @@ class HLSStream:
                 out.append(line)
                 continue
             if line and not line.startswith("#"):
-                cap = seg_pdt.get(line.strip())
+                seg_name = line.strip()
+                cap = seg_pdt.get(seg_name)
                 if cap is not None:
                     corrected = f"#EXT-X-PROGRAM-DATE-TIME:{_iso_local(cap)}"
                     if last_pdt_idx is not None:
                         out[last_pdt_idx] = corrected
                     else:
                         out.append(corrected)
+                fid = seg_fid.get(seg_name)
+                if fid is not None:
+                    out.append(f"#EXT-X-PIG-FRAMEID:{fid}")
                 last_pdt_idx = None
             out.append(line)
         return "\n".join(out) + "\n"
@@ -402,6 +407,7 @@ class HLSManager:
         stream_type: str,
         jpeg_bytes: bytes,
         capture_ts: float | None = None,
+        frame_id: int | None = None,
     ) -> None:
         key: StreamKey = (camera_id, stream_type)
         if capture_ts is not None and stream_type == "rgb":
@@ -409,7 +415,7 @@ class HLSManager:
         with self._lock:
             stream = self._streams.get(key)
         if stream is not None:
-            stream.feed(jpeg_bytes, capture_ts)
+            stream.feed(jpeg_bytes, capture_ts, frame_id)
         else:
             logger.debug(
                 f"[{camera_id}/{stream_type}] feed() called but stream not started, dropping frame"
