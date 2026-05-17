@@ -1,6 +1,7 @@
 import asyncio
 import math
 import time
+from collections import defaultdict
 from typing import Optional
 
 import numpy as np
@@ -15,6 +16,36 @@ def get_anomaly_cache() -> dict:
     return _anomaly_cache
 
 
+def _default_entry() -> dict:
+    return {
+        "activity_anomaly": False, "temp_anomaly": False,
+        "activity_state": "normal", "temp_state": "normal",
+        "activity_current": None, "activity_mean": None, "activity_std": None,
+        "temp_current": None, "temp_mean": None, "temp_std": None,
+    }
+
+
+def _activity_rate(logs: list, window_seconds: float, min_coverage: float) -> Optional[float]:
+    """視窗內路徑長度 ÷ 時間跨度（px/s）。資料不足回 None。"""
+    if len(logs) < 2:
+        return None
+    centers = [
+        (lg["bb_left"] + lg["bb_width"] / 2, lg["bb_top"] + lg["bb_height"] / 2)
+        for lg in logs
+    ]
+    ts = [lg["timestamp"] for lg in logs]
+    span = ts[-1] - ts[0]
+    if span < 60.0:
+        return None
+    if window_seconds <= 0 or span / window_seconds < min_coverage:
+        return None
+    path = sum(
+        math.hypot(centers[i][0] - centers[i - 1][0], centers[i][1] - centers[i - 1][1])
+        for i in range(1, len(centers))
+    )
+    return path / span
+
+
 class Scheduler:
     def __init__(self, pool, settings) -> None:
         self._pool = pool
@@ -22,6 +53,12 @@ class Scheduler:
         self._task: Optional[asyncio.Task] = None
         self._interval: int = settings.analysis_interval_minutes * 60
         self._threshold: float = float(settings.anomaly_std_threshold)
+        self._window_minutes: int = int(settings.analysis_window_minutes)
+        self._temp_enabled: bool = bool(getattr(settings, "temp_anomaly_enabled", True))
+        self._low_ratio: float = float(getattr(settings, "activity_low_ratio", 0.3))
+        self._recover_ratio: float = float(getattr(settings, "activity_recover_ratio", 0.5))
+        self._abs_floor: float = float(getattr(settings, "activity_abs_floor", 2.0))
+        self._min_coverage: float = float(getattr(settings, "activity_min_coverage", 0.5))
 
     async def start(self) -> None:
         await self._rebuild_cache()
@@ -37,9 +74,17 @@ class Scheduler:
                 pass
         logger.info("Scheduler stopped")
 
-    def reload(self, interval_minutes: int, std_threshold: float) -> None:
+    def reload(
+        self,
+        interval_minutes: int,
+        std_threshold: float,
+        window_minutes: int,
+        temp_anomaly_enabled: bool,
+    ) -> None:
         self._interval = interval_minutes * 60
         self._threshold = std_threshold
+        self._window_minutes = int(window_minutes)
+        self._temp_enabled = bool(temp_anomaly_enabled)
 
     async def _loop(self) -> None:
         while True:
@@ -50,6 +95,7 @@ class Scheduler:
                 logger.exception("Scheduler._run_analysis error")
 
     async def _rebuild_cache(self) -> None:
+        """重啟：建立 cache 骨架，但 state 一律 normal、旗標 False（不被歷史 alert 閂死）。"""
         if self._pool is None:
             return
         try:
@@ -60,18 +106,9 @@ class Scheduler:
                    ORDER BY camera_id, object_id, metric, triggered_at DESC"""
             )
             for row in rows:
-                cam = row["camera_id"]
-                oid = row["object_id"]
-                metric = row["metric"]
-                entry = _anomaly_cache.setdefault(cam, {}).setdefault(oid, {
-                    "activity_anomaly": False, "temp_anomaly": False,
-                    "activity_current": None, "activity_mean": None, "activity_std": None,
-                    "temp_current": None, "temp_mean": None, "temp_std": None,
-                })
-                if metric == "activity":
-                    entry["activity_anomaly"] = True
-                elif metric == "temperature":
-                    entry["temp_anomaly"] = True
+                _anomaly_cache.setdefault(row["camera_id"], {}).setdefault(
+                    row["object_id"], _default_entry()
+                )
         except Exception:
             logger.exception("Scheduler._rebuild_cache error")
 
@@ -79,7 +116,8 @@ class Scheduler:
         if self._pool is None:
             return
         now = time.time()
-        window_start = now - self._settings.analysis_window_minutes * 60
+        window_seconds = self._window_minutes * 60
+        window_start = now - window_seconds
 
         rows = await self._pool.fetch(
             """SELECT DISTINCT camera_id, object_id
@@ -88,75 +126,86 @@ class Scheduler:
             window_start, now,
         )
 
+        by_cam: dict[str, list] = defaultdict(list)
         for r in rows:
-            camera_id = r["camera_id"]
-            object_id = r["object_id"]
-            logs = await self._pool.fetch(
-                """SELECT bb_left, bb_top, bb_width, bb_height, thermal_intensity, timestamp
-                   FROM tracking_logs
-                   WHERE camera_id=$1 AND object_id=$2
-                     AND timestamp >= $3 AND timestamp < $4
-                   ORDER BY timestamp""",
-                camera_id, object_id, window_start, now,
+            by_cam[r["camera_id"]].append(r["object_id"])
+
+        for camera_id, object_ids in by_cam.items():
+            rates: dict[int, float] = {}
+            logs_by_obj: dict[int, list] = {}
+
+            for object_id in object_ids:
+                logs = await self._pool.fetch(
+                    """SELECT bb_left, bb_top, bb_width, bb_height,
+                              thermal_intensity, timestamp
+                       FROM tracking_logs
+                       WHERE camera_id=$1 AND object_id=$2
+                         AND timestamp >= $3 AND timestamp < $4
+                       ORDER BY timestamp""",
+                    camera_id, object_id, window_start, now,
+                )
+                logs_by_obj[object_id] = logs
+                entry = _anomaly_cache.setdefault(camera_id, {}).setdefault(
+                    object_id, _default_entry()
+                )
+                rate = _activity_rate(logs, window_seconds, self._min_coverage)
+                entry["activity_current"] = rate
+                if rate is not None:
+                    rates[object_id] = rate
+
+            median_rate = (
+                float(np.median(list(rates.values()))) if len(rates) >= 2 else None
             )
-            if len(logs) < self._settings.anomaly_min_samples:
-                continue
+            herd_ok = median_rate is not None and median_rate >= self._abs_floor
 
-            centers = [
-                (log["bb_left"] + log["bb_width"] / 2, log["bb_top"] + log["bb_height"] / 2)
-                for log in logs
-            ]
-            displacements = [
-                math.hypot(centers[i][0] - centers[i-1][0], centers[i][1] - centers[i-1][1])
-                for i in range(1, len(centers))
-            ]
-            temps = [
-                log["thermal_intensity"] for log in logs
-                if log["thermal_intensity"] is not None
-            ]
+            for object_id in object_ids:
+                entry = _anomaly_cache[camera_id][object_id]
+                rate = rates.get(object_id)
 
-            entry = _anomaly_cache.setdefault(camera_id, {}).setdefault(object_id, {
-                "activity_anomaly": False, "temp_anomaly": False,
-                "activity_current": None, "activity_mean": None, "activity_std": None,
-                "temp_current": None, "temp_mean": None, "temp_std": None,
-            })
+                if herd_ok and rate is not None:
+                    entry["activity_mean"] = median_rate
+                    low = rate < median_rate * self._low_ratio
+                    recovered = rate > median_rate * self._recover_ratio
+                    if entry["activity_state"] == "normal":
+                        if low:
+                            await write_health_alert(
+                                self._pool, camera_id=camera_id, object_id=object_id,
+                                metric="activity", current_value=rate,
+                                mean_value=median_rate, std_value=0.0,
+                            )
+                            entry["activity_state"] = "alerted"
+                    else:  # alerted
+                        if recovered:
+                            entry["activity_state"] = "normal"
+                    entry["activity_anomaly"] = entry["activity_state"] == "alerted"
 
-            if len(displacements) >= 2:
-                mean_a = float(np.mean(displacements))
-                std_a = float(np.std(displacements))
-                current_a = displacements[-1]
-                entry.update({
-                    "activity_current": current_a,
-                    "activity_mean": mean_a,
-                    "activity_std": std_a,
-                })
-                if std_a > 0 and current_a < mean_a - self._threshold * std_a:
-                    if not entry["activity_anomaly"]:
-                        await write_health_alert(
-                            self._pool, camera_id=camera_id, object_id=object_id,
-                            metric="activity", current_value=current_a,
-                            mean_value=mean_a, std_value=std_a,
-                        )
-                    entry["activity_anomaly"] = True
-                else:
-                    entry["activity_anomaly"] = False
-
-            if len(temps) >= 2:
-                mean_t = float(np.mean(temps))
-                std_t = float(np.std(temps))
-                current_t = temps[-1]
-                entry.update({
-                    "temp_current": current_t,
-                    "temp_mean": mean_t,
-                    "temp_std": std_t,
-                })
-                if std_t > 0 and abs(current_t - mean_t) > self._threshold * std_t:
-                    if not entry["temp_anomaly"]:
-                        await write_health_alert(
-                            self._pool, camera_id=camera_id, object_id=object_id,
-                            metric="temperature", current_value=current_t,
-                            mean_value=mean_t, std_value=std_t,
-                        )
-                    entry["temp_anomaly"] = True
+                if self._temp_enabled:
+                    temps = [
+                        lg["thermal_intensity"] for lg in logs_by_obj[object_id]
+                        if lg["thermal_intensity"] is not None
+                    ]
+                    if len(temps) >= self._settings.anomaly_min_samples:
+                        mean_t = float(np.mean(temps))
+                        std_t = float(np.std(temps))
+                        current_t = temps[-1]
+                        entry.update({
+                            "temp_current": current_t,
+                            "temp_mean": mean_t,
+                            "temp_std": std_t,
+                        })
+                        anomalous = std_t > 0 and abs(current_t - mean_t) > self._threshold * std_t
+                        if entry["temp_state"] == "normal":
+                            if anomalous:
+                                await write_health_alert(
+                                    self._pool, camera_id=camera_id, object_id=object_id,
+                                    metric="temperature", current_value=current_t,
+                                    mean_value=mean_t, std_value=std_t,
+                                )
+                                entry["temp_state"] = "alerted"
+                        else:  # alerted
+                            if not anomalous:
+                                entry["temp_state"] = "normal"
+                        entry["temp_anomaly"] = entry["temp_state"] == "alerted"
                 else:
                     entry["temp_anomaly"] = False
+                    entry["temp_state"] = "normal"
