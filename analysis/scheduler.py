@@ -164,6 +164,9 @@ class Scheduler:
 
                 entry["activity_mean"] = median_rate
 
+                # 當 herd_ok 為 False（全欄休息 / 豬數不足 / median < abs_floor）時，
+                # 此區塊整個跳過——已在 alerted 的豬不會被自動清旗，
+                # 確保真正低活動的採血警報持續留存，直到該豬自行恢復為止。
                 if herd_ok and rate is not None:
                     low = rate < median_rate * self._low_ratio
                     recovered = rate > median_rate * self._recover_ratio

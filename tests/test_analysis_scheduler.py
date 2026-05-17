@@ -281,3 +281,72 @@ def test_reload_updates_interval_threshold_window_temp():
     assert sch._threshold == 2.5
     assert sch._window_minutes == 180
     assert sch._temp_enabled is False
+
+
+def test_temp_state_recovers_to_normal():
+    """体溫 alerted → 第二輪數值平穩 → temp_state 回 normal、temp_anomaly False。"""
+    from analysis.scheduler import Scheduler, get_anomaly_cache
+    pool = AsyncMock()
+    logs_anomalous = [
+        _log(0.0, 0.0, thermal=50.0), _log(0.0, 30.0, thermal=50.0),
+        _log(0.0, 60.0, thermal=50.0), _log(0.0, 90.0, thermal=50.0),
+        _log(0.0, 120.0, thermal=100.0),
+    ]
+    logs_steady = [
+        _log(0.0, 0.0, thermal=50.0), _log(0.0, 30.0, thermal=50.0),
+        _log(0.0, 60.0, thermal=50.0), _log(0.0, 90.0, thermal=50.0),
+        _log(0.0, 120.0, thermal=50.0),
+    ]
+    distinct_rows = [
+        {"camera_id": "cam_01", "object_id": 1},
+        {"camera_id": "cam_01", "object_id": 5},
+    ]
+    pool.fetch.side_effect = [
+        distinct_rows, _track(600.0), logs_anomalous,
+        distinct_rows, _track(600.0), logs_steady,
+    ]
+    pool.fetchrow.return_value = {"id": 1}
+    sch = Scheduler(pool, FakeSettings())
+
+    asyncio.run(sch._run_analysis())
+    cache = get_anomaly_cache()
+    assert cache["cam_01"][5]["temp_state"] == "alerted"
+    assert cache["cam_01"][5]["temp_anomaly"] is True
+
+    asyncio.run(sch._run_analysis())
+    assert cache["cam_01"][5]["temp_state"] == "normal"
+    assert cache["cam_01"][5]["temp_anomaly"] is False
+
+
+def test_alerted_pig_stays_flagged_when_herd_unmeasurable():
+    """pig 3 先 alerted；第二輪全欄低速 herd_ok=False → pig 3 警報不被清除（採血意圖保留）。"""
+    from analysis.scheduler import Scheduler, get_anomaly_cache
+    pool = AsyncMock()
+    distinct_rows_r1 = [
+        {"camera_id": "cam_01", "object_id": 1},
+        {"camera_id": "cam_01", "object_id": 2},
+        {"camera_id": "cam_01", "object_id": 3},
+    ]
+    distinct_rows_r2 = [
+        {"camera_id": "cam_01", "object_id": 1},
+        {"camera_id": "cam_01", "object_id": 2},
+        {"camera_id": "cam_01", "object_id": 3},
+    ]
+    pool.fetch.side_effect = [
+        distinct_rows_r1, _track(600.0), _track(480.0), _track(30.0),
+        distinct_rows_r2, _track(30.0), _track(24.0), _track(6.0),
+    ]
+    pool.fetchrow.return_value = {"id": 1}
+    sch = Scheduler(pool, FakeSettings())
+
+    asyncio.run(sch._run_analysis())
+    cache = get_anomaly_cache()
+    assert cache["cam_01"][3]["activity_state"] == "alerted"
+    assert cache["cam_01"][3]["activity_anomaly"] is True
+    assert pool.fetchrow.call_count == 1
+
+    asyncio.run(sch._run_analysis())
+    # herd_ok=False（全欄 rates median≈0.2 < abs_floor 2.0）→ 不進 activity 狀態機 → 警報保留
+    assert cache["cam_01"][3]["activity_state"] == "alerted"
+    assert cache["cam_01"][3]["activity_anomaly"] is True
+    assert pool.fetchrow.call_count == 1  # 第二輪不寫新 alert
