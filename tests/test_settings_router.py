@@ -13,12 +13,24 @@ for _mod in [
     if _mod not in sys.modules:
         sys.modules[_mod] = MagicMock()
 
-# zmq_receiver 的 module-level instantiation（ZMQReceiver()）在 ZMQ_SOURCES 未設定時
-# 會 raise；若模組尚未被載入，直接用 MagicMock 替代整個模組讓 patch() 仍能定位屬性。
-if "zmq_receiver" not in sys.modules:
-    _zmq_mock = MagicMock()
-    _zmq_mock.zmq_receiver = MagicMock()
-    sys.modules["zmq_receiver"] = _zmq_mock
+from contextlib import contextmanager
+
+
+@contextmanager
+def _dummy_zmq_sources():
+    """讓 `from main import app` 能成功：zmq_receiver 的 module-level
+    ZMQReceiver() 只在 settings.zmq_sources 為空時 raise。注入假來源、結束還原，
+    不污染 sys.modules（test_zmq_receiver 仍走既有 baseline）。"""
+    from config import ZmqSource, settings as _cfg
+    _orig = _cfg.zmq_sources
+    _cfg.zmq_sources = [ZmqSource(
+        name="t", src_host="127.0.0.1", src_port=5555,
+        src_topic="t", label="cam_01",
+    )]
+    try:
+        yield
+    finally:
+        _cfg.zmq_sources = _orig
 
 
 @pytest.fixture
@@ -26,21 +38,22 @@ def client_no_pool():
     """pool=None 時使用環境變數預設值"""
     import inference.pipeline as pipeline_mod
     import analysis.scheduler as scheduler_mod
-    with (
-        patch("database.connect", new_callable=AsyncMock),
-        patch("database.disconnect", new_callable=AsyncMock),
-        patch("database.get_pool", return_value=None),
-        patch("zmq_receiver.zmq_receiver.start"),
-        patch("zmq_receiver.zmq_receiver.stop"),
-        patch.object(pipeline_mod.inference_pipeline, "start"),
-        patch.object(pipeline_mod.inference_pipeline, "stop"),
-        patch("hls_manager.hls_manager.stop_all"),
-        patch.object(scheduler_mod.Scheduler, "start", new_callable=AsyncMock),
-        patch.object(scheduler_mod.Scheduler, "stop", new_callable=AsyncMock),
-    ):
-        from main import app
-        with TestClient(app) as c:
-            yield c
+    with _dummy_zmq_sources():
+        with (
+            patch("database.connect", new_callable=AsyncMock),
+            patch("database.disconnect", new_callable=AsyncMock),
+            patch("database.get_pool", return_value=None),
+            patch("zmq_receiver.zmq_receiver.start"),
+            patch("zmq_receiver.zmq_receiver.stop"),
+            patch.object(pipeline_mod.inference_pipeline, "start"),
+            patch.object(pipeline_mod.inference_pipeline, "stop"),
+            patch("hls_manager.hls_manager.stop_all"),
+            patch.object(scheduler_mod.Scheduler, "start", new_callable=AsyncMock),
+            patch.object(scheduler_mod.Scheduler, "stop", new_callable=AsyncMock),
+        ):
+            from main import app
+            with TestClient(app) as c:
+                yield c
 
 
 @pytest.fixture
@@ -56,21 +69,22 @@ def client_with_pool():
         {"key": "hls_retention_days", "value": "30"},
     ]
     mock_pool.executemany.return_value = None
-    with (
-        patch("database.connect", new_callable=AsyncMock),
-        patch("database.disconnect", new_callable=AsyncMock),
-        patch("database.get_pool", return_value=mock_pool),
-        patch("zmq_receiver.zmq_receiver.start"),
-        patch("zmq_receiver.zmq_receiver.stop"),
-        patch.object(pipeline_mod.inference_pipeline, "start"),
-        patch.object(pipeline_mod.inference_pipeline, "stop"),
-        patch("hls_manager.hls_manager.stop_all"),
-        patch.object(scheduler_mod.Scheduler, "start", new_callable=AsyncMock),
-        patch.object(scheduler_mod.Scheduler, "stop", new_callable=AsyncMock),
-    ):
-        from main import app
-        with TestClient(app) as c:
-            yield c
+    with _dummy_zmq_sources():
+        with (
+            patch("database.connect", new_callable=AsyncMock),
+            patch("database.disconnect", new_callable=AsyncMock),
+            patch("database.get_pool", return_value=mock_pool),
+            patch("zmq_receiver.zmq_receiver.start"),
+            patch("zmq_receiver.zmq_receiver.stop"),
+            patch.object(pipeline_mod.inference_pipeline, "start"),
+            patch.object(pipeline_mod.inference_pipeline, "stop"),
+            patch("hls_manager.hls_manager.stop_all"),
+            patch.object(scheduler_mod.Scheduler, "start", new_callable=AsyncMock),
+            patch.object(scheduler_mod.Scheduler, "stop", new_callable=AsyncMock),
+        ):
+            from main import app
+            with TestClient(app) as c:
+                yield c
 
 
 def test_get_settings_no_pool_returns_env_defaults(client_no_pool):
