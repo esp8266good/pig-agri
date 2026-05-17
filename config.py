@@ -93,9 +93,16 @@ class Settings(BaseSettings):
 
     # ── 分析排程 ───────────────────────────────────────────────
     analysis_interval_minutes: int = 30
-    analysis_window_minutes: int = 30
+    analysis_window_minutes: int = 60
     anomaly_std_threshold: float = 3.0
     anomaly_min_samples: int = 50
+    # 活動量（同伴相對）參數
+    activity_low_ratio: float = 0.3
+    activity_recover_ratio: float = 0.5
+    activity_abs_floor: float = 2.0
+    activity_min_coverage: float = 0.5
+    # 體溫異常偵測總開關
+    temp_anomaly_enabled: bool = True
 
     # ── Validators ────────────────────────────────────────────
     @field_validator("zmq_sources", mode="before")
