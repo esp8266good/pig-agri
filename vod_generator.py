@@ -70,14 +70,29 @@ def _parse_hour_m3u8(
     td_match = re.search(r"#EXT-X-TARGETDURATION:(\d+)", text)
     target_duration = int(td_match.group(1)) if td_match else 4
 
+    # ffmpeg 加 program_date_time 後，#EXTINF 與 segment 檔名之間會多一行
+    # #EXT-X-PROGRAM-DATE-TIME。逐行掃描，segment URI = #EXTINF 之後
+    # 第一行「非 # 開頭」的非空行，避免把標籤行誤當檔名。
     segments: list[tuple[float, float, str]] = []
     accumulated = 0.0
-    for m in re.finditer(r"#EXTINF:([\d.]+),[^\r\n]*\r?\n([^\r\n]+)", text):
-        duration = float(m.group(1))
-        filename = m.group(2).strip()
+    pending_duration: Optional[float] = None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("#EXTINF:"):
+            m = re.match(r"#EXTINF:([\d.]+),", line)
+            if m:
+                pending_duration = float(m.group(1))
+            continue
+        if line.startswith("#"):
+            continue
+        if pending_duration is None:
+            continue
         seg_start = float(hour_unix) + accumulated
-        url = f"/stream/hls/{camera_id}/{stream_type}/{dir_name}/{filename}"
-        segments.append((seg_start, duration, url))
-        accumulated += duration
+        url = f"/stream/hls/{camera_id}/{stream_type}/{dir_name}/{line}"
+        segments.append((seg_start, pending_duration, url))
+        accumulated += pending_duration
+        pending_duration = None
 
     return segments, target_duration

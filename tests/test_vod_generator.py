@@ -28,6 +28,42 @@ def _write_m3u8(hour_dir: Path, segment_count: int = 3, duration: float = 4.0) -
     (hour_dir / "index.m3u8").write_text("\n".join(lines) + "\n")
 
 
+def _write_m3u8_with_pdt(
+    hour_dir: Path, segment_count: int = 3, duration: float = 4.0
+) -> None:
+    """真實 ffmpeg `-hls_flags +program_date_time` 的輸出格式：
+    PDT 行夾在 #EXTINF 與 segment 檔名之間。"""
+    lines = [
+        "#EXTM3U",
+        "#EXT-X-VERSION:3",
+        "#EXT-X-TARGETDURATION:4",
+        "#EXT-X-MEDIA-SEQUENCE:0",
+        "#EXT-X-DISCONTINUITY",
+    ]
+    for i in range(segment_count):
+        lines.append(f"#EXTINF:{duration:.6f},")
+        lines.append(f"#EXT-X-PROGRAM-DATE-TIME:2026-05-05T00:0{i}:00.000+08:00")
+        lines.append(f"seg_{i:03d}.ts")
+    (hour_dir / "index.m3u8").write_text("\n".join(lines) + "\n")
+
+
+def test_segment_urls_are_ts_files_when_m3u8_has_pdt_lines(tmp_path, monkeypatch):
+    """回歸：ffmpeg 加 program_date_time 後，每段 #EXTINF 後面多一行
+    #EXT-X-PROGRAM-DATE-TIME，segment URL 必須仍指向 .ts 檔，
+    不能把 PDT 行當成檔名（會讓瀏覽器把 #... 當 fragment → 請求裸目錄 404）。"""
+    monkeypatch.setattr("config.settings.hls_base_dir", str(tmp_path))
+    from vod_generator import build_vod_m3u8
+    hour_dir = _make_hour_dir(tmp_path, "cam_01", "rgb", HOUR_TS)
+    _write_m3u8_with_pdt(hour_dir, segment_count=3)
+    result = build_vod_m3u8("cam_01", "rgb", float(HOUR_TS), float(HOUR_TS + 3600))
+    assert result is not None
+    assert result.count("#EXTINF:") == 3
+    for line in result.splitlines():
+        if line and not line.startswith("#"):
+            assert line.endswith(".ts"), f"segment URL is not a .ts file: {line!r}"
+            assert "PROGRAM-DATE-TIME" not in line
+
+
 def test_returns_none_when_no_directory(tmp_path, monkeypatch):
     monkeypatch.setattr("config.settings.hls_base_dir", str(tmp_path))
     from vod_generator import build_vod_m3u8
