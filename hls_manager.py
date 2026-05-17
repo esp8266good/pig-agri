@@ -62,7 +62,10 @@ def _make_ffmpeg_cmd(out_dir: Path) -> list[str]:
         # HLS 輸出
         "-hls_time", "4",
         "-hls_list_size", "0",
-        "-hls_flags", "append_list",
+        # program_date_time：每個 segment 寫入 #EXT-X-PROGRAM-DATE-TIME，
+        # 讓前端能用 hls.playingDate 取得「畫面上這一幀的實際時間」來對齊 bbox，
+        # 不必猜測伺服器管線延遲（抗網路抖動）。
+        "-hls_flags", "append_list+program_date_time",
         "-hls_segment_filename", str(out_dir / "seg_%03d.ts"),
         # FFmpeg 自身的 log 等級
         "-loglevel", FFMPEG_LOG_LEVEL,

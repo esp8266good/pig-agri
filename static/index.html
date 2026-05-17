@@ -1384,13 +1384,24 @@
       const vidW = video.videoWidth;
       const vidH = video.videoHeight;
 
-      // In live mode, pick the bbox entry whose timestamp best matches
-      // the actual video display time (current time minus HLS latency).
+      // In live mode, pick the bbox entry whose timestamp best matches the
+      // wall-clock time of the frame actually on screen. Prefer hls.playingDate
+      // (derived from the segment's #EXT-X-PROGRAM-DATE-TIME) — it travels with
+      // the media, so network jitter only changes how much is buffered, never
+      // which frame a given timestamp maps to. Fall back to (now - hls.latency)
+      // only if PDT is unavailable; that estimate misses the server-side
+      // pipeline delay (buffer + encode + segmentation) and runs ~3-5s ahead.
       let displayBoxes = latestBoxes;
       if (isLive && bboxHistory.length) {
-        const latency = (hls && hls.latency != null) ? hls.latency : 0;
-        if (latency > 1) {
-          const targetTs = Date.now() / 1000 - latency;
+        let targetTs = null;
+        const pd = hls && hls.playingDate;
+        if (pd && !isNaN(pd.getTime())) {
+          targetTs = pd.getTime() / 1000;
+        } else {
+          const latency = (hls && hls.latency != null) ? hls.latency : 0;
+          if (latency > 1) targetTs = Date.now() / 1000 - latency;
+        }
+        if (targetTs != null) {
           let best = bboxHistory[bboxHistory.length - 1];
           let bestDist = Infinity;
           for (const entry of bboxHistory) {
