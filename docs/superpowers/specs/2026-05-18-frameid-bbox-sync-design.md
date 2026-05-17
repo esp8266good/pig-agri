@@ -121,7 +121,7 @@ Live 模式 bbox 與串流畫面對不上，且**隨時間越來越偏**。過�
 
 ## 資料流
 
-```
+```text
 camera → zmq (ts, frame_id) ─┬─→ inference → WS payload {frame_id, timestamp, objects}
                               │                         → 前端 bboxHistory[{ts,fid,boxes}]
                               └─→ hls_manager.feed(rgb, capture_ts, frame_id)
@@ -138,11 +138,11 @@ camera → zmq (ts, frame_id) ─┬─→ inference → WS payload {frame_id, t
 ## 錯誤處理與降級
 
 | 情境 | 行為 |
-|---|---|
+| --- | --- |
 | segment 剛出現、`_fed_log` 尚無對應 | 不寫 `_seg_first_fid` → m3u8 無標籤 → 前端該段降級 PDT 路徑 |
 | thermal 串流（feed 無 frame_id） | 全程無標籤 → 前端降級 PDT/latency 路徑 |
 | 舊錄影 / 非當前小時（`corrected_m3u8` 回 None） | router 落回磁碟檔（無標籤）→ 前端降級；VOD 路徑本就不受影響 |
-| `bboxHistory` 項缺 `fid`（WS 無 frame_id） | 該情境 fallback 至 PDT 路徑（與上同分支）|
+| `bboxHistory` 項缺 `fid`（WS 無 frame_id） | 該情境 fallback 至 PDT 路徑（與上同分支） |
 | `frag.tagList` 無 PIG-FRAMEID | `liveFragFid=null` → 降級 |
 
 降級一律回退到**現有**行為，保證不比現況更差。
