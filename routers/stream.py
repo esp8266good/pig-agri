@@ -16,6 +16,15 @@ router = APIRouter(prefix="/stream", tags=["stream"])
 async def serve_hls(
     camera_id: str, stream_type: str, date_hour: str, filename: str
 ):
+    # live playlist：回傳後端自管 PDT（真實擷取時間）的版本，前端
+    # hls.playingDate 才會 ≡ 真實時間、bbox 零漂移。非當前小時 / 無
+    # 對應 stream → corrected 回 None，落回服務磁碟檔（歷史/已輪替）。
+    if filename == "index.m3u8":
+        corrected = hls_manager.corrected_m3u8(camera_id, stream_type, date_hour)
+        if corrected is not None:
+            return PlainTextResponse(
+                corrected, media_type="application/vnd.apple.mpegurl"
+            )
     base = Path(settings.hls_base_dir).resolve()
     file_path = (base / camera_id / stream_type / date_hour / filename).resolve()
     if not file_path.is_relative_to(base) or not file_path.exists():
@@ -62,9 +71,10 @@ async def get_live_stream(
     out_dir = hls_manager.ensure_started(camera_id, stream_type)
     return {
         "url": f"/stream/hls/{camera_id}/{stream_type}/{out_dir.name}/index.m3u8",
-        # 前端用：targetTs = hls.playingDate - pdt_offset，把畫面那幀的時間
-        # 換算回 bbox timestamp 的時鐘（見 hls_manager._update_pdt_offset）。
-        "pdt_offset": hls_manager.get_pdt_offset(camera_id),
+        # 後端自管 PDT 後，index.m3u8 的 PDT 已是真實擷取時間，
+        # 前端 targetTs = hls.playingDate - pdt_offset，offset 應為 0
+        # （不再需要猜測伺服器管線延遲；EMA 量測保留但對 live 不再使用）。
+        "pdt_offset": 0.0,
     }
 
 

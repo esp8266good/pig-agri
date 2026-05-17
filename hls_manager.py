@@ -42,6 +42,15 @@ TARGET_FPS: int = getattr(settings, "hls_target_fps", 25)
 FFMPEG_LOG_LEVEL: str = getattr(settings, "ffmpeg_log_level", "warning")  # debug/info/warning/error/quiet
 
 
+def _iso_local(ts: float) -> str:
+    """Unix ts → 本地時區 ISO8601（毫秒 + +HH:MM），對齊前端 hls.playingDate
+    與 vod_generator 的 PDT 格式。"""
+    dt = datetime.fromtimestamp(ts).astimezone()
+    base = dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond // 1000:03d}"
+    off = dt.strftime("%z")  # e.g. +0800
+    return f"{base}{off[:3]}:{off[3:]}"
+
+
 def _make_ffmpeg_cmd(out_dir: Path) -> list[str]:
     gop = TARGET_FPS * 2
     return [
@@ -134,6 +143,15 @@ class HLSStream:
         self._buffer_event = threading.Event()
         self._stopped = False
 
+        # 後端自管 PDT（根治 bbox 漸進落後）：記每個 segment 首幀的「真實
+        # 擷取牆鐘」。ffmpeg 媒體導出的 PDT 會相對牆鐘漂移，改寫成這裡的
+        # capture_ts 後，前端 hls.playingDate ≡ 真實擷取時間、零漂移。
+        self._last_capture_ts: Optional[float] = None
+        self._seg_pdt: dict[str, float] = {}
+        self._seen_segs: set[str] = set()
+        self._seg_lock = threading.Lock()
+        self._last_scan: float = 0.0
+
         # 啟動 writer 執行緒，以固定節奏把 buffer 裡的幀送進 ffmpeg
         self._writer_thread = threading.Thread(
             target=self._writer_loop,
@@ -144,15 +162,71 @@ class HLSStream:
 
     # ── 公開方法 ──────────────────────────────────────────────────────────
 
-    def feed(self, jpeg_bytes: bytes) -> None:
-        """把新幀放入 buffer；若 buffer 滿則自動丟棄最舊幀（deque maxlen 行為）。"""
+    def feed(self, jpeg_bytes: bytes, capture_ts: Optional[float] = None) -> None:
+        """把新幀放入 buffer；若 buffer 滿則自動丟棄最舊幀（deque maxlen 行為）。
+        capture_ts 為該幀的真實擷取牆鐘，供後端自管 PDT 用。"""
         with self._lock:
             new_dir = self._hour_dir()
             if new_dir != self.out_dir:
                 self._restart(new_dir)
+        if capture_ts is not None:
+            self._last_capture_ts = capture_ts
         self.last_feed_time = time.time()
         self._frame_buffer.append(jpeg_bytes)
         self._buffer_event.set()
+
+    def _scan_new_segments(self) -> None:
+        """偵測 out_dir 新出現的 seg_*.ts（ffmpeg 於 segment 起始即建檔），
+        把當下最新 capture_ts 記為該 segment 首幀的真實擷取時間。"""
+        try:
+            names = [p.name for p in self.out_dir.glob("seg_*.ts")]
+        except OSError:
+            return
+        cap = self._last_capture_ts
+        with self._seg_lock:
+            for name in names:
+                if name in self._seen_segs:
+                    continue
+                self._seen_segs.add(name)
+                if cap is not None:
+                    self._seg_pdt[name] = cap
+            if len(self._seg_pdt) > 2000:  # ffmpeg 每小時 restart 會清，這只是保險
+                for k in sorted(self._seg_pdt)[:-2000]:
+                    self._seg_pdt.pop(k, None)
+
+    def corrected_m3u8(self, date_hour: str) -> Optional[str]:
+        """讀 ffmpeg 的 index.m3u8，把每個 segment 前的
+        #EXT-X-PROGRAM-DATE-TIME 改寫成 _seg_pdt 記錄的真實擷取時間；
+        未知的 segment 保留 ffmpeg 原值。date_hour 不是當前小時 → None
+        （交由 router fallback 服務磁碟檔，避免影響歷史/已輪替小時）。"""
+        if date_hour != self.out_dir.name:
+            return None
+        m3u8_path = self.out_dir / "index.m3u8"
+        try:
+            text = m3u8_path.read_text()
+        except OSError:
+            return None
+        with self._seg_lock:
+            seg_pdt = dict(self._seg_pdt)
+        out: list[str] = []
+        last_pdt_idx: Optional[int] = None
+        for raw in text.splitlines():
+            line = raw.rstrip("\r")
+            if line.startswith("#EXT-X-PROGRAM-DATE-TIME:"):
+                last_pdt_idx = len(out)
+                out.append(line)
+                continue
+            if line and not line.startswith("#"):
+                cap = seg_pdt.get(line.strip())
+                if cap is not None:
+                    corrected = f"#EXT-X-PROGRAM-DATE-TIME:{_iso_local(cap)}"
+                    if last_pdt_idx is not None:
+                        out[last_pdt_idx] = corrected
+                    else:
+                        out.append(corrected)
+                last_pdt_idx = None
+            out.append(line)
+        return "\n".join(out) + "\n"
 
     def stop(self) -> None:
         self._stopped = True
@@ -199,6 +273,12 @@ class HLSStream:
                 except Exception as e:
                     logger.warning(f"[{self.camera_id}/{self.stream_type}] stdin write error: {e}")
 
+            # 偵測新 segment（節流 ~0.5s 一次，glob 成本可忽略）
+            now_m = time.monotonic()
+            if now_m - self._last_scan >= 0.5:
+                self._last_scan = now_m
+                self._scan_new_segments()
+
             # 精確等待到下個寫入時間點
             sleep_time = deadline - time.monotonic()
             if sleep_time > 0:
@@ -210,6 +290,10 @@ class HLSStream:
         new_dir.mkdir(parents=True, exist_ok=True)
         self.proc = _start_ffmpeg(new_dir)
         self.out_dir = new_dir
+        with self._seg_lock:  # 新小時、新 ffmpeg：舊 segment 對應已無意義
+            self._seg_pdt.clear()
+            self._seen_segs.clear()
+        self._last_scan = 0.0
         logger.info(
             f"Rolled over HLS stream {self.camera_id}/{self.stream_type} → {new_dir}"
         )
@@ -287,7 +371,7 @@ class HLSManager:
         with self._lock:
             stream = self._streams.get(key)
         if stream is not None:
-            stream.feed(jpeg_bytes)
+            stream.feed(jpeg_bytes, capture_ts)
         else:
             logger.debug(
                 f"[{camera_id}/{stream_type}] feed() called but stream not started, dropping frame"
@@ -305,6 +389,17 @@ class HLSManager:
                 else self._PDT_OFFSET_ALPHA * sample
                 + (1.0 - self._PDT_OFFSET_ALPHA) * prev
             )
+
+    def corrected_m3u8(
+        self, camera_id: str, stream_type: str, date_hour: str
+    ) -> Optional[str]:
+        """live index.m3u8 的 PDT 改寫成真實擷取時間（後端自管 PDT）。
+        非當前小時 / 無對應 stream → None（router fallback 服務磁碟檔）。"""
+        with self._lock:
+            stream = self._streams.get((camera_id, stream_type))
+        if stream is None:
+            return None
+        return stream.corrected_m3u8(date_hour)
 
     def get_pdt_offset(self, camera_id: str) -> float:
         """Seconds to subtract from hls.playingDate so the resulting time is on

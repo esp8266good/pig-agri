@@ -29,6 +29,85 @@ def _make_stream(tmp_path, monkeypatch, proc=None):
     return HLSStream("cam_01", "rgb", proc, out_dir), proc
 
 
+_FFMPEG_M3U8 = (
+    "#EXTM3U\n"
+    "#EXT-X-VERSION:3\n"
+    "#EXT-X-TARGETDURATION:5\n"
+    "#EXT-X-MEDIA-SEQUENCE:0\n"
+    "#EXT-X-DISCONTINUITY\n"
+    "#EXTINF:4.004000,\n"
+    "#EXT-X-PROGRAM-DATE-TIME:2099-01-01T00:00:00.000+08:00\n"
+    "seg_000.ts\n"
+    "#EXTINF:4.004000,\n"
+    "#EXT-X-PROGRAM-DATE-TIME:2099-01-01T00:00:04.004+08:00\n"
+    "seg_001.ts\n"
+)
+
+
+def test_corrected_m3u8_replaces_pdt_with_real_capture_time(tmp_path, monkeypatch):
+    """根因 #2 根治：live m3u8 的 PDT 必須是該 segment 首幀的真實擷取
+    時間（_seg_pdt），而非 ffmpeg 媒體導出的會漂移的時間。"""
+    stream, _ = _make_stream(tmp_path, monkeypatch)
+    stream._stopped = True  # 停掉 writer thread，純測 corrected_m3u8
+    (stream.out_dir / "index.m3u8").write_text(_FFMPEG_M3U8)
+    cap0, cap1 = 1_900_000_000.0, 1_900_000_007.0
+    stream._seg_pdt = {"seg_000.ts": cap0, "seg_001.ts": cap1}
+
+    out = stream.corrected_m3u8(stream.out_dir.name)
+    assert out is not None
+    from hls_manager import _iso_local
+    lines = out.splitlines()
+    i0 = lines.index("seg_000.ts")
+    i1 = lines.index("seg_001.ts")
+    assert lines[i0 - 1] == f"#EXT-X-PROGRAM-DATE-TIME:{_iso_local(cap0)}"
+    assert lines[i1 - 1] == f"#EXT-X-PROGRAM-DATE-TIME:{_iso_local(cap1)}"
+    assert "2099-01-01T00:00:00.000" not in out  # ffmpeg 原值已被取代
+    assert out.count("seg_000.ts") == 1 and out.count("#EXTINF:") == 2
+
+
+def test_corrected_m3u8_falls_back_when_segment_unknown(tmp_path, monkeypatch):
+    """未知 segment（race / 無 capture_ts）保留 ffmpeg 原 PDT，不臆造。"""
+    stream, _ = _make_stream(tmp_path, monkeypatch)
+    stream._stopped = True
+    (stream.out_dir / "index.m3u8").write_text(_FFMPEG_M3U8)
+    stream._seg_pdt = {}  # 完全不知道
+    out = stream.corrected_m3u8(stream.out_dir.name)
+    assert out is not None
+    assert "2099-01-01T00:00:00.000+08:00" in out
+    assert "2099-01-01T00:00:04.004+08:00" in out
+
+
+def test_corrected_m3u8_none_when_missing_or_dir_mismatch(tmp_path, monkeypatch):
+    stream, _ = _make_stream(tmp_path, monkeypatch)
+    stream._stopped = True
+    assert stream.corrected_m3u8(stream.out_dir.name) is None  # 無 m3u8
+    (stream.out_dir / "index.m3u8").write_text(_FFMPEG_M3U8)
+    assert stream.corrected_m3u8("1999-01-01-00") is None  # 非當前小時
+
+
+def test_scan_new_segments_records_last_capture_ts(tmp_path, monkeypatch):
+    stream, _ = _make_stream(tmp_path, monkeypatch)
+    stream._stopped = True
+    stream._last_capture_ts = 1_700_000_123.5
+    (stream.out_dir / "seg_000.ts").write_bytes(b"x")
+    stream._scan_new_segments()
+    assert stream._seg_pdt["seg_000.ts"] == 1_700_000_123.5
+    # 同名不覆寫；無 capture_ts 的新段不記
+    stream._last_capture_ts = 9_999_999_999.0
+    stream._scan_new_segments()
+    assert stream._seg_pdt["seg_000.ts"] == 1_700_000_123.5
+    stream._last_capture_ts = None
+    (stream.out_dir / "seg_001.ts").write_bytes(b"x")
+    stream._scan_new_segments()
+    assert "seg_001.ts" not in stream._seg_pdt
+
+
+def test_feed_threads_capture_ts_into_stream(tmp_path, monkeypatch):
+    stream, _ = _make_stream(tmp_path, monkeypatch)
+    stream.feed(b"\xff\xd8\xff", capture_ts=1_700_000_500.0)
+    assert stream._last_capture_ts == 1_700_000_500.0
+
+
 def test_hlsstream_feed_writes_to_stdin(tmp_path, monkeypatch):
     stream, proc = _make_stream(tmp_path, monkeypatch)
     stream.feed(b"\xff\xd8\xff")
