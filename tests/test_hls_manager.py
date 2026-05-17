@@ -262,3 +262,16 @@ def test_stop_all_terminates_all_streams(tmp_path, monkeypatch):
     proc1.terminate.assert_called()
     proc2.terminate.assert_called()
     assert len(m._streams) == 0
+
+
+def test_feed_threads_frame_id_into_fed_log(tmp_path, monkeypatch):
+    stream, _ = _make_stream(tmp_path, monkeypatch)
+    stream._stopped = True
+    stream.feed(b"\xff\xd8\xff", capture_ts=1_700_000_001.0, frame_id=10)
+    stream.feed(b"\xff\xd8\xff", capture_ts=1_700_000_001.1, frame_id=11)
+    assert stream._fed_count == 2
+    assert list(stream._fed_log) == [(0, 10), (1, 11)]
+    # 無 frame_id（thermal）→ 計數仍增、但不記入 _fed_log
+    stream.feed(b"\xff\xd8\xff")
+    assert stream._fed_count == 3
+    assert list(stream._fed_log) == [(0, 10), (1, 11)]

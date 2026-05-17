@@ -40,6 +40,10 @@ def configure_logging(level: str = "INFO") -> None:
 # 5. 加上 -g (GOP size) = 2 * FPS：讓 HLS 切割更整齊
 TARGET_FPS: int = getattr(settings, "hls_target_fps", 25)
 FFMPEG_LOG_LEVEL: str = getattr(settings, "ffmpeg_log_level", "warning")  # debug/info/warning/error/quiet
+# segment 時長（與 _make_ffmpeg_cmd 的 -hls_time 一致）
+_HLS_TIME: int = 4
+# 餵入幀 (fed_index, frame_id) 記錄上限（約 30 分鐘餘量，遠超單一小時所需）
+_FED_LOG_MAX: int = TARGET_FPS * 1800
 
 
 def _iso_local(ts: float) -> str:
@@ -151,6 +155,11 @@ class HLSStream:
         self._seen_segs: set[str] = set()
         self._seg_lock = threading.Lock()
         self._last_scan: float = 0.0
+        # 幀身分對應：餵入幀計數 + (fed_index, frame_id) 環形記錄，
+        # 與 segment 首幀 frame_id 對應（_scan_new_segments 用幀計數推算）。
+        self._fed_count: int = 0
+        self._fed_log: deque[tuple[int, int]] = deque(maxlen=_FED_LOG_MAX)
+        self._seg_first_fid: dict[str, int] = {}
 
         # 啟動 writer 執行緒，以固定節奏把 buffer 裡的幀送進 ffmpeg
         self._writer_thread = threading.Thread(
@@ -162,15 +171,24 @@ class HLSStream:
 
     # ── 公開方法 ──────────────────────────────────────────────────────────
 
-    def feed(self, jpeg_bytes: bytes, capture_ts: Optional[float] = None) -> None:
+    def feed(
+        self,
+        jpeg_bytes: bytes,
+        capture_ts: Optional[float] = None,
+        frame_id: Optional[int] = None,
+    ) -> None:
         """把新幀放入 buffer；若 buffer 滿則自動丟棄最舊幀（deque maxlen 行為）。
-        capture_ts 為該幀的真實擷取牆鐘，供後端自管 PDT 用。"""
+        capture_ts 為該幀真實擷取牆鐘（後端自管 PDT，fallback 用）；
+        frame_id 為該幀身分（幀計數錨點 → segment↔frame_id 對應）。"""
         with self._lock:
             new_dir = self._hour_dir()
             if new_dir != self.out_dir:
                 self._restart(new_dir)
         if capture_ts is not None:
             self._last_capture_ts = capture_ts
+        self._fed_count += 1
+        if frame_id is not None:
+            self._fed_log.append((self._fed_count - 1, int(frame_id)))
         self.last_feed_time = time.time()
         self._frame_buffer.append(jpeg_bytes)
         self._buffer_event.set()
