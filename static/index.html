@@ -817,6 +817,7 @@
     let latestBoxes = [];
     let vodStartTs = 0;
     let bboxHistory = [];   // live mode: [{ts, boxes}] ring buffer for HLS latency alignment
+    let _dbg = null;        // live-sync diagnostics snapshot (press 'd' to toggle HUD)
     let currentCamera = null;
     let currentType = 'rgb';
     let animFrameId = null;
@@ -1394,13 +1395,16 @@
       let displayBoxes = latestBoxes;
       if (isLive && bboxHistory.length) {
         let targetTs = null;
+        let dbgSrc = 'latest';
         const pd = hls && hls.playingDate;
         if (pd && !isNaN(pd.getTime())) {
           targetTs = pd.getTime() / 1000;
+          dbgSrc = 'PDT';
         } else {
           const latency = (hls && hls.latency != null) ? hls.latency : 0;
-          if (latency > 1) targetTs = Date.now() / 1000 - latency;
+          if (latency > 1) { targetTs = Date.now() / 1000 - latency; dbgSrc = 'latency'; }
         }
+        let chosenTs = bboxHistory[bboxHistory.length - 1].ts;
         if (targetTs != null) {
           let best = bboxHistory[bboxHistory.length - 1];
           let bestDist = Infinity;
@@ -1409,10 +1413,25 @@
             if (d < bestDist) { bestDist = d; best = entry; }
           }
           displayBoxes = best.boxes;
+          chosenTs = best.ts;
         }
-      }
+        if (window.__bboxDebug) {
+          const now = Date.now() / 1000;
+          _dbg = {
+            src: dbgSrc,
+            now,
+            latency: (hls && hls.latency != null) ? hls.latency : null,
+            playingDate: (pd && !isNaN(pd.getTime())) ? pd.getTime() / 1000 : null,
+            targetTs,
+            chosenTs,
+            newestTs: bboxHistory[bboxHistory.length - 1].ts,
+            histLen: bboxHistory.length,
+          };
+        } else { _dbg = null; }
+      } else { _dbg = null; }
 
       if (!vidW || !vidH || !displayBoxes.length) {
+        if (_dbg) drawDbgHud(ctx);
         animFrameId = requestAnimationFrame(drawBoxes);
         return;
       }
@@ -1457,8 +1476,48 @@
           if (icons) ctx.fillText(icons, px + 2, py + ph - 2);
         }
       }
+      if (_dbg) drawDbgHud(ctx);
       animFrameId = requestAnimationFrame(drawBoxes);
     }
+
+    // Diagnostic HUD for live bbox/stream sync — toggle with the 'd' key.
+    // Shows whether PDT (hls.playingDate) is actually driving alignment and
+    // how far the chosen bbox sits from the displayed frame's timestamp.
+    function drawDbgHud(ctx) {
+      const d = _dbg;
+      const fmt = (v) => (v == null ? 'null' : (typeof v === 'number' ? v.toFixed(2) : v));
+      const leadTarget = (d.targetTs != null) ? (d.chosenTs - d.targetTs) : null;
+      const leadNewest = d.newestTs - (d.targetTs != null ? d.targetTs : d.now);
+      const lines = [
+        `src=${d.src}  hist=${d.histLen}`,
+        `hls.playingDate=${fmt(d.playingDate)}`,
+        `hls.latency=${fmt(d.latency)}`,
+        `now=${fmt(d.now)}`,
+        `targetTs=${fmt(d.targetTs)}`,
+        `chosenBbox.ts=${fmt(d.chosenTs)}`,
+        `newestBbox.ts=${fmt(d.newestTs)}`,
+        `chosen-target=${fmt(leadTarget)}s`,
+        `newest-target=${fmt(leadNewest)}s`,
+      ];
+      ctx.save();
+      ctx.font = '12px monospace';
+      let maxW = 0;
+      for (const l of lines) maxW = Math.max(maxW, ctx.measureText(l).width);
+      const pad = 8, lh = 16;
+      ctx.fillStyle = 'rgba(0,0,0,0.72)';
+      ctx.fillRect(6, 6, maxW + pad * 2, lines.length * lh + pad * 2);
+      ctx.fillStyle = '#39e6a6';
+      ctx.textBaseline = 'top';
+      lines.forEach((l, i) => ctx.fillText(l, 6 + pad, 6 + pad + i * lh));
+      ctx.restore();
+    }
+
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'd' && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName)) {
+        window.__bboxDebug = !window.__bboxDebug;
+        showToast(`bbox 同步診斷 HUD：${window.__bboxDebug ? '開' : '關'}`);
+      }
+    });
 
     function roundRect(ctx, x, y, w, h, r) {
       ctx.beginPath();
