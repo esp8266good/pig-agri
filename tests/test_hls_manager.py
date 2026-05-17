@@ -275,3 +275,41 @@ def test_feed_threads_frame_id_into_fed_log(tmp_path, monkeypatch):
     stream.feed(b"\xff\xd8\xff")
     assert stream._fed_count == 3
     assert list(stream._fed_log) == [(0, 10), (1, 11)]
+
+
+def test_scan_records_seg_first_fid_by_frame_count(tmp_path, monkeypatch):
+    """segment 首幀 frame_id 用『餵入幀計數』推算（避開管線延遲 L），
+    取 fed_index 最接近 round(ordinal*TARGET_FPS*_HLS_TIME) 的 frame_id。"""
+    from hls_manager import TARGET_FPS, _HLS_TIME
+    stream, _ = _make_stream(tmp_path, monkeypatch)
+    stream._stopped = True
+    # 餵入足夠覆蓋到 seg_002 期望位置的記錄：fed_index i → frame_id 1000+i
+    expected2 = round(2 * TARGET_FPS * _HLS_TIME)
+    for i in range(expected2 + 5):
+        stream._fed_log.append((i, 1000 + i))
+    (stream.out_dir / "seg_002.ts").write_bytes(b"x")
+    stream._scan_new_segments()
+    assert stream._seg_first_fid["seg_002.ts"] == 1000 + expected2
+    # 同名不覆寫
+    stream._fed_log.append((expected2, 99999))
+    stream._scan_new_segments()
+    assert stream._seg_first_fid["seg_002.ts"] == 1000 + expected2
+    # _fed_log 為空 → 不記
+    stream._fed_log.clear()
+    (stream.out_dir / "seg_003.ts").write_bytes(b"x")
+    stream._scan_new_segments()
+    assert "seg_003.ts" not in stream._seg_first_fid
+
+
+def test_restart_clears_frameid_state(tmp_path, monkeypatch):
+    stream, _ = _make_stream(tmp_path, monkeypatch)
+    stream._stopped = True
+    stream._fed_count = 5
+    stream._fed_log.append((4, 77))
+    stream._seg_first_fid["seg_000.ts"] = 77
+    new_dir = stream.out_dir.parent / "2099-01-01-00"
+    with patch("hls_manager._start_ffmpeg", return_value=MagicMock(stdin=MagicMock())):
+        stream._restart(new_dir)
+    assert stream._fed_count == 0
+    assert list(stream._fed_log) == []
+    assert stream._seg_first_fid == {}

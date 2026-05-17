@@ -1,6 +1,7 @@
 import subprocess
 import threading
 import time
+import re
 from collections import deque
 from datetime import datetime
 from pathlib import Path
@@ -202,15 +203,26 @@ class HLSStream:
             return
         cap = self._last_capture_ts
         with self._seg_lock:
+            fed_log = list(self._fed_log)
             for name in names:
                 if name in self._seen_segs:
                     continue
                 self._seen_segs.add(name)
                 if cap is not None:
                     self._seg_pdt[name] = cap
+                m = re.match(r"seg_(\d+)\.ts$", name)
+                if m and fed_log:
+                    expected = round(int(m.group(1)) * TARGET_FPS * _HLS_TIME)
+                    best_fid = min(
+                        fed_log, key=lambda p: abs(p[0] - expected)
+                    )[1]
+                    self._seg_first_fid[name] = best_fid
             if len(self._seg_pdt) > 2000:  # ffmpeg 每小時 restart 會清，這只是保險
                 for k in sorted(self._seg_pdt)[:-2000]:
                     self._seg_pdt.pop(k, None)
+            if len(self._seg_first_fid) > 2000:
+                for k in sorted(self._seg_first_fid)[:-2000]:
+                    self._seg_first_fid.pop(k, None)
 
     def corrected_m3u8(self, date_hour: str) -> Optional[str]:
         """讀 ffmpeg 的 index.m3u8，把每個 segment 前的
@@ -311,6 +323,9 @@ class HLSStream:
         with self._seg_lock:  # 新小時、新 ffmpeg：舊 segment 對應已無意義
             self._seg_pdt.clear()
             self._seen_segs.clear()
+            self._seg_first_fid.clear()
+        self._fed_log.clear()
+        self._fed_count = 0
         self._last_scan = 0.0
         logger.info(
             f"Rolled over HLS stream {self.camera_id}/{self.stream_type} → {new_dir}"
