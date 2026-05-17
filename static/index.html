@@ -788,6 +788,26 @@
           </select>
         </div>
         <div class="settings-field">
+          <label for="set-analysis-window">活動量評估視窗</label>
+          <select id="set-analysis-window">
+            <option value="15">15 分鐘</option>
+            <option value="30">30 分鐘</option>
+            <option value="60">1 小時</option>
+            <option value="120">2 小時</option>
+            <option value="180">3 小時</option>
+            <option value="240">4 小時</option>
+            <option value="300">5 小時</option>
+            <option value="360">6 小時</option>
+          </select>
+        </div>
+        <div class="settings-field">
+          <label for="set-temp-enabled">體溫異常偵測</label>
+          <select id="set-temp-enabled">
+            <option value="true">啟用</option>
+            <option value="false">停用（Thermal 鏡頭關閉時）</option>
+          </select>
+        </div>
+        <div class="settings-field">
           <label for="set-anomaly-threshold">異常閾值（σ，≥ 1.0）</label>
           <input type="number" id="set-anomaly-threshold" min="1.0" step="0.1">
         </div>
@@ -1262,10 +1282,15 @@
         const a = document.getElementById('set-analysis-interval');
         const t = document.getElementById('set-anomaly-threshold');
         const r = document.getElementById('set-hls-retention');
+        const w = document.getElementById('set-analysis-window');
+        const te = document.getElementById('set-temp-enabled');
         if (q && data.jpeg_quality !== undefined)              q.value = data.jpeg_quality;
         if (a && data.analysis_interval_minutes !== undefined) a.value = data.analysis_interval_minutes;
         if (t && data.anomaly_std_threshold !== undefined)     t.value = data.anomaly_std_threshold;
         if (r && data.hls_retention_days !== undefined)        r.value = data.hls_retention_days;
+        if (w && data.analysis_window_minutes !== undefined)   w.value = data.analysis_window_minutes;
+        if (te && data.temp_anomaly_enabled !== undefined)
+          te.value = String(data.temp_anomaly_enabled).toLowerCase() === 'true' ? 'true' : 'false';
       } catch (_) {}
     }
 
@@ -1273,8 +1298,10 @@
       const body = {
         jpeg_quality:              document.getElementById('set-jpeg-quality').value,
         analysis_interval_minutes: document.getElementById('set-analysis-interval').value,
+        analysis_window_minutes:   document.getElementById('set-analysis-window').value,
         anomaly_std_threshold:     document.getElementById('set-anomaly-threshold').value,
         hls_retention_days:        document.getElementById('set-hls-retention').value,
+        temp_anomaly_enabled:      document.getElementById('set-temp-enabled').value,
       };
       const statusEl = document.getElementById('settings-status');
       try {
