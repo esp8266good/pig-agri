@@ -203,7 +203,7 @@ class HLSStream:
             return
         cap = self._last_capture_ts
         with self._seg_lock:
-            fed_log = list(self._fed_log)
+            fed_log: list[tuple[int, int]] | None = None  # 惰性快照：僅在有新 segment 時才複製
             for name in names:
                 if name in self._seen_segs:
                     continue
@@ -211,12 +211,15 @@ class HLSStream:
                 if cap is not None:
                     self._seg_pdt[name] = cap
                 m = re.match(r"seg_(\d+)\.ts$", name)
-                if m and fed_log:
-                    expected = round(int(m.group(1)) * TARGET_FPS * _HLS_TIME)
-                    best_fid = min(
-                        fed_log, key=lambda p: abs(p[0] - expected)
-                    )[1]
-                    self._seg_first_fid[name] = best_fid
+                if m:
+                    if fed_log is None:
+                        fed_log = list(self._fed_log)
+                    if fed_log:
+                        expected = round(int(m.group(1)) * TARGET_FPS * _HLS_TIME)
+                        best_fid = min(
+                            fed_log, key=lambda p: abs(p[0] - expected)
+                        )[1]
+                        self._seg_first_fid[name] = best_fid
             if len(self._seg_pdt) > 2000:  # ffmpeg 每小時 restart 會清，這只是保險
                 for k in sorted(self._seg_pdt)[:-2000]:
                     self._seg_pdt.pop(k, None)
@@ -324,6 +327,8 @@ class HLSStream:
             self._seg_pdt.clear()
             self._seen_segs.clear()
             self._seg_first_fid.clear()
+        # _fed_log/_fed_count 不在 _seg_lock 內清（沿用 feed() 不持 _seg_lock 的慣例）；
+        # _restart 由持 self._lock 的 feed() 呼叫，與 writer-loop 的 scan 競態窗口極小且無害。
         self._fed_log.clear()
         self._fed_count = 0
         self._last_scan = 0.0
