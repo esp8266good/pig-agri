@@ -815,6 +815,10 @@
           <label for="set-hls-retention">影像保留天數（1–365）</label>
           <input type="number" id="set-hls-retention" min="1" max="365" step="1">
         </div>
+        <div class="settings-field">
+          <label for="set-live-pdt-offset">Live bbox 對齊偏移（秒，框超前畫面就調大）</label>
+          <input type="number" id="set-live-pdt-offset" min="0" max="30" step="0.5">
+        </div>
         <div class="settings-save-row">
           <button id="save-settings-btn" onclick="saveSettings()">儲存設定</button>
           <span id="settings-status"></span>
@@ -1284,6 +1288,8 @@
         const r = document.getElementById('set-hls-retention');
         const w = document.getElementById('set-analysis-window');
         const te = document.getElementById('set-temp-enabled');
+        const po = document.getElementById('set-live-pdt-offset');
+        if (po && data.live_pdt_offset_seconds !== undefined) po.value = data.live_pdt_offset_seconds;
         if (q && data.jpeg_quality !== undefined)              q.value = data.jpeg_quality;
         if (a && data.analysis_interval_minutes !== undefined) a.value = data.analysis_interval_minutes;
         if (t && data.anomaly_std_threshold !== undefined)     t.value = data.anomaly_std_threshold;
@@ -1302,6 +1308,7 @@
         anomaly_std_threshold:     document.getElementById('set-anomaly-threshold').value,
         hls_retention_days:        document.getElementById('set-hls-retention').value,
         temp_anomaly_enabled:      document.getElementById('set-temp-enabled').value,
+        live_pdt_offset_seconds:   document.getElementById('set-live-pdt-offset').value,
       };
       const statusEl = document.getElementById('settings-status');
       try {

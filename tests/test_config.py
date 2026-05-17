@@ -75,6 +75,11 @@ def test_default_anomaly_threshold():
     assert s.anomaly_std_threshold == 3.0
 
 
+def test_default_live_pdt_offset_seconds():
+    s = Settings(**_BASE)
+    assert s.live_pdt_offset_seconds == 2.0
+
+
 def test_settings_has_fast_reid_config():
     s = Settings()
     assert s.fast_reid_config == "./ref/HybridSORT/fast_reid/configs/CUHKSYSU_DanceTrack/sbs_S50.yml"

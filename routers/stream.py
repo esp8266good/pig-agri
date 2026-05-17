@@ -3,7 +3,9 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, PlainTextResponse
 
+import database
 from config import settings
+from db_writer import get_all_settings
 from hls_manager import hls_manager
 from vod_generator import build_vod_m3u8
 
@@ -69,12 +71,20 @@ async def get_live_stream(
     if camera_id not in [s.label for s in settings.zmq_sources]:
         raise HTTPException(status_code=404, detail="Camera not found")
     out_dir = hls_manager.ensure_started(camera_id, stream_type)
+    # 後端自管 PDT 後 index.m3u8 的 PDT≈真實擷取時間，但偵測 segment
+    # 出現相對 ffmpeg 實際 mux 有殘留固定管線延遲；前端
+    # targetTs = playingDate - pdt_offset 用這個可調常數補掉（DB 可即時調）。
+    offset = settings.live_pdt_offset_seconds
+    pool = database.get_pool()
+    if pool is not None:
+        try:
+            rows = await get_all_settings(pool)
+            offset = float(rows.get("live_pdt_offset_seconds", offset))
+        except (TypeError, ValueError):
+            pass
     return {
         "url": f"/stream/hls/{camera_id}/{stream_type}/{out_dir.name}/index.m3u8",
-        # 後端自管 PDT 後，index.m3u8 的 PDT 已是真實擷取時間，
-        # 前端 targetTs = hls.playingDate - pdt_offset，offset 應為 0
-        # （不再需要猜測伺服器管線延遲；EMA 量測保留但對 live 不再使用）。
-        "pdt_offset": 0.0,
+        "pdt_offset": offset,
     }
 
 
