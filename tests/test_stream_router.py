@@ -29,6 +29,15 @@ def test_live_returns_m3u8_url(client):
     assert resp.json()["url"] == "/stream/hls/cam_01/rgb/2026-05-04-14/index.m3u8"
 
 
+def test_live_includes_pdt_offset(client):
+    fake_dir = Path("/data/pig_monitoring/hls/cam_01/rgb/2026-05-04-14")
+    with patch("hls_manager.hls_manager.ensure_started", return_value=fake_dir), \
+         patch("hls_manager.hls_manager.get_pdt_offset", return_value=4.25):
+        resp = client.get("/stream/cam_01/live?type=rgb")
+    assert resp.status_code == 200
+    assert resp.json()["pdt_offset"] == 4.25
+
+
 def test_live_default_type_is_rgb(client):
     fake_dir = Path("/data/pig_monitoring/hls/cam_01/rgb/2026-05-04-14")
     with patch("hls_manager.hls_manager.ensure_started", return_value=fake_dir) as mock_start:

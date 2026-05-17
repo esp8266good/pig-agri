@@ -109,6 +109,41 @@ def test_feed_is_noop_when_stream_not_started(manager):
     fake_proc.stdin.write.assert_not_called()
 
 
+def test_pdt_offset_defaults_to_zero(manager):
+    m, _ = manager
+    assert m.get_pdt_offset("cam_never_seen") == 0.0
+
+
+def test_feed_without_capture_ts_keeps_offset_zero(manager):
+    """Backward compat: legacy callers pass no capture_ts → offset stays 0."""
+    m, fake_proc = manager
+    with patch("hls_manager._start_ffmpeg", return_value=fake_proc):
+        m.ensure_started("cam_01", "rgb")
+    m.feed("cam_01", "rgb", b"\xff\xd8\xff")
+    assert m.get_pdt_offset("cam_01") == 0.0
+
+
+def test_feed_with_capture_ts_tracks_pdt_offset(manager):
+    """First sample initializes the EMA directly, so offset ≈ wallclock gap
+    between the capture-ts clock and the server clock (what ffmpeg PDT uses)."""
+    m, fake_proc = manager
+    with patch("hls_manager._start_ffmpeg", return_value=fake_proc):
+        m.ensure_started("cam_01", "rgb")
+    m.feed("cam_01", "rgb", b"\xff\xd8\xff", capture_ts=time.time() - 5.0)
+    assert m.get_pdt_offset("cam_01") == pytest.approx(5.0, abs=0.5)
+
+
+def test_pdt_offset_rejects_absurd_samples(manager):
+    """A wildly stale/negative capture_ts must not poison the offset."""
+    m, fake_proc = manager
+    with patch("hls_manager._start_ffmpeg", return_value=fake_proc):
+        m.ensure_started("cam_01", "rgb")
+    m.feed("cam_01", "rgb", b"\xff\xd8\xff", capture_ts=time.time() - 5.0)
+    m.feed("cam_01", "rgb", b"\xff\xd8\xff", capture_ts=time.time() - 9999.0)
+    m.feed("cam_01", "rgb", b"\xff\xd8\xff", capture_ts=time.time() + 9999.0)
+    assert m.get_pdt_offset("cam_01") == pytest.approx(5.0, abs=1.0)
+
+
 def test_evict_stale_removes_expired_stream(tmp_path, monkeypatch):
     monkeypatch.setattr("hls_manager.settings.hls_base_dir", str(tmp_path))
     fake_proc = MagicMock()

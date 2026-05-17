@@ -818,6 +818,7 @@
     let vodStartTs = 0;
     let bboxHistory = [];   // live mode: [{ts, boxes}] ring buffer for HLS latency alignment
     let _dbg = null;        // live-sync diagnostics snapshot (press 'd' to toggle HUD)
+    let livePdtOffset = 0;  // sec to subtract from hls.playingDate → bbox-ts clock (from /live)
     let currentCamera = null;
     let currentType = 'rgb';
     let animFrameId = null;
@@ -1398,7 +1399,10 @@
         let dbgSrc = 'latest';
         const pd = hls && hls.playingDate;
         if (pd && !isNaN(pd.getTime())) {
-          targetTs = pd.getTime() / 1000;
+          // playingDate is on ffmpeg's PDT clock (server wallclock when the
+          // frame was fed/muxed). Subtract the server-measured offset to land
+          // on the bbox WS `timestamp` clock (true frame capture time).
+          targetTs = pd.getTime() / 1000 - livePdtOffset;
           dbgSrc = 'PDT';
         } else {
           const latency = (hls && hls.latency != null) ? hls.latency : 0;
@@ -1422,6 +1426,7 @@
             now,
             latency: (hls && hls.latency != null) ? hls.latency : null,
             playingDate: (pd && !isNaN(pd.getTime())) ? pd.getTime() / 1000 : null,
+            pdtOffset: livePdtOffset,
             targetTs,
             chosenTs,
             newestTs: bboxHistory[bboxHistory.length - 1].ts,
@@ -1492,6 +1497,7 @@
         `src=${d.src}  hist=${d.histLen}`,
         `hls.playingDate=${fmt(d.playingDate)}`,
         `hls.latency=${fmt(d.latency)}`,
+        `pdtOffset=${fmt(d.pdtOffset)}`,
         `now=${fmt(d.now)}`,
         `targetTs=${fmt(d.targetTs)}`,
         `chosenBbox.ts=${fmt(d.chosenTs)}`,
@@ -1535,6 +1541,21 @@
 
     animFrameId = requestAnimationFrame(drawBoxes);
 
+    // Refresh the server-measured PDT offset periodically so it tracks the
+    // backend EMA converging and ffmpeg's hourly PDT re-anchor. Purely a
+    // server-side quantity → safe to poll slowly; independent of client net.
+    setInterval(async () => {
+      if (!isLive || !currentCamera) return;
+      try {
+        const r = await fetch(`/stream/${currentCamera}/live?type=${currentType}`);
+        if (!r.ok) return;
+        const j = await r.json();
+        if (typeof j.pdt_offset === 'number' && isFinite(j.pdt_offset)) {
+          livePdtOffset = j.pdt_offset;
+        }
+      } catch (_) {}
+    }, 30000);
+
     // ── HLS stream ────────────────────────────────────────────
     async function loadStream() {
       if (!currentCamera) return;
@@ -1549,7 +1570,10 @@
       try {
         const res = await fetch(`/stream/${currentCamera}/live?type=${currentType}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const { url } = await res.json();
+        const live = await res.json();
+        const url = live.url;
+        livePdtOffset = (typeof live.pdt_offset === 'number' && isFinite(live.pdt_offset))
+          ? live.pdt_offset : 0;
 
         if (Hls.isSupported()) {
           hls = new Hls({

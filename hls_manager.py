@@ -235,8 +235,19 @@ class HLSManager:
     NO_FRAME_TIMEOUT: int = 30
     WATCHDOG_INTERVAL: int = 10
 
+    # ── PDT 偏差量測 ──────────────────────────────────────────────────────
+    # ffmpeg 的 #EXT-X-PROGRAM-DATE-TIME 用「ffmpeg host 餵幀/mux 當下的牆鐘」，
+    # 但前端 bbox 的 timestamp 用的是「擷取端時鐘」(camera publisher 蓋的 ts)。
+    # 兩個時鐘的差 = NTP 偏差 + zmq 傳輸 + 餵入緩衝 ≈ 每個部署固定、與用戶端
+    # 網路無關。在「餵 ffmpeg 的瞬間」量 server_now - capture_ts 即得此差，
+    # 用 EMA 平滑後給前端做 targetTs = playingDate - offset 校正。
+    _PDT_OFFSET_ALPHA: float = 0.05
+    _PDT_OFFSET_MIN: float = -2.0   # 容許輕微 clock skew / 抖動
+    _PDT_OFFSET_MAX: float = 30.0   # 超過視為 stale frame，丟棄不污染 EMA
+
     def __init__(self) -> None:
         self._streams: Dict[StreamKey, HLSStream] = {}
+        self._pdt_offset: Dict[str, float] = {}
         self._lock = threading.Lock()
         self._watchdog = threading.Thread(
             target=self._watchdog_loop, daemon=True, name="hls-watchdog"
@@ -263,8 +274,16 @@ class HLSManager:
                 logger.info(f"Started HLS stream {camera_id}/{stream_type} → {out_dir}")
             return self._streams[key].out_dir
 
-    def feed(self, camera_id: str, stream_type: str, jpeg_bytes: bytes) -> None:
+    def feed(
+        self,
+        camera_id: str,
+        stream_type: str,
+        jpeg_bytes: bytes,
+        capture_ts: float | None = None,
+    ) -> None:
         key: StreamKey = (camera_id, stream_type)
+        if capture_ts is not None and stream_type == "rgb":
+            self._update_pdt_offset(camera_id, capture_ts)
         with self._lock:
             stream = self._streams.get(key)
         if stream is not None:
@@ -273,6 +292,25 @@ class HLSManager:
             logger.debug(
                 f"[{camera_id}/{stream_type}] feed() called but stream not started, dropping frame"
             )
+
+    def _update_pdt_offset(self, camera_id: str, capture_ts: float) -> None:
+        sample = time.time() - capture_ts
+        if sample < self._PDT_OFFSET_MIN or sample > self._PDT_OFFSET_MAX:
+            return  # stale / clock-glitch frame — don't poison the EMA
+        with self._lock:
+            prev = self._pdt_offset.get(camera_id)
+            self._pdt_offset[camera_id] = (
+                sample
+                if prev is None
+                else self._PDT_OFFSET_ALPHA * sample
+                + (1.0 - self._PDT_OFFSET_ALPHA) * prev
+            )
+
+    def get_pdt_offset(self, camera_id: str) -> float:
+        """Seconds to subtract from hls.playingDate so the resulting time is on
+        the same clock as the bbox WS `timestamp` (frame capture time)."""
+        with self._lock:
+            return self._pdt_offset.get(camera_id, 0.0)
 
     def stop_all(self) -> None:
         with self._lock:

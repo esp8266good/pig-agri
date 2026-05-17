@@ -61,7 +61,10 @@ async def get_live_stream(
         raise HTTPException(status_code=404, detail="Camera not found")
     out_dir = hls_manager.ensure_started(camera_id, stream_type)
     return {
-        "url": f"/stream/hls/{camera_id}/{stream_type}/{out_dir.name}/index.m3u8"
+        "url": f"/stream/hls/{camera_id}/{stream_type}/{out_dir.name}/index.m3u8",
+        # 前端用：targetTs = hls.playingDate - pdt_offset，把畫面那幀的時間
+        # 換算回 bbox timestamp 的時鐘（見 hls_manager._update_pdt_offset）。
+        "pdt_offset": hls_manager.get_pdt_offset(camera_id),
     }
 
 
