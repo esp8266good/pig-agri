@@ -9,7 +9,7 @@
 `hls_manager._writer_loop` 以 naive `sleep(1/TARGET_FPS)` 取幀餵 ffmpeg，
 ffmpeg 再 `-vf fps={TARGET_FPS}` resample。結果：
 
-```
+```text
 媒體時間 = 累積餵入幀數 ÷ TARGET_FPS
 ```
 
@@ -37,8 +37,8 @@ PDT-EMA 整套修正債。
 - 只保證新架構上線後錄製的影片正確；舊 ffmpeg 設定錄下的歷史 m3u8
   **不追溯修正**（VOD 對舊錄影回退既有行為）。
 - 不動 `analysis/scheduler.py`（採血判斷用 object_id + ts，與本同步無關）。
-- 相機 `frame_id` 端到端資料流（`zmq_receiver → pipeline.update_frame →
-  WS payload / DB `tracking_logs` / VOD `pickClosestFrame` 同幀群聚`）**保留**；
+- 相機 `frame_id` 端到端資料流（`zmq_receiver` → `pipeline.update_frame` →
+  WS payload / DB `tracking_logs` / VOD `pickClosestFrame` 同幀群聚）**保留**；
   僅刪除「HLS 時間同步用的 FID 機制」。
 
 ## 3. 架構原則
