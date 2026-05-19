@@ -129,3 +129,78 @@ def test_segment_urls_contain_camera_and_stream(tmp_path, monkeypatch):
     result = build_vod_m3u8("cam_01", "rgb", float(HOUR_TS), float(HOUR_TS + 3600))
     assert result is not None
     assert "/cam_01/rgb/" in result
+
+
+# ---------------------------------------------------------------------------
+# Sidecar (pdt.jsonl) tests — Task 4
+# ---------------------------------------------------------------------------
+
+import json
+
+
+def _write_hour(base: Path, cam: str, st: str, hour_name: str,
+                segs: list, extinfs: list, sidecar):
+    d = base / cam / st / hour_name
+    d.mkdir(parents=True, exist_ok=True)
+    lines = ["#EXTM3U", "#EXT-X-VERSION:3", "#EXT-X-TARGETDURATION:5"]
+    for seg, e in zip(segs, extinfs):
+        lines += [f"#EXTINF:{e:.6f},", seg]
+    (d / "index.m3u8").write_text("\n".join(lines) + "\n")
+    for seg in segs:
+        (d / seg).write_bytes(b"x")
+    if sidecar is not None:
+        with (d / "pdt.jsonl").open("a") as fh:
+            for seg, pdt in sidecar.items():
+                fh.write(json.dumps({"seg": seg, "pdt": pdt}) + "\n")
+
+
+def test_vod_uses_sidecar_real_pdt(tmp_path, monkeypatch):
+    monkeypatch.setattr("vod_generator.settings.hls_base_dir", str(tmp_path))
+    import datetime as dt
+    hour = dt.datetime(2099, 1, 1, 0, 0, 0)
+    hour_unix = hour.timestamp()
+    hname = hour.strftime("%Y-%m-%d-%H")
+    _write_hour(tmp_path, "cam_01", "rgb", hname,
+                ["seg_000.ts", "seg_001.ts"], [4.0, 4.0],
+                {"seg_000.ts": hour_unix + 1.0, "seg_001.ts": hour_unix + 5.5})
+    from vod_generator import build_vod_m3u8
+    m3u8 = build_vod_m3u8("cam_01", "rgb", hour_unix, hour_unix + 3600)
+    assert m3u8 is not None
+    assert m3u8.count("#EXT-X-PROGRAM-DATE-TIME:") >= 2
+    assert "#EXTINF:4.500000," in m3u8     # seg_000 real dur = 5.5-1.0
+    assert "#EXT-X-DISCONTINUITY" not in m3u8
+
+
+def test_vod_falls_back_without_sidecar(tmp_path, monkeypatch):
+    monkeypatch.setattr("vod_generator.settings.hls_base_dir", str(tmp_path))
+    import datetime as dt
+    hour = dt.datetime(2099, 1, 1, 0, 0, 0)
+    hour_unix = hour.timestamp()
+    hname = hour.strftime("%Y-%m-%d-%H")
+    _write_hour(tmp_path, "cam_01", "rgb", hname,
+                ["seg_000.ts", "seg_001.ts"], [4.0, 4.0], None)
+    from vod_generator import build_vod_m3u8
+    m3u8 = build_vod_m3u8("cam_01", "rgb", hour_unix, hour_unix + 3600)
+    assert m3u8 is not None
+    assert "#EXTINF:4.000000," in m3u8     # 回退舊 ΣEXTINF 行為
+
+
+def test_vod_discontinuity_before_post_gap_segment(tmp_path, monkeypatch):
+    monkeypatch.setattr("vod_generator.settings.hls_base_dir", str(tmp_path))
+    import datetime as dt
+    hour = dt.datetime(2099, 1, 1, 0, 0, 0)
+    hour_unix = hour.timestamp()
+    hname = hour.strftime("%Y-%m-%d-%H")
+    # seg_000→seg_001 normal 4s; seg_001→seg_002 big 60s gap → DISC before seg_002 only
+    _write_hour(tmp_path, "cam_01", "rgb", hname,
+                ["seg_000.ts", "seg_001.ts", "seg_002.ts"], [4.0, 4.0, 4.0],
+                {"seg_000.ts": hour_unix + 1.0,
+                 "seg_001.ts": hour_unix + 5.0,
+                 "seg_002.ts": hour_unix + 65.0})
+    from vod_generator import build_vod_m3u8
+    m3u8 = build_vod_m3u8("cam_01", "rgb", hour_unix, hour_unix + 3600)
+    lines = m3u8.splitlines()
+    i1 = next(k for k, l in enumerate(lines) if l.endswith("seg_001.ts"))
+    i2 = next(k for k, l in enumerate(lines) if l.endswith("seg_002.ts"))
+    assert "#EXT-X-DISCONTINUITY" not in lines[:i1]   # not before seg_000/seg_001
+    assert "#EXT-X-DISCONTINUITY" in lines[i1:i2]     # before seg_002
