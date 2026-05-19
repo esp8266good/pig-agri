@@ -264,15 +264,32 @@ def test_stop_all_terminates_all_streams(tmp_path, monkeypatch):
     assert len(m._streams) == 0
 
 
-def test_feed_threads_frame_id_into_fed_log(tmp_path, monkeypatch):
+def test_feed_buffers_jpeg_with_frame_id(tmp_path, monkeypatch):
+    """feed() 只負責把 (jpeg, frame_id) 放進 buffer；不再累加 _fed_log/_fed_count
+    （那是 writer 寫入 ffmpeg 那刻才記，才與輸出幀對齊）。"""
     stream, _ = _make_stream(tmp_path, monkeypatch)
     stream._stopped = True
+    stream._fed_log.clear()
+    stream._fed_count = 0
     stream.feed(b"\xff\xd8\xff", capture_ts=1_700_000_001.0, frame_id=10)
-    stream.feed(b"\xff\xd8\xff", capture_ts=1_700_000_001.1, frame_id=11)
+    assert stream._frame_buffer[-1] == (b"\xff\xd8\xff", 10)
+    assert stream._fed_count == 0
+    assert list(stream._fed_log) == []
+
+
+def test_emit_frame_records_writer_index_fed_log(tmp_path, monkeypatch):
+    """_emit_frame（writer 每 tick 呼叫，含補幀）才是 segment↔frame_id 錨點：
+    以 writer 餵入索引（等速 TARGET_FPS、與 ffmpeg 輸出幀 1:1）記錄。"""
+    stream, _ = _make_stream(tmp_path, monkeypatch)
+    stream._stopped = True
+    stream._fed_log.clear()
+    stream._fed_count = 0
+    assert stream._emit_frame(b"\xff\xd8\xff", 10) is True
+    assert stream._emit_frame(b"\xff\xd8\xff", 11) is True
     assert stream._fed_count == 2
     assert list(stream._fed_log) == [(0, 10), (1, 11)]
-    # 無 frame_id（thermal）→ 計數仍增、但不記入 _fed_log
-    stream.feed(b"\xff\xd8\xff")
+    # 補幀 frame_id=None（buffer 空時重複上一幀）→ 計數仍增、不記入 _fed_log
+    assert stream._emit_frame(b"\xff\xd8\xff", None) is True
     assert stream._fed_count == 3
     assert list(stream._fed_log) == [(0, 10), (1, 11)]
 

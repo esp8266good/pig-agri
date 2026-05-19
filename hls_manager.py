@@ -144,7 +144,9 @@ class HLSStream:
         self._lock = threading.Lock()
 
         # Frame buffer：用 deque 限制長度，來源過快時自動丟最舊的幀
-        self._frame_buffer: deque[bytes] = deque(maxlen=FRAME_BUFFER_SIZE)
+        self._frame_buffer: deque[tuple[bytes, Optional[int]]] = deque(
+            maxlen=FRAME_BUFFER_SIZE
+        )
         self._buffer_event = threading.Event()
         self._stopped = False
 
@@ -187,11 +189,12 @@ class HLSStream:
                 self._restart(new_dir)
         if capture_ts is not None:
             self._last_capture_ts = capture_ts
-        self._fed_count += 1
-        if frame_id is not None:
-            self._fed_log.append((self._fed_count - 1, int(frame_id)))
         self.last_feed_time = time.time()
-        self._frame_buffer.append(jpeg_bytes)
+        # 只入 buffer；frame_id 在 writer 寫入 ffmpeg 那刻才記（_emit_frame），
+        # 才與 ffmpeg 輸出幀 1:1 對齊（攝影機 fps≠TARGET_FPS 時 buffer 取捨/
+        # 補幀會讓「抵達索引」≠「輸出幀索引」）。
+        fid = int(frame_id) if frame_id is not None else None
+        self._frame_buffer.append((jpeg_bytes, fid))
         self._buffer_event.set()
 
     def _scan_new_segments(self) -> None:
@@ -282,10 +285,33 @@ class HLSStream:
             / datetime.now().strftime("%Y-%m-%d-%H")
         )
 
+    def _emit_frame(self, frame: bytes, frame_id: Optional[int]) -> bool:
+        """把一幀寫進 ffmpeg stdin，並在「寫入那刻」記 (writer_index, frame_id)
+        到 _fed_log。writer 以等速 TARGET_FPS 每 tick 寫一幀（含補幀），故
+        writer_index 與 ffmpeg 輸出幀 1:1；segment NNN 首幀 == writer_index
+        round(NNN*TARGET_FPS*_HLS_TIME)，_scan_new_segments 據此查 _fed_log。
+        回傳 False 表示 stdin pipe 已斷（writer 應結束）。"""
+        try:
+            self.proc.stdin.write(frame)
+            self.proc.stdin.flush()
+        except BrokenPipeError:
+            logger.warning(
+                f"[{self.camera_id}/{self.stream_type}] ffmpeg stdin pipe broken, "
+                "stream may have crashed"
+            )
+            return False
+        except Exception as e:
+            logger.warning(f"[{self.camera_id}/{self.stream_type}] stdin write error: {e}")
+            return True
+        self._fed_count += 1
+        if frame_id is not None:
+            self._fed_log.append((self._fed_count - 1, frame_id))
+        return True
+
     def _writer_loop(self) -> None:
         """以接近 TARGET_FPS 的速率從 buffer 取幀並寫入 ffmpeg stdin。"""
         interval = 1.0 / TARGET_FPS
-        last_frame: Optional[bytes] = None
+        last_frame: Optional[tuple[bytes, Optional[int]]] = None
 
         while not self._stopped:
             deadline = time.monotonic() + interval
@@ -299,17 +325,9 @@ class HLSStream:
                 frame = last_frame
 
             if frame is not None:
-                try:
-                    self.proc.stdin.write(frame)
-                    self.proc.stdin.flush()
-                except BrokenPipeError:
-                    logger.warning(
-                        f"[{self.camera_id}/{self.stream_type}] ffmpeg stdin pipe broken, "
-                        "stream may have crashed"
-                    )
+                jpeg_bytes, fid = frame
+                if not self._emit_frame(jpeg_bytes, fid):
                     break
-                except Exception as e:
-                    logger.warning(f"[{self.camera_id}/{self.stream_type}] stdin write error: {e}")
 
             # 偵測新 segment（節流 ~0.5s 一次，glob 成本可忽略）
             now_m = time.monotonic()
