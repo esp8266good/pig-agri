@@ -464,4 +464,5 @@ def test_restart_clears_memory_keeps_sidecar(tmp_path, monkeypatch):
     assert stream._seg_pdt == {}
     assert list(stream._emit_log) == []
     assert stream._emit_idx == 0
+    assert stream._writer_last_frame is None
     assert sidecar.exists()

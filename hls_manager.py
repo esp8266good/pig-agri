@@ -45,6 +45,8 @@ FFMPEG_LOG_LEVEL: str = getattr(settings, "ffmpeg_log_level", "warning")  # debu
 _HLS_TIME: int = 4
 # emit/fed log 環形上限（約 30 分鐘餘量，遠超單一小時所需）
 _FED_LOG_MAX: int = TARGET_FPS * 1800
+# 非單調 capture_ts 的 clamp 增量
+_PDT_MONOTONIC_EPS: float = 1e-3
 
 
 def _iso_local(ts: float) -> str:
@@ -159,7 +161,6 @@ class HLSStream:
         self._emit_idx: int = 0
         self._emit_log: deque[tuple[int, float]] = deque(maxlen=_FED_LOG_MAX)
         self._writer_last_frame: Optional[tuple[bytes, Optional[float]]] = None
-        self._PDT_EPS: float = 1e-3   # 非單調 capture_ts clamp 用
 
         # 啟動 writer 執行緒，以固定節奏把 buffer 裡的幀送進 ffmpeg
         self._writer_thread = threading.Thread(
@@ -194,8 +195,10 @@ class HLSStream:
         """偵測 out_dir 新出現的 seg_*.ts，用 _emit_log 推該段首幀真實
         擷取牆鐘（emit_idx ≈ NNN*TARGET_FPS*_HLS_TIME），存 _seg_pdt 並
         append 到 sidecar pdt.jsonl（VOD 跨小時讀得到）。非單調則 clamp。"""
+        out_dir = self.out_dir  # 快照：防止 _restart（另一執行緒）切換目錄後
+                                # sidecar 寫到新小時的目錄但用舊小時的 seg 名稱
         try:
-            names = sorted(p.name for p in self.out_dir.glob("seg_*.ts"))
+            names = sorted(p.name for p in out_dir.glob("seg_*.ts"))
         except OSError:
             return
         with self._seg_lock:
@@ -216,9 +219,12 @@ class HLSStream:
                 if emit_log:
                     cap = min(emit_log, key=lambda p: abs(p[0] - expected))[1]
                     if self._seg_pdt:
+                        # global max == 前一 ordinal 的 PDT：ffmpeg 依序產生 segment，
+                        # 且本次掃描已 sorted(names)，故全域 max 即上一段時間，可安全
+                        # 用來強制 PDT 單調（避免回退使 hls.js 拒絕非單調 PDT）。
                         prev = max(self._seg_pdt.values())
                         if cap <= prev:
-                            cap = prev + self._PDT_EPS
+                            cap = prev + _PDT_MONOTONIC_EPS
                     self._seg_pdt[name] = cap
                     new_rows.append((name, cap))
                 # ── 舊 frame_id 錨點（後續 Task 移除，暫保留） ────────────
@@ -237,7 +243,7 @@ class HLSStream:
                     self._seg_first_fid.pop(k, None)
         for seg_name, cap in new_rows:
             try:
-                with (self.out_dir / "pdt.jsonl").open("a") as fh:
+                with (out_dir / "pdt.jsonl").open("a") as fh:
                     fh.write(json.dumps({"seg": seg_name, "pdt": cap}) + "\n")
             except OSError as e:
                 logger.warning(f"[{self.camera_id}/{self.stream_type}] sidecar write failed: {e}")
