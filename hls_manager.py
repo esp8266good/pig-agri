@@ -35,15 +35,14 @@ def configure_logging(level: str = "INFO") -> None:
 # ─── FFmpeg 指令 ─────────────────────────────────────────────────────────────
 # 改良重點：
 # 1. 加上 -an：不需要聲音
-# 2. 加上 -r {TARGET_FPS}：強制輸出固定 FPS，由 ffmpeg 自動補幀/丟幀
-# 3. 加上 -vf fps={TARGET_FPS}：更精確的 FPS 控制（配合 frame drop/dup）
-# 4. 移除 -tune zerolatency：不需要低延遲，穩定性優先
-# 5. 加上 -g (GOP size) = 2 * FPS：讓 HLS 切割更整齊
+# 2. 移除 -vf fps / 輸入 -framerate：改由 writer 真實牆鐘節拍器控速，消除 ffmpeg 媒體時鐘脫鉤牆鐘
+# 3. 移除 -tune zerolatency：不需要低延遲，穩定性優先
+# 4. 加上 -g (GOP size) = 2 * FPS：讓 HLS 切割更整齊
 TARGET_FPS: int = getattr(settings, "hls_target_fps", 25)
 FFMPEG_LOG_LEVEL: str = getattr(settings, "ffmpeg_log_level", "warning")  # debug/info/warning/error/quiet
 # segment 時長（與 _make_ffmpeg_cmd 的 -hls_time 一致）
 _HLS_TIME: int = 4
-# 餵入幀 (fed_index, frame_id) 記錄上限（約 30 分鐘餘量，遠超單一小時所需）
+# emit/fed log 環形上限（約 30 分鐘餘量，遠超單一小時所需）
 _FED_LOG_MAX: int = TARGET_FPS * 1800
 
 
@@ -300,7 +299,9 @@ class HLSStream:
         return True
 
     def _writer_tick(self) -> None:
-        """單次：取一幀（空則複製上一幀沿用其 capture_ts）寫入 ffmpeg。"""
+        """單次：取一幀（空則複製上一幀沿用其 capture_ts）寫入 ffmpeg。
+        若 _emit_frame 回傳 False（pipe 斷），設 self._stopped = True
+        通知 _writer_loop 退出（本函式不回傳值）。"""
         try:
             frame = self._frame_buffer.popleft()
             self._writer_last_frame = frame
@@ -346,6 +347,7 @@ class HLSStream:
         # _restart 由持 self._lock 的 feed() 呼叫，與 writer-loop 的 scan 競態窗口極小且無害。
         self._fed_log.clear()
         self._fed_count = 0
+        # TODO Task 2: 此處需 clear self._emit_log / 重置 self._emit_idx=0 / self._writer_last_frame=None（Task 2 消費 _emit_log 後不重置會使跨小時 segment 錨點全錯）
         self._last_scan = 0.0
         logger.info(
             f"Rolled over HLS stream {self.camera_id}/{self.stream_type} → {new_dir}"
