@@ -19,12 +19,14 @@ def test_ffmpeg_cmd_has_correct_hls_settings(tmp_path):
     assert str(tmp_path / "seg_%03d.ts") in " ".join(cmd)
 
 
-def _make_stream(tmp_path, monkeypatch, proc=None):
+def _make_stream(tmp_path, monkeypatch, proc=None, *, start_writer=False):
     from hls_manager import HLSStream
     if proc is None:
         proc = MagicMock()
         proc.stdin = MagicMock()
     monkeypatch.setattr("hls_manager.settings.hls_base_dir", str(tmp_path))
+    if not start_writer:
+        monkeypatch.setattr("hls_manager.HLSStream._start_writer", lambda self: None)
     out_dir = tmp_path / "cam_01" / "rgb" / datetime.now().strftime("%Y-%m-%d-%H")
     out_dir.mkdir(parents=True)
     return HLSStream("cam_01", "rgb", proc, out_dir), proc
@@ -116,7 +118,7 @@ def test_feed_threads_capture_ts_into_stream(tmp_path, monkeypatch):
 
 
 def test_hlsstream_feed_writes_to_stdin(tmp_path, monkeypatch):
-    stream, proc = _make_stream(tmp_path, monkeypatch)
+    stream, proc = _make_stream(tmp_path, monkeypatch, start_writer=True)
     stream.feed(b"\xff\xd8\xff")
     deadline = time.monotonic() + 1.0
     while time.monotonic() < deadline:
@@ -136,7 +138,7 @@ def test_hlsstream_feed_updates_last_feed_time(tmp_path, monkeypatch):
 
 
 def test_hlsstream_stop_closes_stdin_and_terminates(tmp_path, monkeypatch):
-    stream, proc = _make_stream(tmp_path, monkeypatch)
+    stream, proc = _make_stream(tmp_path, monkeypatch, start_writer=True)
     stream.stop()
     proc.stdin.close.assert_called_once()
     proc.terminate.assert_called_once()
@@ -195,7 +197,6 @@ def test_feed_is_noop_when_stream_not_started(manager):
     fake_proc.stdin.write.assert_not_called()
 
 
-
 def test_evict_stale_removes_expired_stream(tmp_path, monkeypatch):
     monkeypatch.setattr("hls_manager.settings.hls_base_dir", str(tmp_path))
     fake_proc = MagicMock()
@@ -235,7 +236,6 @@ def test_stop_all_terminates_all_streams(tmp_path, monkeypatch):
     proc1.terminate.assert_called()
     proc2.terminate.assert_called()
     assert len(m._streams) == 0
-
 
 
 def test_ffmpeg_cmd_drops_fps_filter_and_input_framerate(tmp_path):

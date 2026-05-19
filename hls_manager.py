@@ -43,7 +43,7 @@ TARGET_FPS: int = getattr(settings, "hls_target_fps", 25)
 FFMPEG_LOG_LEVEL: str = getattr(settings, "ffmpeg_log_level", "warning")  # debug/info/warning/error/quiet
 # segment 時長（與 _make_ffmpeg_cmd 的 -hls_time 一致）
 _HLS_TIME: int = 4
-# emit/fed log 環形上限（約 30 分鐘餘量，遠超單一小時所需）
+# _emit_log 環形上限（約 30 分鐘餘量，遠超單一小時所需）
 _FED_LOG_MAX: int = TARGET_FPS * 1800
 # 非單調 capture_ts 的 clamp 增量
 _PDT_MONOTONIC_EPS: float = 1e-3
@@ -158,10 +158,13 @@ class HLSStream:
         self._writer_last_frame: Optional[tuple[bytes, Optional[float]]] = None
 
         # 啟動 writer 執行緒，以固定節奏把 buffer 裡的幀送進 ffmpeg
+        self._start_writer()
+
+    def _start_writer(self) -> None:
         self._writer_thread = threading.Thread(
             target=self._writer_loop,
             daemon=True,
-            name=f"hls-writer-{camera_id}-{stream_type}",
+            name=f"hls-writer-{self.camera_id}-{self.stream_type}",
         )
         self._writer_thread.start()
 
@@ -395,6 +398,7 @@ class HLSStream:
         with self._seg_lock:  # 新小時、新 ffmpeg：舊 segment 對應已無意義
             self._seg_pdt.clear()
             self._seen_segs.clear()
+        # _emit_log/_emit_idx 在 _seg_lock 外清：_restart 由持 self._lock 的 feed() 呼叫，與 writer-loop scan 競態窗口極小且無害（沿用既有慣例）
         self._emit_log.clear()
         self._emit_idx = 0
         self._writer_last_frame = None
