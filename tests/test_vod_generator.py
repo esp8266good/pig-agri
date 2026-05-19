@@ -204,3 +204,35 @@ def test_vod_discontinuity_before_post_gap_segment(tmp_path, monkeypatch):
     i2 = next(k for k, l in enumerate(lines) if l.endswith("seg_002.ts"))
     assert "#EXT-X-DISCONTINUITY" not in lines[:i1]   # not before seg_000/seg_001
     assert "#EXT-X-DISCONTINUITY" in lines[i1:i2]     # before seg_002
+    assert "#EXTINF:5.000000," in m3u8   # seg_001 next-gap 60s > _DISC → nominal
+
+
+def test_iso_local_matches_hls_manager_format():
+    import hls_manager, vod_generator
+    for ts in (1779165126.49, 1700000000.0, 1779165126.0):
+        assert vod_generator._iso_local(ts) == hls_manager._iso_local(ts)
+
+
+def test_cross_hour_discontinuity(tmp_path, monkeypatch):
+    monkeypatch.setattr("vod_generator.settings.hls_base_dir", str(tmp_path))
+    import datetime as dt
+    hour_a = dt.datetime(2099, 1, 1, 0, 0, 0)
+    a_unix = hour_a.timestamp()
+    hour_b = dt.datetime(2099, 1, 1, 1, 0, 0)
+    b_unix = hour_b.timestamp()
+    a_name = hour_a.strftime("%Y-%m-%d-%H")
+    b_name = hour_b.strftime("%Y-%m-%d-%H")
+    # Hour A last seg PDT ≈ 4s before boundary; Hour B first seg PDT ≈ 14s
+    # after boundary → ~18s cross-hour gap (> _DISC) must yield DISCONTINUITY.
+    _write_hour(tmp_path, "cam_01", "rgb", a_name,
+                ["seg_000.ts"], [4.0], {"seg_000.ts": a_unix + 3596.0})
+    _write_hour(tmp_path, "cam_01", "rgb", b_name,
+                ["seg_000.ts"], [4.0], {"seg_000.ts": b_unix + 14.0})
+    from vod_generator import build_vod_m3u8
+    m3u8 = build_vod_m3u8("cam_01", "rgb", a_unix, b_unix + 3600)
+    lines = m3u8.splitlines()
+    seg_idxs = [k for k, l in enumerate(lines) if l.endswith("seg_000.ts")]
+    assert len(seg_idxs) == 2                       # one per hour
+    # DISCONTINUITY must appear between the two hours' segments, not before the first
+    assert "#EXT-X-DISCONTINUITY" in lines[seg_idxs[0]:seg_idxs[1]]
+    assert "#EXT-X-DISCONTINUITY" not in lines[:seg_idxs[0]]

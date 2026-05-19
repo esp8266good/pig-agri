@@ -6,8 +6,6 @@ from typing import Optional
 
 from config import settings
 
-_DISC = getattr(settings, "hls_discontinuity_seconds", 8.0)
-
 
 def _iso_local(ts: float) -> str:
     dt = datetime.fromtimestamp(ts).astimezone()
@@ -44,6 +42,20 @@ def build_vod_m3u8(
             max_target_duration = max(max_target_duration, td)
         current_hour += 3600
 
+    # _parse_hour_m3u8 is per-hour and cannot see the previous hour's last
+    # segment; recompute discontinuity across the full ordered list so an
+    # hourly ffmpeg _restart gap (and any mixed sidecar/fallback PDT
+    # non-monotonicity) gets a proper #EXT-X-DISCONTINUITY.
+    disc_threshold = getattr(settings, "hls_discontinuity_seconds", 8.0)
+    patched: list[tuple[float, float, str, bool]] = []
+    for i, (ts, dur, url, disc) in enumerate(all_segments):
+        if i > 0:
+            gap = ts - all_segments[i - 1][0]
+            if gap <= 0 or gap > disc_threshold:
+                disc = True
+        patched.append((ts, dur, url, disc))
+    all_segments = patched
+
     in_range = [
         (ts, dur, url, disc) for ts, dur, url, disc in all_segments
         if ts >= start_ts and ts < end_ts
@@ -57,8 +69,8 @@ def build_vod_m3u8(
         f"#EXT-X-TARGETDURATION:{max_target_duration}",
         "#EXT-X-PLAYLIST-TYPE:VOD",
     ]
-    for ts, dur, url, disc in in_range:
-        if disc:
+    for i, (ts, dur, url, disc) in enumerate(in_range):
+        if disc and i > 0:
             lines.append("#EXT-X-DISCONTINUITY")
         lines.append(f"#EXT-X-PROGRAM-DATE-TIME:{_iso_local(ts)}")
         lines.append(f"#EXTINF:{dur:.6f},")
@@ -120,6 +132,7 @@ def _parse_hour_m3u8(
     segments: list[tuple[float, float, str, bool]] = []
 
     if seg_names and all(s in sidecar for s in seg_names):
+        disc_threshold = getattr(settings, "hls_discontinuity_seconds", 8.0)
         nominal = float(target_duration)
         for i, name in enumerate(seg_names):
             start = sidecar[name]
@@ -127,11 +140,11 @@ def _parse_hour_m3u8(
             disc = False
             if i > 0:
                 prev_gap = start - sidecar[seg_names[i - 1]]
-                if prev_gap <= 0 or prev_gap > _DISC:
+                if prev_gap <= 0 or prev_gap > disc_threshold:
                     disc = True
             if i + 1 < len(seg_names):
                 nxt_gap = sidecar[seg_names[i + 1]] - start
-                dur = nxt_gap if (0 < nxt_gap <= _DISC) else nominal
+                dur = nxt_gap if (0 < nxt_gap <= disc_threshold) else nominal
             else:
                 dur = nominal
             segments.append((start, dur, url, disc))
