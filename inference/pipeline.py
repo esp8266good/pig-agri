@@ -45,7 +45,6 @@ class InferencePipeline:
 
     def __init__(self) -> None:
         self._latest: dict[str, FrameData] = {}
-        self._frame_counts: dict[str, int] = {}
         self._lock = threading.Lock()
         self._detector = None
         self._reid = None
@@ -99,12 +98,13 @@ class InferencePipeline:
         rgb_np: np.ndarray,
         thermal_np: np.ndarray | None,
         ts: float,
+        frame_id: int,
     ) -> None:
+        # frame_id 為擷取端（zmq 封包頭）真實 frame_id，與 hls_manager 寫進
+        # m3u8 的 #EXT-X-PIG-FRAMEID 同命名空間，前端才能據此精準對齊 bbox。
         with self._lock:
-            count = self._frame_counts.get(camera_id, 0) + 1
-            self._frame_counts[camera_id] = count
             self._latest[camera_id] = FrameData(
-                rgb_np=rgb_np, thermal_np=thermal_np, ts=ts, frame_id=count
+                rgb_np=rgb_np, thermal_np=thermal_np, ts=ts, frame_id=frame_id
             )
 
     def _loop(self) -> None:

@@ -19,7 +19,6 @@ def _make_pipeline():
     from inference.pipeline import InferencePipeline
     p = InferencePipeline.__new__(InferencePipeline)
     p._latest = {}
-    p._frame_counts = {}
     p._lock = threading.Lock()
     p._detector = None
     p._reid = None
@@ -36,17 +35,19 @@ def test_update_frame_stores_latest():
     from inference.pipeline import FrameData
     p = _make_pipeline()
     rgb = np.zeros((480, 640, 3), dtype=np.uint8)
-    p.update_frame("cam_01", rgb, None, 1.0)
+    p.update_frame("cam_01", rgb, None, 1.0, 438190)
     assert "cam_01" in p._latest
     assert p._latest["cam_01"].rgb_np is rgb
 
 
-def test_update_frame_increments_frame_count():
+def test_update_frame_uses_camera_frame_id():
+    """frame_id 必須是擷取端（zmq 封包頭）的真實 frame_id，
+    才能與 hls_manager 寫進 m3u8 的 #EXT-X-PIG-FRAMEID 同命名空間對齊。"""
     p = _make_pipeline()
     rgb = np.zeros((480, 640, 3), dtype=np.uint8)
-    p.update_frame("cam_01", rgb, None, 1.0)
-    p.update_frame("cam_01", rgb, None, 2.0)
-    assert p._frame_counts["cam_01"] == 2
+    p.update_frame("cam_01", rgb, None, 1.0, 438190)
+    p.update_frame("cam_01", rgb, None, 2.0, 438191)
+    assert p._latest["cam_01"].frame_id == 438191
 
 
 def test_process_batch_calls_broadcast():

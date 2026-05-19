@@ -158,7 +158,7 @@ class ZMQReceiver:
 
         if rgb_np is not None:
             pipeline_mod.inference_pipeline.update_frame(
-                label, rgb_np, thermal_np, ts
+                label, rgb_np, thermal_np, ts, frame_id
             )
 
 
