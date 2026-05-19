@@ -1,3 +1,4 @@
+import json
 import subprocess
 import threading
 import time
@@ -158,6 +159,7 @@ class HLSStream:
         self._emit_idx: int = 0
         self._emit_log: deque[tuple[int, float]] = deque(maxlen=_FED_LOG_MAX)
         self._writer_last_frame: Optional[tuple[bytes, Optional[float]]] = None
+        self._PDT_EPS: float = 1e-3   # 非單調 capture_ts clamp 用
 
         # 啟動 writer 執行緒，以固定節奏把 buffer 裡的幀送進 ffmpeg
         self._writer_thread = threading.Thread(
@@ -189,37 +191,56 @@ class HLSStream:
         self._buffer_event.set()
 
     def _scan_new_segments(self) -> None:
-        """偵測 out_dir 新出現的 seg_*.ts（ffmpeg 於 segment 起始即建檔），
-        把當下最新 capture_ts 記為該 segment 首幀的真實擷取時間。"""
+        """偵測 out_dir 新出現的 seg_*.ts，用 _emit_log 推該段首幀真實
+        擷取牆鐘（emit_idx ≈ NNN*TARGET_FPS*_HLS_TIME），存 _seg_pdt 並
+        append 到 sidecar pdt.jsonl（VOD 跨小時讀得到）。非單調則 clamp。"""
         try:
-            names = [p.name for p in self.out_dir.glob("seg_*.ts")]
+            names = sorted(p.name for p in self.out_dir.glob("seg_*.ts"))
         except OSError:
             return
-        cap = self._last_capture_ts
         with self._seg_lock:
-            fed_log: list[tuple[int, int]] | None = None  # 惰性快照：僅在有新 segment 時才複製
+            emit_log = None
+            fed_log: list[tuple[int, int]] | None = None
+            new_rows: list[tuple[str, float]] = []
             for name in names:
                 if name in self._seen_segs:
                     continue
                 self._seen_segs.add(name)
-                if cap is not None:
-                    self._seg_pdt[name] = cap
                 m = re.match(r"seg_(\d+)\.ts$", name)
-                if m:
-                    if fed_log is None:
-                        fed_log = list(self._fed_log)
-                    if fed_log:
-                        expected = round(int(m.group(1)) * TARGET_FPS * _HLS_TIME)
-                        best_fid = min(
-                            fed_log, key=lambda p: abs(p[0] - expected)
-                        )[1]
-                        self._seg_first_fid[name] = best_fid
-            if len(self._seg_pdt) > 2000:  # ffmpeg 每小時 restart 會清，這只是保險
+                if not m:
+                    continue
+                expected = round(int(m.group(1)) * TARGET_FPS * _HLS_TIME)
+                # ── _emit_log 推 PDT（Task 2 新路徑） ──────────────────────
+                if emit_log is None:
+                    emit_log = list(self._emit_log)
+                if emit_log:
+                    cap = min(emit_log, key=lambda p: abs(p[0] - expected))[1]
+                    if self._seg_pdt:
+                        prev = max(self._seg_pdt.values())
+                        if cap <= prev:
+                            cap = prev + self._PDT_EPS
+                    self._seg_pdt[name] = cap
+                    new_rows.append((name, cap))
+                # ── 舊 frame_id 錨點（後續 Task 移除，暫保留） ────────────
+                if fed_log is None:
+                    fed_log = list(self._fed_log)
+                if fed_log:
+                    best_fid = min(
+                        fed_log, key=lambda p: abs(p[0] - expected)
+                    )[1]
+                    self._seg_first_fid[name] = best_fid
+            if len(self._seg_pdt) > 2000:
                 for k in sorted(self._seg_pdt)[:-2000]:
                     self._seg_pdt.pop(k, None)
             if len(self._seg_first_fid) > 2000:
                 for k in sorted(self._seg_first_fid)[:-2000]:
                     self._seg_first_fid.pop(k, None)
+        for seg_name, cap in new_rows:
+            try:
+                with (self.out_dir / "pdt.jsonl").open("a") as fh:
+                    fh.write(json.dumps({"seg": seg_name, "pdt": cap}) + "\n")
+            except OSError as e:
+                logger.warning(f"[{self.camera_id}/{self.stream_type}] sidecar write failed: {e}")
 
     def corrected_m3u8(self, date_hour: str) -> Optional[str]:
         """讀 ffmpeg 的 index.m3u8，把每個 segment 前的
@@ -347,7 +368,9 @@ class HLSStream:
         # _restart 由持 self._lock 的 feed() 呼叫，與 writer-loop 的 scan 競態窗口極小且無害。
         self._fed_log.clear()
         self._fed_count = 0
-        # TODO Task 2: 此處需 clear self._emit_log / 重置 self._emit_idx=0 / self._writer_last_frame=None（Task 2 消費 _emit_log 後不重置會使跨小時 segment 錨點全錯）
+        self._emit_log.clear()
+        self._emit_idx = 0
+        self._writer_last_frame = None
         self._last_scan = 0.0
         logger.info(
             f"Rolled over HLS stream {self.camera_id}/{self.stream_type} → {new_dir}"

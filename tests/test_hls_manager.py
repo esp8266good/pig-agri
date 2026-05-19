@@ -1,4 +1,5 @@
 # tests/test_hls_manager.py
+import json
 import pytest
 import time
 from datetime import datetime
@@ -86,17 +87,23 @@ def test_corrected_m3u8_none_when_missing_or_dir_mismatch(tmp_path, monkeypatch)
 
 
 def test_scan_new_segments_records_last_capture_ts(tmp_path, monkeypatch):
+    """_scan_new_segments 用 _emit_log 推每段首幀真實擷取時間（Task 2 改版）。
+    同名不覆寫；_emit_log 為空時不記。"""
+    from hls_manager import TARGET_FPS, _HLS_TIME
     stream, _ = _make_stream(tmp_path, monkeypatch)
     stream._stopped = True
-    stream._last_capture_ts = 1_700_000_123.5
+    # 準備 emit_log 讓 seg_000 能被錨定到 1_700_000_123.5
+    stream._emit_log.append((0, 1_700_000_123.5))
     (stream.out_dir / "seg_000.ts").write_bytes(b"x")
     stream._scan_new_segments()
     assert stream._seg_pdt["seg_000.ts"] == 1_700_000_123.5
-    # 同名不覆寫；無 capture_ts 的新段不記
-    stream._last_capture_ts = 9_999_999_999.0
+    # 同名不覆寫（_seen_segs 防止重複）
+    stream._emit_log.clear()
+    stream._emit_log.append((0, 9_999_999_999.0))
     stream._scan_new_segments()
     assert stream._seg_pdt["seg_000.ts"] == 1_700_000_123.5
-    stream._last_capture_ts = None
+    # _emit_log 為空時新段不記
+    stream._emit_log.clear()
     (stream.out_dir / "seg_001.ts").write_bytes(b"x")
     stream._scan_new_segments()
     assert "seg_001.ts" not in stream._seg_pdt
@@ -409,3 +416,52 @@ def test_writer_loop_duplicates_with_last_capture_ts(tmp_path, monkeypatch):
     stream._writer_tick()
     stream._writer_tick()
     assert written == [(b"X", 2000.0), (b"X", 2000.0)]
+
+
+def test_scan_records_seg_pdt_from_emit_log(tmp_path, monkeypatch):
+    stream, _ = _make_stream(tmp_path, monkeypatch)
+    stream._stopped = True
+    from hls_manager import TARGET_FPS, _HLS_TIME
+    idx1 = round(1 * TARGET_FPS * _HLS_TIME)
+    stream._emit_log.append((0, 5000.0))
+    stream._emit_log.append((idx1, 5004.0))
+    (stream.out_dir / "seg_000.ts").write_bytes(b"x")
+    (stream.out_dir / "seg_001.ts").write_bytes(b"x")
+    stream._scan_new_segments()
+    assert stream._seg_pdt["seg_000.ts"] == 5000.0
+    assert stream._seg_pdt["seg_001.ts"] == 5004.0
+    import json as _j
+    lines = (stream.out_dir / "pdt.jsonl").read_text().splitlines()
+    rows = {_j.loads(x)["seg"]: _j.loads(x)["pdt"] for x in lines}
+    assert rows == {"seg_000.ts": 5000.0, "seg_001.ts": 5004.0}
+
+
+def test_scan_clamps_non_monotonic_pdt(tmp_path, monkeypatch):
+    stream, _ = _make_stream(tmp_path, monkeypatch)
+    stream._stopped = True
+    from hls_manager import TARGET_FPS, _HLS_TIME
+    idx1 = round(1 * TARGET_FPS * _HLS_TIME)
+    stream._emit_log.append((0, 5000.0))
+    stream._emit_log.append((idx1, 4990.0))
+    (stream.out_dir / "seg_000.ts").write_bytes(b"x")
+    (stream.out_dir / "seg_001.ts").write_bytes(b"x")
+    stream._scan_new_segments()
+    assert stream._seg_pdt["seg_000.ts"] == 5000.0
+    assert stream._seg_pdt["seg_001.ts"] == pytest.approx(5000.0 + 1e-3)
+
+
+def test_restart_clears_memory_keeps_sidecar(tmp_path, monkeypatch):
+    stream, _ = _make_stream(tmp_path, monkeypatch)
+    stream._stopped = True
+    stream._emit_log.append((0, 7000.0))
+    (stream.out_dir / "seg_000.ts").write_bytes(b"x")
+    stream._scan_new_segments()
+    sidecar = stream.out_dir / "pdt.jsonl"
+    assert sidecar.exists()
+    new_dir = tmp_path / "cam_01" / "rgb" / "2099-01-01-05"
+    with patch("hls_manager._start_ffmpeg", return_value=MagicMock(stdin=MagicMock())):
+        stream._restart(new_dir)
+    assert stream._seg_pdt == {}
+    assert list(stream._emit_log) == []
+    assert stream._emit_idx == 0
+    assert sidecar.exists()
