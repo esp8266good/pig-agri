@@ -195,6 +195,27 @@
       inset: 0;
       pointer-events: none;
     }
+    /* bbox/串流同步診斷 HUD（按 d 開關）；DOM 文字可框選複製 */
+    #bbox-hud {
+      position: absolute;
+      top: 6px;
+      left: 6px;
+      margin: 0;
+      padding: 8px 10px;
+      font: 12px/1.34 ui-monospace, "DM Mono", Menlo, Consolas, monospace;
+      color: #39e6a6;
+      background: rgba(0, 0, 0, 0.72);
+      border-radius: 4px;
+      white-space: pre;
+      user-select: text;
+      -webkit-user-select: text;
+      pointer-events: auto;
+      z-index: 5;
+      max-width: calc(100% - 12px);
+      overflow: auto;
+      display: none;
+    }
+    #bbox-hud.visible { display: block; }
 
     /* 初始化時的 skeleton shimmer */
     .video-skeleton {
@@ -696,6 +717,7 @@
     <div id="video-wrap">
       <video id="video" autoplay muted playsinline></video>
       <canvas id="overlay" aria-hidden="true"></canvas>
+      <pre id="bbox-hud" aria-hidden="true"></pre>
       <div class="video-skeleton visible" id="skeleton" aria-hidden="true">
         <div class="skeleton-pulse"></div>
       </div>
@@ -1511,7 +1533,7 @@
       } else { _dbg = null; }
 
       if (!vidW || !vidH || !displayBoxes.length) {
-        if (_dbg) drawDbgHud(ctx);
+        drawDbgHud();
         animFrameId = requestAnimationFrame(drawBoxes);
         return;
       }
@@ -1556,19 +1578,25 @@
           if (icons) ctx.fillText(icons, px + 2, py + ph - 2);
         }
       }
-      if (_dbg) drawDbgHud(ctx);
+      drawDbgHud();
       animFrameId = requestAnimationFrame(drawBoxes);
     }
 
     // Diagnostic HUD for live bbox/stream sync — toggle with the 'd' key.
     // Shows whether PDT (hls.playingDate) is actually driving alignment and
     // how far the chosen bbox sits from the displayed frame's timestamp.
-    function drawDbgHud(ctx) {
+    // 渲染成 DOM <pre>（可框選複製），而非畫進 canvas。每幀呼叫；
+    // _dbg 為 null（非 live / HUD 關）時隱藏，保留最後內容可複製。
+    let _hudEl = null;
+    function drawDbgHud() {
+      if (!_hudEl) _hudEl = document.getElementById('bbox-hud');
+      if (!_hudEl) return;
       const d = _dbg;
+      if (!d) { _hudEl.classList.remove('visible'); return; }
       const fmt = (v) => (v == null ? 'null' : (typeof v === 'number' ? v.toFixed(2) : v));
       const leadTarget = (d.targetTs != null) ? (d.chosenTs - d.targetTs) : null;
       const leadNewest = d.newestTs - (d.targetTs != null ? d.targetTs : d.now);
-      const lines = [
+      _hudEl.textContent = [
         `src=${d.src}  hist=${d.histLen}`,
         `fid t=${fmt(d.targetFid)} c=${fmt(d.chosenFid)} f0=${fmt(d.fragFid)} f1=${fmt(d.fragNextFid)}`,
         `hls.playingDate=${fmt(d.playingDate)}`,
@@ -1580,18 +1608,8 @@
         `newestBbox.ts=${fmt(d.newestTs)}`,
         `chosen-target=${fmt(leadTarget)}s`,
         `newest-target=${fmt(leadNewest)}s`,
-      ];
-      ctx.save();
-      ctx.font = '12px monospace';
-      let maxW = 0;
-      for (const l of lines) maxW = Math.max(maxW, ctx.measureText(l).width);
-      const pad = 8, lh = 16;
-      ctx.fillStyle = 'rgba(0,0,0,0.72)';
-      ctx.fillRect(6, 6, maxW + pad * 2, lines.length * lh + pad * 2);
-      ctx.fillStyle = '#39e6a6';
-      ctx.textBaseline = 'top';
-      lines.forEach((l, i) => ctx.fillText(l, 6 + pad, 6 + pad + i * lh));
-      ctx.restore();
+      ].join('\n');
+      _hudEl.classList.add('visible');
     }
 
     window.addEventListener('keydown', (e) => {
