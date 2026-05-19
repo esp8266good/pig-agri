@@ -249,10 +249,9 @@ class HLSStream:
                 logger.warning(f"[{self.camera_id}/{self.stream_type}] sidecar write failed: {e}")
 
     def corrected_m3u8(self, date_hour: str) -> Optional[str]:
-        """讀 ffmpeg 的 index.m3u8，把每個 segment 前的
-        #EXT-X-PROGRAM-DATE-TIME 改寫成 _seg_pdt 記錄的真實擷取時間；
-        未知的 segment 保留 ffmpeg 原值。date_hour 不是當前小時 → None
-        （交由 router fallback 服務磁碟檔，避免影響歷史/已輪替小時）。"""
+        """live index.m3u8：每段 #EXT-X-PROGRAM-DATE-TIME 改寫成 _seg_pdt
+        真實擷取時間，#EXTINF 改為相鄰段 PDT 差；差 > 不連續門檻則於該段
+        前插 #EXT-X-DISCONTINUITY 並用 nominal _HLS_TIME。非當前小時→None。"""
         if date_hour != self.out_dir.name:
             return None
         m3u8_path = self.out_dir / "index.m3u8"
@@ -263,16 +262,39 @@ class HLSStream:
         with self._seg_lock:
             seg_pdt = dict(self._seg_pdt)
             seg_fid = dict(self._seg_first_fid)
+        disc = getattr(settings, "hls_discontinuity_seconds", 8.0)
+        seg_order = [
+            ln.strip() for ln in text.splitlines()
+            if ln.strip() and not ln.startswith("#")
+        ]
+
+        def _dur(name: str, nxt: Optional[str]) -> tuple[float, bool]:
+            a = seg_pdt.get(name)
+            b = seg_pdt.get(nxt) if nxt else None
+            if a is None or b is None:
+                return float(_HLS_TIME), False
+            gap = b - a
+            if gap <= 0 or gap > disc:
+                return float(_HLS_TIME), True
+            return gap, False
+
         out: list[str] = []
         last_pdt_idx: Optional[int] = None
+        pending_extinf_idx: Optional[int] = None
         for raw in text.splitlines():
             line = raw.rstrip("\r")
             if line.startswith("#EXT-X-PROGRAM-DATE-TIME:"):
                 last_pdt_idx = len(out)
                 out.append(line)
                 continue
+            if line.startswith("#EXTINF:"):
+                pending_extinf_idx = len(out)
+                out.append(line)
+                continue
             if line and not line.startswith("#"):
                 seg_name = line.strip()
+                idx = seg_order.index(seg_name) if seg_name in seg_order else -1
+                nxt = seg_order[idx + 1] if 0 <= idx < len(seg_order) - 1 else None
                 cap = seg_pdt.get(seg_name)
                 if cap is not None:
                     corrected = f"#EXT-X-PROGRAM-DATE-TIME:{_iso_local(cap)}"
@@ -280,10 +302,17 @@ class HLSStream:
                         out[last_pdt_idx] = corrected
                     else:
                         out.append(corrected)
+                    dur, is_disc = _dur(seg_name, nxt)
+                    if pending_extinf_idx is not None:
+                        out[pending_extinf_idx] = f"#EXTINF:{dur:.6f},"
+                    if is_disc:
+                        ins = pending_extinf_idx if pending_extinf_idx is not None else len(out)
+                        out.insert(ins, "#EXT-X-DISCONTINUITY")
                 fid = seg_fid.get(seg_name)
                 if fid is not None:
                     out.append(f"#EXT-X-PIG-FRAMEID:{fid}")
                 last_pdt_idx = None
+                pending_extinf_idx = None
             out.append(line)
         return "\n".join(out) + "\n"
 

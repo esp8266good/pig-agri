@@ -466,3 +466,41 @@ def test_restart_clears_memory_keeps_sidecar(tmp_path, monkeypatch):
     assert stream._emit_idx == 0
     assert stream._writer_last_frame is None
     assert sidecar.exists()
+
+
+def test_corrected_m3u8_real_pdt_and_extinf(tmp_path, monkeypatch):
+    stream, _ = _make_stream(tmp_path, monkeypatch)
+    stream._stopped = True
+    m3u8 = (
+        "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:5\n"
+        "#EXTINF:4.000000,\n#EXT-X-PROGRAM-DATE-TIME:2099-01-01T00:00:00.000+08:00\n"
+        "seg_000.ts\n"
+        "#EXTINF:4.000000,\n#EXT-X-PROGRAM-DATE-TIME:2099-01-01T00:00:04.000+08:00\n"
+        "seg_001.ts\n"
+    )
+    (stream.out_dir / "index.m3u8").write_text(m3u8)
+    stream._seg_pdt = {"seg_000.ts": 5000.0, "seg_001.ts": 5004.5}
+    from hls_manager import _iso_local
+    out = stream.corrected_m3u8(stream.out_dir.name)
+    assert f"#EXT-X-PROGRAM-DATE-TIME:{_iso_local(5000.0)}" in out
+    assert f"#EXT-X-PROGRAM-DATE-TIME:{_iso_local(5004.5)}" in out
+    assert "#EXTINF:4.500000," in out
+    assert "#EXT-X-DISCONTINUITY" not in out
+
+
+def test_corrected_m3u8_inserts_discontinuity_on_big_gap(tmp_path, monkeypatch):
+    stream, _ = _make_stream(tmp_path, monkeypatch)
+    stream._stopped = True
+    m3u8 = (
+        "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:5\n"
+        "#EXTINF:4.0,\n#EXT-X-PROGRAM-DATE-TIME:2099-01-01T00:00:00.000+08:00\nseg_000.ts\n"
+        "#EXTINF:4.0,\n#EXT-X-PROGRAM-DATE-TIME:2099-01-01T00:00:04.000+08:00\nseg_001.ts\n"
+    )
+    (stream.out_dir / "index.m3u8").write_text(m3u8)
+    stream._seg_pdt = {"seg_000.ts": 5000.0, "seg_001.ts": 5050.0}
+    out = stream.corrected_m3u8(stream.out_dir.name)
+    lines = out.splitlines()
+    i = lines.index("seg_001.ts")
+    assert "#EXT-X-DISCONTINUITY" in lines[:i]
+    from hls_manager import _HLS_TIME
+    assert f"#EXTINF:{float(_HLS_TIME):.6f}," in out
