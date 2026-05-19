@@ -41,8 +41,8 @@ def test_update_frame_stores_latest():
 
 
 def test_update_frame_uses_camera_frame_id():
-    """frame_id 必須是擷取端（zmq 封包頭）的真實 frame_id，
-    才能與 hls_manager 寫進 m3u8 的 #EXT-X-PIG-FRAMEID 同命名空間對齊。"""
+    """frame_id 必須是擷取端（zmq 封包頭）的真實 frame_id，供 VOD /tracking 同幀群聚
+    （pickClosestFrame）與 DB tracking_logs 記錄；HLS bbox 同步已改用 capture_ts，不再依賴 frame_id。"""
     p = _make_pipeline()
     rgb = np.zeros((480, 640, 3), dtype=np.uint8)
     p.update_frame("cam_01", rgb, None, 1.0, 438190)

@@ -69,7 +69,7 @@ def _make_ffmpeg_cmd(out_dir: Path) -> list[str]:
         "-preset", "veryfast",
         "-crf", "23",
         "-g", str(gop),
-        "-hls_time", "4",
+        "-hls_time", str(_HLS_TIME),
         "-hls_list_size", "0",
         "-hls_flags", "append_list+program_date_time",
         "-hls_segment_filename", str(out_dir / "seg_%03d.ts"),

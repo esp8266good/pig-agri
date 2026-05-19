@@ -100,8 +100,8 @@ class InferencePipeline:
         ts: float,
         frame_id: int,
     ) -> None:
-        # frame_id 為擷取端（zmq 封包頭）真實 frame_id，與 hls_manager 寫進
-        # m3u8 的 #EXT-X-PIG-FRAMEID 同命名空間，前端才能據此精準對齊 bbox。
+        # frame_id 為擷取端真實 frame_id；HLS bbox 同步已改用真實 capture_ts（不再用 frame_id），
+        # 此處保留僅供 VOD /tracking 同幀群聚（pickClosestFrame）與 DB tracking_logs 記錄。
         with self._lock:
             self._latest[camera_id] = FrameData(
                 rgb_np=rgb_np, thermal_np=thermal_np, ts=ts, frame_id=frame_id

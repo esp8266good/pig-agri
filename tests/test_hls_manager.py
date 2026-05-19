@@ -6,12 +6,12 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from hls_manager import _make_ffmpeg_cmd
+from hls_manager import _make_ffmpeg_cmd, _HLS_TIME
 
 
 def test_ffmpeg_cmd_has_correct_hls_settings(tmp_path):
     cmd = _make_ffmpeg_cmd(tmp_path)
-    assert cmd[cmd.index("-hls_time") + 1] == "4"
+    assert cmd[cmd.index("-hls_time") + 1] == str(_HLS_TIME)
     assert cmd[cmd.index("-hls_list_size") + 1] == "0"
     assert "append_list" in " ".join(cmd)
     assert "delete_segments" not in " ".join(cmd)

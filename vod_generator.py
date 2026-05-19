@@ -131,6 +131,7 @@ def _parse_hour_m3u8(
     sidecar = _load_sidecar(m3u8_path.parent)
     segments: list[tuple[float, float, str, bool]] = []
 
+    # 全有才用 sidecar；任一段缺（含進程中途崩潰半寫）→ 整小時回退 hour_unix+ΣEXTINF（保守，犧牲已知段的真實 PDT 換一致性）。
     if seg_names and all(s in sidecar for s in seg_names):
         disc_threshold = getattr(settings, "hls_discontinuity_seconds", 8.0)
         nominal = float(target_duration)
