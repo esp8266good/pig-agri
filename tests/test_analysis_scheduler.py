@@ -318,6 +318,70 @@ def test_temp_state_recovers_to_normal():
     assert cache["cam_01"][5]["temp_anomaly"] is False
 
 
+def _stale_entry(temp_anomaly: bool, temp_state: str) -> dict:
+    return {
+        "activity_anomaly": False, "temp_anomaly": temp_anomaly,
+        "activity_state": "normal", "temp_state": temp_state,
+        "activity_current": None, "activity_mean": None, "activity_std": None,
+        "temp_current": None, "temp_mean": None, "temp_std": None,
+    }
+
+
+def test_disabled_temp_clears_stale_cache_entry_outside_window():
+    """根因 A：temp 停用時，連『不在當前分析視窗』的殘留 object_id 也要清掉
+    temp 旗標（否則 /alerts/active 會持續回傳舊紅框）。"""
+    from analysis.scheduler import Scheduler, get_anomaly_cache
+    import analysis.scheduler as sched_mod
+    s = FakeSettings()
+    s.temp_anomaly_enabled = False
+    sched_mod._anomaly_cache.setdefault("cam_01", {})[99] = _stale_entry(True, "alerted")
+    pool = AsyncMock()
+    pool.fetch.side_effect = [
+        [{"camera_id": "cam_01", "object_id": 1}],
+        _track(600.0),
+    ]
+
+    asyncio.run(Scheduler(pool, s)._run_analysis())
+
+    cache = get_anomaly_cache()
+    assert cache["cam_01"][99]["temp_anomaly"] is False
+    assert cache["cam_01"][99]["temp_state"] == "normal"
+
+
+def test_reload_disable_temp_clears_all_cache_flags():
+    """根因 A（延遲面）：reload 關閉 temp 時立即清掉整個 cache 的 temp 旗標，
+    不必等下一個 _interval tick。"""
+    from analysis.scheduler import Scheduler, get_anomaly_cache
+    import analysis.scheduler as sched_mod
+    sched_mod._anomaly_cache.setdefault("cam_01", {})[42] = _stale_entry(True, "alerted")
+    sch = Scheduler(AsyncMock(), FakeSettings())
+
+    sch.reload(interval_minutes=30, std_threshold=1.0,
+               window_minutes=2, temp_anomaly_enabled=False)
+
+    cache = get_anomaly_cache()
+    assert cache["cam_01"][42]["temp_anomaly"] is False
+    assert cache["cam_01"][42]["temp_state"] == "normal"
+
+
+def test_start_applies_db_persisted_temp_setting(monkeypatch):
+    """根因 C：啟動時 DB 持久化設定應覆蓋建構時的 config 預設
+    （重啟後不可靜默重啟體溫偵測）。"""
+    from analysis.scheduler import Scheduler
+    pool = AsyncMock()
+
+    async def fake_get_all_settings(_pool):
+        return {"temp_anomaly_enabled": "false"}
+
+    monkeypatch.setattr("db_writer.get_all_settings", fake_get_all_settings)
+    sch = Scheduler(pool, FakeSettings())  # FakeSettings.temp_anomaly_enabled = True
+    assert sch._temp_enabled is True
+
+    asyncio.run(sch._apply_db_settings())
+
+    assert sch._temp_enabled is False
+
+
 def test_alerted_pig_stays_flagged_when_herd_unmeasurable():
     """pig 3 先 alerted；第二輪全欄低速 herd_ok=False → pig 3 警報不被清除（採血意圖保留）。"""
     from analysis.scheduler import Scheduler, get_anomaly_cache

@@ -61,9 +61,47 @@ class Scheduler:
         self._min_coverage: float = float(getattr(settings, "activity_min_coverage", 0.5))
 
     async def start(self) -> None:
+        await self._apply_db_settings()
         await self._rebuild_cache()
         self._task = asyncio.create_task(self._loop())
         logger.info("Scheduler started")
+
+    async def _apply_db_settings(self) -> None:
+        """啟動時讓 DB 持久化設定覆蓋建構時的 config 預設。
+
+        設定 UI 是權威來源；否則 app 重啟後會用 config 預設（temp 預設 True）
+        靜默重新啟用體溫偵測，即使使用者早已在 UI 停用並存進 DB。
+        """
+        if self._pool is None:
+            return
+        try:
+            from db_writer import get_all_settings
+            s = await get_all_settings(self._pool)
+        except Exception:
+            logger.exception("Scheduler._apply_db_settings error")
+            return
+        if s.get("temp_anomaly_enabled") is not None:
+            self._temp_enabled = str(s["temp_anomaly_enabled"]).strip().lower() == "true"
+        if s.get("analysis_interval_minutes"):
+            self._interval = int(s["analysis_interval_minutes"]) * 60
+        if s.get("anomaly_std_threshold"):
+            self._threshold = float(s["anomaly_std_threshold"])
+        if s.get("analysis_window_minutes"):
+            self._window_minutes = int(s["analysis_window_minutes"])
+        if not self._temp_enabled:
+            self._clear_all_temp_flags()
+
+    @staticmethod
+    def _clear_all_temp_flags() -> None:
+        """掃過整個 cache（含不在當前視窗的殘留 object_id）清掉 temp 旗標。
+
+        /alerts/active 直接回傳整個 _anomaly_cache；ID 跳號使被標記過的
+        舊 object_id 不會再進分析視窗，若不全掃就永遠清不掉那些紅框。
+        """
+        for objs in _anomaly_cache.values():
+            for entry in objs.values():
+                entry["temp_anomaly"] = False
+                entry["temp_state"] = "normal"
 
     async def stop(self) -> None:
         if self._task:
@@ -85,6 +123,8 @@ class Scheduler:
         self._threshold = std_threshold
         self._window_minutes = int(window_minutes)
         self._temp_enabled = bool(temp_anomaly_enabled)
+        if not self._temp_enabled:
+            self._clear_all_temp_flags()
 
     async def _loop(self) -> None:
         while True:
@@ -115,6 +155,9 @@ class Scheduler:
     async def _run_analysis(self) -> None:
         if self._pool is None:
             return
+        if not self._temp_enabled:
+            # 每輪整批清，連不在視窗的殘留 object_id 也涵蓋（根因 A）
+            self._clear_all_temp_flags()
         now = time.time()
         window_seconds = self._window_minutes * 60
         window_start = now - window_seconds
