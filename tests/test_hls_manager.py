@@ -265,33 +265,37 @@ def test_stop_all_terminates_all_streams(tmp_path, monkeypatch):
 
 
 def test_feed_buffers_jpeg_with_frame_id(tmp_path, monkeypatch):
-    """feed() 只負責把 (jpeg, frame_id) 放進 buffer；不再累加 _fed_log/_fed_count
-    （那是 writer 寫入 ffmpeg 那刻才記，才與輸出幀對齊）。"""
+    """feed() 把 (jpeg, capture_ts) 放進 buffer；frame_id 參數保留簽名相容但不入
+    buffer（capture_ts 才是新授權時間軸所需）；_fed_log/_fed_count 不由 feed 累加。"""
     stream, _ = _make_stream(tmp_path, monkeypatch)
     stream._stopped = True
     stream._fed_log.clear()
     stream._fed_count = 0
     stream.feed(b"\xff\xd8\xff", capture_ts=1_700_000_001.0, frame_id=10)
-    assert stream._frame_buffer[-1] == (b"\xff\xd8\xff", 10)
+    assert stream._frame_buffer[-1] == (b"\xff\xd8\xff", 1_700_000_001.0)
     assert stream._fed_count == 0
     assert list(stream._fed_log) == []
 
 
 def test_emit_frame_records_writer_index_fed_log(tmp_path, monkeypatch):
-    """_emit_frame（writer 每 tick 呼叫，含補幀）才是 segment↔frame_id 錨點：
-    以 writer 餵入索引（等速 TARGET_FPS、與 ffmpeg 輸出幀 1:1）記錄。"""
+    """_emit_frame（writer 每 tick 呼叫，含補幀）用 _emit_log 記 (emit_idx, capture_ts)；
+    舊 _fed_count/_fed_log 保留欄位但此 Task 起不再由 _emit_frame 更新（後續 Task 刪除）。"""
     stream, _ = _make_stream(tmp_path, monkeypatch)
     stream._stopped = True
     stream._fed_log.clear()
     stream._fed_count = 0
-    assert stream._emit_frame(b"\xff\xd8\xff", 10) is True
-    assert stream._emit_frame(b"\xff\xd8\xff", 11) is True
-    assert stream._fed_count == 2
-    assert list(stream._fed_log) == [(0, 10), (1, 11)]
-    # 補幀 frame_id=None（buffer 空時重複上一幀）→ 計數仍增、不記入 _fed_log
+    # _emit_frame 現在接受 (frame, capture_ts)，寫入 _emit_log/_emit_idx
+    assert stream._emit_frame(b"\xff\xd8\xff", 1000.0) is True
+    assert stream._emit_frame(b"\xff\xd8\xff", 1001.0) is True
+    assert stream._emit_idx == 2
+    assert list(stream._emit_log) == [(0, 1000.0), (1, 1001.0)]
+    # 補幀 capture_ts=None → emit_idx 仍增、不記入 _emit_log
     assert stream._emit_frame(b"\xff\xd8\xff", None) is True
-    assert stream._fed_count == 3
-    assert list(stream._fed_log) == [(0, 10), (1, 11)]
+    assert stream._emit_idx == 3
+    assert list(stream._emit_log) == [(0, 1000.0), (1, 1001.0)]
+    # 舊 _fed_count/_fed_log 不再由此路徑更新
+    assert stream._fed_count == 0
+    assert list(stream._fed_log) == []
 
 
 def test_scan_records_seg_first_fid_by_frame_count(tmp_path, monkeypatch):
@@ -366,3 +370,42 @@ def test_manager_feed_threads_frame_id(tmp_path, monkeypatch):
         m._streams[("cam_01", "rgb")].feed = spy
         m.feed("cam_01", "rgb", b"\xff\xd8\xff", capture_ts=1_700_000_000.0, frame_id=55)
     assert captured["frame_id"] == 55
+
+
+def test_ffmpeg_cmd_drops_fps_filter_and_input_framerate(tmp_path):
+    from hls_manager import _make_ffmpeg_cmd
+    joined = " ".join(_make_ffmpeg_cmd(tmp_path))
+    assert "fps=" not in joined
+    assert "-framerate" not in joined
+    assert "-hls_time" in joined
+
+
+def test_feed_buffers_jpeg_with_capture_ts(tmp_path, monkeypatch):
+    stream, _ = _make_stream(tmp_path, monkeypatch)
+    stream._stopped = True
+    stream.feed(b"J1", capture_ts=1000.0)
+    assert stream._frame_buffer[-1] == (b"J1", 1000.0)
+
+
+def test_emit_frame_records_emit_log_with_capture_ts(tmp_path, monkeypatch):
+    stream, proc = _make_stream(tmp_path, monkeypatch)
+    stream._stopped = True
+    assert stream._emit_frame(b"A", 1000.0) is True
+    assert stream._emit_frame(b"B", 1000.5) is True
+    assert stream._emit_idx == 2
+    assert list(stream._emit_log) == [(0, 1000.0), (1, 1000.5)]
+    assert stream._emit_frame(b"C", None) is True
+    assert stream._emit_idx == 3
+    assert list(stream._emit_log) == [(0, 1000.0), (1, 1000.5)]
+
+
+def test_writer_loop_duplicates_with_last_capture_ts(tmp_path, monkeypatch):
+    stream, proc = _make_stream(tmp_path, monkeypatch)
+    stream._stopped = True
+    written = []
+    monkeypatch.setattr(stream, "_emit_frame",
+                         lambda f, ts: (written.append((f, ts)) or True))
+    stream._frame_buffer.append((b"X", 2000.0))
+    stream._writer_tick()
+    stream._writer_tick()
+    assert written == [(b"X", 2000.0), (b"X", 2000.0)]

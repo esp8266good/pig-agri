@@ -60,28 +60,17 @@ def _make_ffmpeg_cmd(out_dir: Path) -> list[str]:
     gop = TARGET_FPS * 2
     return [
         "ffmpeg", "-y",
-        # 輸入：MJPEG pipe，不使用 wallclock timestamp，改由 ffmpeg 自己產生穩定時間軸
         "-f", "mjpeg",
-        "-framerate", str(TARGET_FPS),  # 告知 ffmpeg 輸入預期 FPS（配合 fps filter）
         "-i", "pipe:0",
-        # 不要聲音
         "-an",
-        # 影像編碼
         "-c:v", "libx264",
-        "-preset", "veryfast",          # ultrafast 省 CPU 但 bitrate 較高；veryfast 在穩定性上更佳
-        "-crf", "23",                   # 固定品質，避免 bitrate 忽高忽低
-        # 強制輸出固定 FPS：來源過快則丟幀，過慢則補幀
-        "-vf", f"fps={TARGET_FPS}",
-        "-g", str(gop),                 # GOP 大小對齊 HLS segment
-        # HLS 輸出
+        "-preset", "veryfast",
+        "-crf", "23",
+        "-g", str(gop),
         "-hls_time", "4",
         "-hls_list_size", "0",
-        # program_date_time：每個 segment 寫入 #EXT-X-PROGRAM-DATE-TIME，
-        # 讓前端能用 hls.playingDate 取得「畫面上這一幀的實際時間」來對齊 bbox，
-        # 不必猜測伺服器管線延遲（抗網路抖動）。
         "-hls_flags", "append_list+program_date_time",
         "-hls_segment_filename", str(out_dir / "seg_%03d.ts"),
-        # FFmpeg 自身的 log 等級
         "-loglevel", FFMPEG_LOG_LEVEL,
         str(out_dir / "index.m3u8"),
     ]
@@ -144,7 +133,7 @@ class HLSStream:
         self._lock = threading.Lock()
 
         # Frame buffer：用 deque 限制長度，來源過快時自動丟最舊的幀
-        self._frame_buffer: deque[tuple[bytes, Optional[int]]] = deque(
+        self._frame_buffer: deque[tuple[bytes, Optional[float]]] = deque(
             maxlen=FRAME_BUFFER_SIZE
         )
         self._buffer_event = threading.Event()
@@ -164,6 +153,13 @@ class HLSStream:
         self._fed_log: deque[tuple[int, int]] = deque(maxlen=_FED_LOG_MAX)
         self._seg_first_fid: dict[str, int] = {}
 
+        # 真實時間軸授權：每寫入 ffmpeg 一幀記 (emit_idx, capture_ts)，
+        # 與 ffmpeg 輸出幀 1:1（writer 等速 tick）。_scan_new_segments
+        # 據此推每段首幀真實擷取牆鐘。
+        self._emit_idx: int = 0
+        self._emit_log: deque[tuple[int, float]] = deque(maxlen=_FED_LOG_MAX)
+        self._writer_last_frame: Optional[tuple[bytes, Optional[float]]] = None
+
         # 啟動 writer 執行緒，以固定節奏把 buffer 裡的幀送進 ffmpeg
         self._writer_thread = threading.Thread(
             target=self._writer_loop,
@@ -182,7 +178,7 @@ class HLSStream:
     ) -> None:
         """把新幀放入 buffer；若 buffer 滿則自動丟棄最舊幀（deque maxlen 行為）。
         capture_ts 為該幀真實擷取牆鐘（後端自管 PDT，fallback 用）；
-        frame_id 為該幀身分（幀計數錨點 → segment↔frame_id 對應）。"""
+        frame_id 保留簽名相容性（舊邏輯暫留，由後續 Task 統一刪除）。"""
         with self._lock:
             new_dir = self._hour_dir()
             if new_dir != self.out_dir:
@@ -190,11 +186,7 @@ class HLSStream:
         if capture_ts is not None:
             self._last_capture_ts = capture_ts
         self.last_feed_time = time.time()
-        # 只入 buffer；frame_id 在 writer 寫入 ffmpeg 那刻才記（_emit_frame），
-        # 才與 ffmpeg 輸出幀 1:1 對齊（攝影機 fps≠TARGET_FPS 時 buffer 取捨/
-        # 補幀會讓「抵達索引」≠「輸出幀索引」）。
-        fid = int(frame_id) if frame_id is not None else None
-        self._frame_buffer.append((jpeg_bytes, fid))
+        self._frame_buffer.append((jpeg_bytes, capture_ts))
         self._buffer_event.set()
 
     def _scan_new_segments(self) -> None:
@@ -285,11 +277,10 @@ class HLSStream:
             / datetime.now().strftime("%Y-%m-%d-%H")
         )
 
-    def _emit_frame(self, frame: bytes, frame_id: Optional[int]) -> bool:
-        """把一幀寫進 ffmpeg stdin，並在「寫入那刻」記 (writer_index, frame_id)
-        到 _fed_log。writer 以等速 TARGET_FPS 每 tick 寫一幀（含補幀），故
-        writer_index 與 ffmpeg 輸出幀 1:1；segment NNN 首幀 == writer_index
-        round(NNN*TARGET_FPS*_HLS_TIME)，_scan_new_segments 據此查 _fed_log。
+    def _emit_frame(self, frame: bytes, capture_ts: Optional[float]) -> bool:
+        """寫一幀進 ffmpeg stdin，並在寫入那刻記 (emit_idx, capture_ts)。
+        writer 等速每 tick 寫一幀（含補幀）→ emit_idx 與 ffmpeg 輸出幀
+        1:1；segment NNN 首幀 == emit_idx round(NNN*TARGET_FPS*_HLS_TIME)。
         回傳 False 表示 stdin pipe 已斷（writer 應結束）。"""
         try:
             self.proc.stdin.write(frame)
@@ -303,40 +294,41 @@ class HLSStream:
         except Exception as e:
             logger.warning(f"[{self.camera_id}/{self.stream_type}] stdin write error: {e}")
             return True
-        self._fed_count += 1
-        if frame_id is not None:
-            self._fed_log.append((self._fed_count - 1, frame_id))
+        if capture_ts is not None:
+            self._emit_log.append((self._emit_idx, capture_ts))
+        self._emit_idx += 1
         return True
 
+    def _writer_tick(self) -> None:
+        """單次：取一幀（空則複製上一幀沿用其 capture_ts）寫入 ffmpeg。"""
+        try:
+            frame = self._frame_buffer.popleft()
+            self._writer_last_frame = frame
+        except IndexError:
+            frame = self._writer_last_frame
+        if frame is not None:
+            jpeg_bytes, cap = frame
+            if not self._emit_frame(jpeg_bytes, cap):
+                self._stopped = True
+
     def _writer_loop(self) -> None:
-        """以接近 TARGET_FPS 的速率從 buffer 取幀並寫入 ffmpeg stdin。"""
+        """真實牆鐘節拍器：每 1/TARGET_FPS 真實秒寫一幀，落後過多即重置
+        截止時間（不爆衝補償，避免時間軸扭曲）。長期餵入速率因此嚴格
+        鎖在 TARGET_FPS×真實秒，消除造成漂移斜線的持續性速率偏差。"""
         interval = 1.0 / TARGET_FPS
-        last_frame: Optional[tuple[bytes, Optional[int]]] = None
-
+        slip = getattr(settings, "hls_slip_resync_seconds", 0.5)
+        deadline = time.monotonic()
         while not self._stopped:
-            deadline = time.monotonic() + interval
-
-            # 取一幀（若有）
-            try:
-                frame = self._frame_buffer.popleft()
-                last_frame = frame
-            except IndexError:
-                # buffer 空：重複上一幀（補幀），維持 ffmpeg 時間軸連續
-                frame = last_frame
-
-            if frame is not None:
-                jpeg_bytes, fid = frame
-                if not self._emit_frame(jpeg_bytes, fid):
-                    break
-
-            # 偵測新 segment（節流 ~0.5s 一次，glob 成本可忽略）
+            self._writer_tick()
             now_m = time.monotonic()
             if now_m - self._last_scan >= 0.5:
                 self._last_scan = now_m
                 self._scan_new_segments()
-
-            # 精確等待到下個寫入時間點
-            sleep_time = deadline - time.monotonic()
+            deadline += interval
+            now_m = time.monotonic()
+            if now_m - deadline > slip:
+                deadline = now_m
+            sleep_time = deadline - now_m
             if sleep_time > 0:
                 time.sleep(sleep_time)
 

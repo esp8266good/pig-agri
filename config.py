@@ -58,6 +58,8 @@ class Settings(BaseSettings):
     hls_target_fps: int = 20
     hls_frame_buffer_size: int = 10
     hls_base_dir: str = "data/pig_monitoring/hls"
+    hls_slip_resync_seconds: float = 0.5   # writer 落後超過此值即重置截止時間（不爆衝補償）
+    hls_discontinuity_seconds: float = 8.0  # 相鄰段 capture_ts 差超過此值 → #EXT-X-DISCONTINUITY
     hls_retention_days: int = 90
 
     # ── Logging ────────────────────────────────────────────────
