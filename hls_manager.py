@@ -149,11 +149,6 @@ class HLSStream:
         self._seen_segs: set[str] = set()
         self._seg_lock = threading.Lock()
         self._last_scan: float = 0.0
-        # 幀身分對應：餵入幀計數 + (fed_index, frame_id) 環形記錄，
-        # 與 segment 首幀 frame_id 對應（_scan_new_segments 用幀計數推算）。
-        self._fed_count: int = 0
-        self._fed_log: deque[tuple[int, int]] = deque(maxlen=_FED_LOG_MAX)
-        self._seg_first_fid: dict[str, int] = {}
 
         # 真實時間軸授權：每寫入 ffmpeg 一幀記 (emit_idx, capture_ts)，
         # 與 ffmpeg 輸出幀 1:1（writer 等速 tick）。_scan_new_segments
@@ -176,11 +171,9 @@ class HLSStream:
         self,
         jpeg_bytes: bytes,
         capture_ts: Optional[float] = None,
-        frame_id: Optional[int] = None,
     ) -> None:
         """把新幀放入 buffer；若 buffer 滿則自動丟棄最舊幀（deque maxlen 行為）。
-        capture_ts 為該幀真實擷取牆鐘（後端自管 PDT，fallback 用）；
-        frame_id 保留簽名相容性（舊邏輯暫留，由後續 Task 統一刪除）。"""
+        capture_ts 為該幀真實擷取牆鐘（後端自管 PDT）。"""
         with self._lock:
             new_dir = self._hour_dir()
             if new_dir != self.out_dir:
@@ -203,7 +196,6 @@ class HLSStream:
             return
         with self._seg_lock:
             emit_log = None
-            fed_log: list[tuple[int, int]] | None = None
             new_rows: list[tuple[str, float]] = []
             for name in names:
                 if name in self._seen_segs:
@@ -213,7 +205,6 @@ class HLSStream:
                 if not m:
                     continue
                 expected = round(int(m.group(1)) * TARGET_FPS * _HLS_TIME)
-                # ── _emit_log 推 PDT（Task 2 新路徑） ──────────────────────
                 if emit_log is None:
                     emit_log = list(self._emit_log)
                 if emit_log:
@@ -227,20 +218,9 @@ class HLSStream:
                             cap = prev + _PDT_MONOTONIC_EPS
                     self._seg_pdt[name] = cap
                     new_rows.append((name, cap))
-                # ── 舊 frame_id 錨點（後續 Task 移除，暫保留） ────────────
-                if fed_log is None:
-                    fed_log = list(self._fed_log)
-                if fed_log:
-                    best_fid = min(
-                        fed_log, key=lambda p: abs(p[0] - expected)
-                    )[1]
-                    self._seg_first_fid[name] = best_fid
             if len(self._seg_pdt) > 2000:
                 for k in sorted(self._seg_pdt)[:-2000]:
                     self._seg_pdt.pop(k, None)
-            if len(self._seg_first_fid) > 2000:
-                for k in sorted(self._seg_first_fid)[:-2000]:
-                    self._seg_first_fid.pop(k, None)
         for seg_name, cap in new_rows:
             try:
                 with (out_dir / "pdt.jsonl").open("a") as fh:
@@ -261,7 +241,6 @@ class HLSStream:
             return None
         with self._seg_lock:
             seg_pdt = dict(self._seg_pdt)
-            seg_fid = dict(self._seg_first_fid)
         disc = getattr(settings, "hls_discontinuity_seconds", 8.0)
         seg_order = [
             ln.strip() for ln in text.splitlines()
@@ -329,9 +308,6 @@ class HLSStream:
                 else:
                     # Unknown segment — don't bleed a stale flag past a no-PDT segment.
                     pending_disc = False
-                fid = seg_fid.get(seg_name)
-                if fid is not None:
-                    out.append(f"#EXT-X-PIG-FRAMEID:{fid}")
                 last_pdt_idx = None
                 pending_extinf_idx = None
             out.append(line)
@@ -419,11 +395,6 @@ class HLSStream:
         with self._seg_lock:  # 新小時、新 ffmpeg：舊 segment 對應已無意義
             self._seg_pdt.clear()
             self._seen_segs.clear()
-            self._seg_first_fid.clear()
-        # _fed_log/_fed_count 不在 _seg_lock 內清（沿用 feed() 不持 _seg_lock 的慣例）；
-        # _restart 由持 self._lock 的 feed() 呼叫，與 writer-loop 的 scan 競態窗口極小且無害。
-        self._fed_log.clear()
-        self._fed_count = 0
         self._emit_log.clear()
         self._emit_idx = 0
         self._writer_last_frame = None
@@ -453,19 +424,8 @@ class HLSManager:
     NO_FRAME_TIMEOUT: int = 30
     WATCHDOG_INTERVAL: int = 10
 
-    # ── PDT 偏差量測 ──────────────────────────────────────────────────────
-    # ffmpeg 的 #EXT-X-PROGRAM-DATE-TIME 用「ffmpeg host 餵幀/mux 當下的牆鐘」，
-    # 但前端 bbox 的 timestamp 用的是「擷取端時鐘」(camera publisher 蓋的 ts)。
-    # 兩個時鐘的差 = NTP 偏差 + zmq 傳輸 + 餵入緩衝 ≈ 每個部署固定、與用戶端
-    # 網路無關。在「餵 ffmpeg 的瞬間」量 server_now - capture_ts 即得此差，
-    # 用 EMA 平滑後給前端做 targetTs = playingDate - offset 校正。
-    _PDT_OFFSET_ALPHA: float = 0.05
-    _PDT_OFFSET_MIN: float = -2.0   # 容許輕微 clock skew / 抖動
-    _PDT_OFFSET_MAX: float = 30.0   # 超過視為 stale frame，丟棄不污染 EMA
-
     def __init__(self) -> None:
         self._streams: Dict[StreamKey, HLSStream] = {}
-        self._pdt_offset: Dict[str, float] = {}
         self._lock = threading.Lock()
         self._watchdog = threading.Thread(
             target=self._watchdog_loop, daemon=True, name="hls-watchdog"
@@ -498,31 +458,15 @@ class HLSManager:
         stream_type: str,
         jpeg_bytes: bytes,
         capture_ts: float | None = None,
-        frame_id: int | None = None,
     ) -> None:
         key: StreamKey = (camera_id, stream_type)
-        if capture_ts is not None and stream_type == "rgb":
-            self._update_pdt_offset(camera_id, capture_ts)
         with self._lock:
             stream = self._streams.get(key)
         if stream is not None:
-            stream.feed(jpeg_bytes, capture_ts, frame_id)
+            stream.feed(jpeg_bytes, capture_ts)
         else:
             logger.debug(
                 f"[{camera_id}/{stream_type}] feed() called but stream not started, dropping frame"
-            )
-
-    def _update_pdt_offset(self, camera_id: str, capture_ts: float) -> None:
-        sample = time.time() - capture_ts
-        if sample < self._PDT_OFFSET_MIN or sample > self._PDT_OFFSET_MAX:
-            return  # stale / clock-glitch frame — don't poison the EMA
-        with self._lock:
-            prev = self._pdt_offset.get(camera_id)
-            self._pdt_offset[camera_id] = (
-                sample
-                if prev is None
-                else self._PDT_OFFSET_ALPHA * sample
-                + (1.0 - self._PDT_OFFSET_ALPHA) * prev
             )
 
     def corrected_m3u8(
@@ -535,12 +479,6 @@ class HLSManager:
         if stream is None:
             return None
         return stream.corrected_m3u8(date_hour)
-
-    def get_pdt_offset(self, camera_id: str) -> float:
-        """Seconds to subtract from hls.playingDate so the resulting time is on
-        the same clock as the bbox WS `timestamp` (frame capture time)."""
-        with self._lock:
-            return self._pdt_offset.get(camera_id, 0.0)
 
     def stop_all(self) -> None:
         with self._lock:

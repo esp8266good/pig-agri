@@ -13,7 +13,6 @@ ALLOWED_KEYS = frozenset({
     "anomaly_std_threshold",
     "hls_retention_days",
     "temp_anomaly_enabled",
-    "live_pdt_offset_seconds",
 })
 
 _RELOAD_KEYS = {
@@ -39,7 +38,6 @@ async def get_settings():
             "anomaly_std_threshold":     str(app_settings.anomaly_std_threshold),
             "hls_retention_days":        str(app_settings.hls_retention_days),
             "temp_anomaly_enabled":      str(app_settings.temp_anomaly_enabled).lower(),
-            "live_pdt_offset_seconds":   str(app_settings.live_pdt_offset_seconds),
         }
     return await get_all_settings(pool)
 

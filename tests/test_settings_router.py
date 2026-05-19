@@ -188,12 +188,6 @@ def test_get_settings_no_pool_includes_temp_and_window(client_no_pool):
     assert data["temp_anomaly_enabled"] in ("true", "false")
 
 
-def test_live_pdt_offset_in_allowed_keys_and_no_pool_default():
+def test_live_pdt_offset_removed_from_allowed_keys():
     from routers.settings import ALLOWED_KEYS
-    assert "live_pdt_offset_seconds" in ALLOWED_KEYS
-
-
-def test_get_settings_no_pool_includes_live_pdt_offset(client_no_pool):
-    resp = client_no_pool.get("/settings")
-    assert resp.status_code == 200
-    assert "live_pdt_offset_seconds" in resp.json()
+    assert "live_pdt_offset_seconds" not in ALLOWED_KEYS

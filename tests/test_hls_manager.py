@@ -195,40 +195,6 @@ def test_feed_is_noop_when_stream_not_started(manager):
     fake_proc.stdin.write.assert_not_called()
 
 
-def test_pdt_offset_defaults_to_zero(manager):
-    m, _ = manager
-    assert m.get_pdt_offset("cam_never_seen") == 0.0
-
-
-def test_feed_without_capture_ts_keeps_offset_zero(manager):
-    """Backward compat: legacy callers pass no capture_ts → offset stays 0."""
-    m, fake_proc = manager
-    with patch("hls_manager._start_ffmpeg", return_value=fake_proc):
-        m.ensure_started("cam_01", "rgb")
-    m.feed("cam_01", "rgb", b"\xff\xd8\xff")
-    assert m.get_pdt_offset("cam_01") == 0.0
-
-
-def test_feed_with_capture_ts_tracks_pdt_offset(manager):
-    """First sample initializes the EMA directly, so offset ≈ wallclock gap
-    between the capture-ts clock and the server clock (what ffmpeg PDT uses)."""
-    m, fake_proc = manager
-    with patch("hls_manager._start_ffmpeg", return_value=fake_proc):
-        m.ensure_started("cam_01", "rgb")
-    m.feed("cam_01", "rgb", b"\xff\xd8\xff", capture_ts=time.time() - 5.0)
-    assert m.get_pdt_offset("cam_01") == pytest.approx(5.0, abs=0.5)
-
-
-def test_pdt_offset_rejects_absurd_samples(manager):
-    """A wildly stale/negative capture_ts must not poison the offset."""
-    m, fake_proc = manager
-    with patch("hls_manager._start_ffmpeg", return_value=fake_proc):
-        m.ensure_started("cam_01", "rgb")
-    m.feed("cam_01", "rgb", b"\xff\xd8\xff", capture_ts=time.time() - 5.0)
-    m.feed("cam_01", "rgb", b"\xff\xd8\xff", capture_ts=time.time() - 9999.0)
-    m.feed("cam_01", "rgb", b"\xff\xd8\xff", capture_ts=time.time() + 9999.0)
-    assert m.get_pdt_offset("cam_01") == pytest.approx(5.0, abs=1.0)
-
 
 def test_evict_stale_removes_expired_stream(tmp_path, monkeypatch):
     monkeypatch.setattr("hls_manager.settings.hls_base_dir", str(tmp_path))
@@ -270,113 +236,6 @@ def test_stop_all_terminates_all_streams(tmp_path, monkeypatch):
     proc2.terminate.assert_called()
     assert len(m._streams) == 0
 
-
-def test_feed_buffers_jpeg_with_frame_id(tmp_path, monkeypatch):
-    """feed() 把 (jpeg, capture_ts) 放進 buffer；frame_id 參數保留簽名相容但不入
-    buffer（capture_ts 才是新授權時間軸所需）；_fed_log/_fed_count 不由 feed 累加。"""
-    stream, _ = _make_stream(tmp_path, monkeypatch)
-    stream._stopped = True
-    stream._fed_log.clear()
-    stream._fed_count = 0
-    stream.feed(b"\xff\xd8\xff", capture_ts=1_700_000_001.0, frame_id=10)
-    assert stream._frame_buffer[-1] == (b"\xff\xd8\xff", 1_700_000_001.0)
-    assert stream._fed_count == 0
-    assert list(stream._fed_log) == []
-
-
-def test_emit_frame_records_writer_index_fed_log(tmp_path, monkeypatch):
-    """_emit_frame（writer 每 tick 呼叫，含補幀）用 _emit_log 記 (emit_idx, capture_ts)；
-    舊 _fed_count/_fed_log 保留欄位但此 Task 起不再由 _emit_frame 更新（後續 Task 刪除）。"""
-    stream, _ = _make_stream(tmp_path, monkeypatch)
-    stream._stopped = True
-    stream._fed_log.clear()
-    stream._fed_count = 0
-    # _emit_frame 現在接受 (frame, capture_ts)，寫入 _emit_log/_emit_idx
-    assert stream._emit_frame(b"\xff\xd8\xff", 1000.0) is True
-    assert stream._emit_frame(b"\xff\xd8\xff", 1001.0) is True
-    assert stream._emit_idx == 2
-    assert list(stream._emit_log) == [(0, 1000.0), (1, 1001.0)]
-    # 補幀 capture_ts=None → emit_idx 仍增、不記入 _emit_log
-    assert stream._emit_frame(b"\xff\xd8\xff", None) is True
-    assert stream._emit_idx == 3
-    assert list(stream._emit_log) == [(0, 1000.0), (1, 1001.0)]
-    # 舊 _fed_count/_fed_log 不再由此路徑更新
-    assert stream._fed_count == 0
-    assert list(stream._fed_log) == []
-
-
-def test_scan_records_seg_first_fid_by_frame_count(tmp_path, monkeypatch):
-    """segment 首幀 frame_id 用『餵入幀計數』推算（避開管線延遲 L），
-    取 fed_index 最接近 round(ordinal*TARGET_FPS*_HLS_TIME) 的 frame_id。"""
-    from hls_manager import TARGET_FPS, _HLS_TIME
-    stream, _ = _make_stream(tmp_path, monkeypatch)
-    stream._stopped = True
-    # 餵入足夠覆蓋到 seg_002 期望位置的記錄：fed_index i → frame_id 1000+i
-    expected2 = round(2 * TARGET_FPS * _HLS_TIME)
-    for i in range(expected2 + 5):
-        stream._fed_log.append((i, 1000 + i))
-    (stream.out_dir / "seg_002.ts").write_bytes(b"x")
-    stream._scan_new_segments()
-    assert stream._seg_first_fid["seg_002.ts"] == 1000 + expected2
-    # 同名不覆寫
-    stream._fed_log.append((expected2, 99999))
-    stream._scan_new_segments()
-    assert stream._seg_first_fid["seg_002.ts"] == 1000 + expected2
-    # _fed_log 為空 → 不記
-    stream._fed_log.clear()
-    (stream.out_dir / "seg_003.ts").write_bytes(b"x")
-    stream._scan_new_segments()
-    assert "seg_003.ts" not in stream._seg_first_fid
-
-
-def test_restart_clears_frameid_state(tmp_path, monkeypatch):
-    stream, _ = _make_stream(tmp_path, monkeypatch)
-    stream._stopped = True
-    stream._fed_count = 5
-    stream._fed_log.append((4, 77))
-    stream._seg_first_fid["seg_000.ts"] = 77
-    new_dir = stream.out_dir.parent / "2099-01-01-00"
-    with patch("hls_manager._start_ffmpeg", return_value=MagicMock(stdin=MagicMock())):
-        stream._restart(new_dir)
-    assert stream._fed_count == 0
-    assert list(stream._fed_log) == []
-    assert stream._seg_first_fid == {}
-
-
-def test_corrected_m3u8_inserts_pig_frameid_tag(tmp_path, monkeypatch):
-    stream, _ = _make_stream(tmp_path, monkeypatch)
-    stream._stopped = True
-    (stream.out_dir / "index.m3u8").write_text(_FFMPEG_M3U8)
-    stream._seg_pdt = {"seg_000.ts": 1_900_000_000.0}
-    stream._seg_first_fid = {"seg_000.ts": 4242}  # seg_001 故意未知
-    out = stream.corrected_m3u8(stream.out_dir.name)
-    assert out is not None
-    lines = out.splitlines()
-    i0 = lines.index("seg_000.ts")
-    i1 = lines.index("seg_001.ts")
-    # seg_000 緊鄰前一行（URI 行前）含 frameid 標籤
-    assert "#EXT-X-PIG-FRAMEID:4242" in lines[i0 - 3:i0]
-    # 未知段不插入標籤
-    assert not any("PIG-FRAMEID" in ln for ln in lines[i1 - 3:i1])
-    assert out.count("seg_000.ts") == 1 and out.count("#EXTINF:") == 2
-
-
-def test_manager_feed_threads_frame_id(tmp_path, monkeypatch):
-    from hls_manager import HLSManager
-    monkeypatch.setattr("hls_manager.settings.hls_base_dir", str(tmp_path))
-    with patch("hls_manager._start_ffmpeg", return_value=MagicMock(stdin=MagicMock())):
-        m = HLSManager()
-        m.ensure_started("cam_01", "rgb")
-        captured = {}
-        real = m._streams[("cam_01", "rgb")].feed
-
-        def spy(jpeg, capture_ts=None, frame_id=None):
-            captured["frame_id"] = frame_id
-            return real(jpeg, capture_ts, frame_id)
-
-        m._streams[("cam_01", "rgb")].feed = spy
-        m.feed("cam_01", "rgb", b"\xff\xd8\xff", capture_ts=1_700_000_000.0, frame_id=55)
-    assert captured["frame_id"] == 55
 
 
 def test_ffmpeg_cmd_drops_fps_filter_and_input_framerate(tmp_path):
@@ -529,3 +388,30 @@ def test_corrected_m3u8_last_segment_not_yet_anchored_no_disc(tmp_path, monkeypa
     assert "#EXT-X-DISCONTINUITY" not in out
     from hls_manager import _HLS_TIME
     assert f"#EXTINF:{float(_HLS_TIME):.6f}," in out   # seg_000 next 未知 → nominal
+
+
+# ── Task 6 新測試：FID / pdt_offset 機器已移除 ────────────────────────────
+
+
+def test_corrected_m3u8_no_pig_frameid_tag(tmp_path, monkeypatch):
+    stream, _ = _make_stream(tmp_path, monkeypatch)
+    stream._stopped = True
+    m3u8 = ("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:5\n"
+            "#EXTINF:4.0,\n#EXT-X-PROGRAM-DATE-TIME:2099-01-01T00:00:00.000+08:00\nseg_000.ts\n")
+    (stream.out_dir / "index.m3u8").write_text(m3u8)
+    stream._seg_pdt = {"seg_000.ts": 5000.0}
+    out = stream.corrected_m3u8(stream.out_dir.name)
+    assert "#EXT-X-PIG-FRAMEID" not in out
+
+
+def test_hls_manager_has_no_pdt_offset_api():
+    from hls_manager import HLSManager
+    assert not hasattr(HLSManager, "get_pdt_offset")
+    assert not hasattr(HLSManager, "_update_pdt_offset")
+
+
+def test_feed_signature_has_no_frame_id():
+    import inspect
+    from hls_manager import HLSStream, HLSManager
+    assert "frame_id" not in inspect.signature(HLSStream.feed).parameters
+    assert "frame_id" not in inspect.signature(HLSManager.feed).parameters

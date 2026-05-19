@@ -105,10 +105,6 @@ class Settings(BaseSettings):
     activity_min_coverage: float = 0.5
     # 體溫異常偵測總開關
     temp_anomaly_enabled: bool = True
-    # live bbox 對齊：殘留固定管線延遲（餵幀→ffmpeg segment 出現）。
-    # 前端 targetTs = hls.playingDate - live_pdt_offset_seconds，用 HUD
-    # chosen-target / 目視把框轉到貼合豬隻；每部署調一次。
-    live_pdt_offset_seconds: float = 2.0
 
     # ── Validators ────────────────────────────────────────────
     @field_validator("zmq_sources", mode="before")
