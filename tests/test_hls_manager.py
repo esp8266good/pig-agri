@@ -238,11 +238,22 @@ def test_stop_all_terminates_all_streams(tmp_path, monkeypatch):
     assert len(m._streams) == 0
 
 
-def test_ffmpeg_cmd_drops_fps_filter_and_input_framerate(tmp_path):
-    from hls_manager import _make_ffmpeg_cmd
-    joined = " ".join(_make_ffmpeg_cmd(tmp_path))
-    assert "fps=" not in joined
-    assert "-framerate" not in joined
+def test_ffmpeg_cmd_drops_fps_filter_but_declares_input_framerate(tmp_path):
+    # 移除「輸出端 -vf fps 重採樣器」（造成漸進漂移的元兇）——保持移除。
+    # 但「輸入端 -framerate」必須保留：否則 mjpeg pipe demuxer 預設用 25fps
+    # 給 JPEG 打 PTS，而 writer 真實每秒只餵 TARGET_FPS 幀 → .ts 被以
+    # 25/TARGET_FPS 倍速燒進 PTS → 播放被等比加速。writer 已是真實速率
+    # 權威，宣告輸入 framerate=TARGET_FPS 是準確值、不會重引入漂移。
+    from hls_manager import _make_ffmpeg_cmd, TARGET_FPS
+    cmd = _make_ffmpeg_cmd(tmp_path)
+    joined = " ".join(cmd)
+    assert "fps=" not in joined  # 無輸出端 fps filter
+    assert "-vf" not in cmd      # 無任何 video filter chain
+    # 輸入端 -framerate 必須緊接在 -i pipe:0 之前（輸入選項，非輸出）
+    fr = cmd.index("-framerate")
+    assert cmd[fr + 1] == str(TARGET_FPS)
+    assert cmd.index("-i") == fr + 2
+    assert cmd[fr + 3] == "pipe:0"
     assert "-hls_time" in joined
 
 

@@ -36,7 +36,10 @@ def configure_logging(level: str = "INFO") -> None:
 # ─── FFmpeg 指令 ─────────────────────────────────────────────────────────────
 # 改良重點：
 # 1. 加上 -an：不需要聲音
-# 2. 移除 -vf fps / 輸入 -framerate：改由 writer 真實牆鐘節拍器控速，消除 ffmpeg 媒體時鐘脫鉤牆鐘
+# 2. 移除「輸出端 -vf fps 重採樣器」（造成漸進漂移的元兇）；但保留「輸入端
+#    -framerate=TARGET_FPS」：writer 真實牆鐘節拍器每秒確實只餵 TARGET_FPS 幀，
+#    不告知 mjpeg pipe demuxer 它會預設 25fps 打 PTS → .ts 被以 25/TARGET_FPS
+#    倍速燒進播放。宣告真實輸入速率使媒體 PTS≡牆鐘，且不重引入舊漂移。
 # 3. 移除 -tune zerolatency：不需要低延遲，穩定性優先
 # 4. 加上 -g (GOP size) = 2 * FPS：讓 HLS 切割更整齊
 TARGET_FPS: int = getattr(settings, "hls_target_fps", 25)
@@ -63,6 +66,7 @@ def _make_ffmpeg_cmd(out_dir: Path) -> list[str]:
     return [
         "ffmpeg", "-y",
         "-f", "mjpeg",
+        "-framerate", str(TARGET_FPS),  # 輸入速率（writer 已鎖此真實速率）；非輸出 -vf fps
         "-i", "pipe:0",
         "-an",
         "-c:v", "libx264",
