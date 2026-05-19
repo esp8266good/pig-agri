@@ -79,6 +79,15 @@ vs 相機時鐘差 3–5s」最初根因。
 （輸入已被 writer 鎖成真實 CFR，resample 多餘且正是脫鉤源）。`-hls_time`、
 `-g`、`-hls_flags`（保留 `program_date_time` 作為 fallback PDT 來源）不變。
 
+> **ERRATA（2026-05-20，commit `b7b87a1`）**：本段對「輸入 `-framerate`」的
+> 判斷**錯誤**，已修。`-vf fps`（輸出重採樣器）確為脫鉤源，移除正確、維持
+> 移除；但輸入 `-framerate` 是告知 mjpeg pipe demuxer 真實幀率的**必要**輸入
+> 選項，與輸出 resample 無關。缺它 → demuxer 預設 25fps 打 PTS，而 writer
+> 真實每秒只餵 TARGET_FPS 幀 → .ts 被以 `25/TARGET_FPS` 倍速燒進播放
+> （FPS20→1.25×、FPS10→2.5×；**等比恆定加速，非漸進漂移**，故非 §9 Phase
+> 4.5 觸發，根因模型完好）。修正：還原 `-framerate {TARGET_FPS}`（緊接
+> `-i pipe:0` 前）；writer 已是真實速率權威，宣告此值為準確、不重引入漂移。
+
 `_emit_frame`：維護單調 `_emit_idx`（每成功寫入 +1）與環形
 `_emit_log: deque[tuple[int, float]]`（`(emit_idx, capture_ts)`，
 `maxlen = TARGET_FPS * 1800`）。
@@ -197,7 +206,8 @@ DB `tracking_logs` / VOD `pickClosestFrame`，**不動**；只刪 HLS 時間同�
 - 大 pdt gap → `#EXT-X-DISCONTINUITY` + nominal EXTINF。
 - 非單調 capture_ts → clamp 前段 + ε。
 - `corrected_m3u8` PDT 由新 `_seg_pdt`、**無** `#EXT-X-PIG-FRAMEID`。
-- `_make_ffmpeg_cmd` **無** `-vf fps` / 輸入 `-framerate`。
+- `_make_ffmpeg_cmd` **無** `-vf fps`；**有**輸入 `-framerate {TARGET_FPS}`
+  （見 §4.2 ERRATA：原寫「無 -framerate」是錯的，commit `b7b87a1` 已修）。
 
 `tests/test_vod_generator.py`（或既有 VOD 測試）：
 
