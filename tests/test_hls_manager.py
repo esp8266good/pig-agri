@@ -489,6 +489,33 @@ def test_corrected_m3u8_real_pdt_and_extinf(tmp_path, monkeypatch):
 
 
 def test_corrected_m3u8_inserts_discontinuity_on_big_gap(tmp_path, monkeypatch):
+    # Three segments so DISC placement is unambiguous:
+    #   seg_000→seg_001: normal 4 s gap  → no DISC before seg_001
+    #   seg_001→seg_002: big 50 s gap    → DISC must appear before seg_002 only
+    stream, _ = _make_stream(tmp_path, monkeypatch)
+    stream._stopped = True
+    m3u8 = (
+        "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:5\n"
+        "#EXTINF:4.0,\n#EXT-X-PROGRAM-DATE-TIME:2099-01-01T00:00:00.000+08:00\nseg_000.ts\n"
+        "#EXTINF:4.0,\n#EXT-X-PROGRAM-DATE-TIME:2099-01-01T00:00:04.000+08:00\nseg_001.ts\n"
+        "#EXTINF:4.0,\n#EXT-X-PROGRAM-DATE-TIME:2099-01-01T00:00:08.000+08:00\nseg_002.ts\n"
+    )
+    (stream.out_dir / "index.m3u8").write_text(m3u8)
+    stream._seg_pdt = {"seg_000.ts": 5000.0, "seg_001.ts": 5004.0, "seg_002.ts": 5054.0}
+    out = stream.corrected_m3u8(stream.out_dir.name)
+    lines = out.splitlines()
+    i1 = lines.index("seg_001.ts")
+    i2 = lines.index("seg_002.ts")
+    assert "#EXT-X-DISCONTINUITY" not in lines[:i1]      # 不在 seg_000/seg_001 前
+    assert "#EXT-X-DISCONTINUITY" in lines[i1:i2]        # 在 seg_002 前
+    from hls_manager import _HLS_TIME
+    # seg_000 真實 EXTINF = 5004-5000 = 4.0；seg_002 因不連續用 nominal
+    assert f"#EXTINF:{float(_HLS_TIME):.6f}," in out
+
+
+def test_corrected_m3u8_last_segment_not_yet_anchored_no_disc(tmp_path, monkeypatch):
+    # Hot live path: seg_001 not yet in _seg_pdt (race between scan & serve).
+    # Must produce no DISC and keep nominal EXTINF for seg_000 (next unknown).
     stream, _ = _make_stream(tmp_path, monkeypatch)
     stream._stopped = True
     m3u8 = (
@@ -497,10 +524,8 @@ def test_corrected_m3u8_inserts_discontinuity_on_big_gap(tmp_path, monkeypatch):
         "#EXTINF:4.0,\n#EXT-X-PROGRAM-DATE-TIME:2099-01-01T00:00:04.000+08:00\nseg_001.ts\n"
     )
     (stream.out_dir / "index.m3u8").write_text(m3u8)
-    stream._seg_pdt = {"seg_000.ts": 5000.0, "seg_001.ts": 5050.0}
+    stream._seg_pdt = {"seg_000.ts": 5000.0}   # seg_001 尚未錨定（live 熱路徑）
     out = stream.corrected_m3u8(stream.out_dir.name)
-    lines = out.splitlines()
-    i = lines.index("seg_001.ts")
-    assert "#EXT-X-DISCONTINUITY" in lines[:i]
+    assert "#EXT-X-DISCONTINUITY" not in out
     from hls_manager import _HLS_TIME
-    assert f"#EXTINF:{float(_HLS_TIME):.6f}," in out
+    assert f"#EXTINF:{float(_HLS_TIME):.6f}," in out   # seg_000 next 未知 → nominal

@@ -281,6 +281,7 @@ class HLSStream:
         out: list[str] = []
         last_pdt_idx: Optional[int] = None
         pending_extinf_idx: Optional[int] = None
+        pending_disc: bool = False
         for raw in text.splitlines():
             line = raw.rstrip("\r")
             if line.startswith("#EXT-X-PROGRAM-DATE-TIME:"):
@@ -297,17 +298,37 @@ class HLSStream:
                 nxt = seg_order[idx + 1] if 0 <= idx < len(seg_order) - 1 else None
                 cap = seg_pdt.get(seg_name)
                 if cap is not None:
+                    # RFC 8216 §4.3.2.3: DISCONTINUITY belongs immediately before
+                    # the segment that begins after the gap, not before the segment
+                    # whose PDT-distance-to-next is large.  pending_disc carries the
+                    # flag computed for the *previous* segment's gap forward to THIS
+                    # segment's insertion point.
+                    if pending_disc:
+                        ins = pending_extinf_idx if pending_extinf_idx is not None else len(out)
+                        out.insert(ins, "#EXT-X-DISCONTINUITY")
+                        # Indices shifted by 1 after insert — adjust pending_extinf_idx
+                        if pending_extinf_idx is not None:
+                            pending_extinf_idx += 1
+                        if last_pdt_idx is not None:
+                            last_pdt_idx += 1
                     corrected = f"#EXT-X-PROGRAM-DATE-TIME:{_iso_local(cap)}"
                     if last_pdt_idx is not None:
                         out[last_pdt_idx] = corrected
                     else:
                         out.append(corrected)
                     dur, is_disc = _dur(seg_name, nxt)
+                    # When this segment itself is discontinuous from the previous one
+                    # (pending_disc was True), its EXTINF must use nominal _HLS_TIME —
+                    # the real PDT-diff to the previous segment is meaningless across a gap.
+                    if pending_disc:
+                        dur = float(_HLS_TIME)
                     if pending_extinf_idx is not None:
                         out[pending_extinf_idx] = f"#EXTINF:{dur:.6f},"
-                    if is_disc:
-                        ins = pending_extinf_idx if pending_extinf_idx is not None else len(out)
-                        out.insert(ins, "#EXT-X-DISCONTINUITY")
+                    # Carry is_disc forward: DISC will be emitted before the NEXT segment.
+                    pending_disc = is_disc
+                else:
+                    # Unknown segment — don't bleed a stale flag past a no-PDT segment.
+                    pending_disc = False
                 fid = seg_fid.get(seg_name)
                 if fid is not None:
                     out.append(f"#EXT-X-PIG-FRAMEID:{fid}")
