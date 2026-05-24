@@ -22,7 +22,7 @@ class FakeSettings:
     activity_low_ratio = 0.3
     activity_recover_ratio = 0.5
     activity_abs_floor = 2.0
-    activity_min_coverage = 0.5
+    activity_min_span_seconds = 60.0     # 絕對門檻；120s 軌跡達標、40s 不達標
     temp_anomaly_enabled = True
 
 
@@ -107,7 +107,8 @@ def test_single_pig_no_baseline_no_alert():
 
 
 def test_low_coverage_pig_excluded():
-    """span 只有 40s < window(120s)*0.5=60s → 該豬被排除（不計入 median、不標記）。"""
+    """span 只有 40s < activity_min_span_seconds(60s) → 資料太少，該豬被排除
+    （不計入 median、不標記）。門檻為絕對秒數，與視窗長度無關。"""
     from analysis.scheduler import Scheduler, get_anomaly_cache
     pool = AsyncMock()
     pool.fetch.side_effect = [
@@ -123,6 +124,38 @@ def test_low_coverage_pig_excluded():
     cache = get_anomaly_cache()
     assert cache["cam_01"][3]["activity_current"] is None
     assert cache["cam_01"][3]["activity_anomaly"] is False
+
+
+def test_long_window_does_not_require_window_proportional_span():
+    """回歸：視窗放大到 120min，但豬（因 MOT ID 跳號）只被連續追蹤約
+    10min。舊實作合格門檻 = 視窗比例（span≥0.5×7200=3600s）→ 全員排除、
+    median=None、永不標記（使用者實測「2h 視窗下再也看不到異常」的根因）。
+    修正後合格門檻改為絕對 activity_min_span_seconds，10min 即達標 →
+    低活動豬照樣被抓出來採血。"""
+    from analysis.scheduler import Scheduler, get_anomaly_cache
+
+    class LongWin(FakeSettings):
+        analysis_window_minutes = 120          # 7200s 視窗
+        activity_min_span_seconds = 60.0       # 絕對門檻，與視窗無關
+
+    pool = AsyncMock()
+    pool.fetch.side_effect = [
+        [{"camera_id": "cam_01", "object_id": 1},
+         {"camera_id": "cam_01", "object_id": 2},
+         {"camera_id": "cam_01", "object_id": 3}],
+        # 每隻只連續追蹤 600s（遠 < 0.5×7200），但 ≥ 絕對門檻 60s
+        _track(6000.0, span=600.0),   # rate 10.0
+        _track(4800.0, span=600.0),   # rate  8.0
+        _track(300.0, span=600.0),    # rate  0.5 → < median(8.0)*0.3
+    ]
+    pool.fetchrow.return_value = {"id": 1}
+
+    asyncio.run(Scheduler(pool, LongWin())._run_analysis())
+
+    cache = get_anomaly_cache()
+    assert cache["cam_01"][3]["activity_anomaly"] is True
+    assert cache["cam_01"][1]["activity_anomaly"] is False
+    assert cache["cam_01"][2]["activity_anomaly"] is False
 
 
 def test_no_duplicate_alert_while_still_low():

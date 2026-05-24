@@ -102,7 +102,10 @@ class Settings(BaseSettings):
     activity_low_ratio: float = 0.3
     activity_recover_ratio: float = 0.5
     activity_abs_floor: float = 2.0
-    activity_min_coverage: float = 0.5
+    # 合格門檻：object_id 在視窗內首→末筆軌跡的「絕對最短跨度」（秒）。
+    # 用絕對秒數而非視窗比例——否則視窗放大時門檻等比變嚴，撞上 MOT ID
+    # 跳號（軌跡被切成數段、每段壽命有限）→ 長視窗永遠無人合格、永不標記。
+    activity_min_span_seconds: float = 300.0
     # 體溫異常偵測總開關
     temp_anomaly_enabled: bool = True
 

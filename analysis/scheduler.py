@@ -25,8 +25,10 @@ def _default_entry() -> dict:
     }
 
 
-def _activity_rate(logs: list, window_seconds: float, min_coverage: float) -> Optional[float]:
-    """視窗內路徑長度 ÷ 時間跨度（px/s）。資料不足回 None。"""
+def _activity_rate(logs: list, min_span_seconds: float) -> Optional[float]:
+    """視窗內路徑長度 ÷ 時間跨度（px/s）。資料不足、或軌跡跨度 <
+    min_span_seconds（資料太少不足以估速率）回 None。門檻是絕對秒數、
+    與分析視窗長度無關——避免長視窗下被 MOT ID 跳號永久卡死（見 config）。"""
     if len(logs) < 2:
         return None
     centers = [
@@ -35,9 +37,7 @@ def _activity_rate(logs: list, window_seconds: float, min_coverage: float) -> Op
     ]
     ts = [lg["timestamp"] for lg in logs]
     span = ts[-1] - ts[0]
-    if span < 60.0:
-        return None
-    if window_seconds <= 0 or span / window_seconds < min_coverage:
+    if span <= 0 or span < min_span_seconds:
         return None
     path = sum(
         math.hypot(centers[i][0] - centers[i - 1][0], centers[i][1] - centers[i - 1][1])
@@ -58,7 +58,9 @@ class Scheduler:
         self._low_ratio: float = float(getattr(settings, "activity_low_ratio", 0.3))
         self._recover_ratio: float = float(getattr(settings, "activity_recover_ratio", 0.5))
         self._abs_floor: float = float(getattr(settings, "activity_abs_floor", 2.0))
-        self._min_coverage: float = float(getattr(settings, "activity_min_coverage", 0.5))
+        self._min_span_seconds: float = float(
+            getattr(settings, "activity_min_span_seconds", 300.0)
+        )
 
     async def start(self) -> None:
         await self._apply_db_settings()
@@ -191,7 +193,7 @@ class Scheduler:
                 entry = _anomaly_cache.setdefault(camera_id, {}).setdefault(
                     object_id, _default_entry()
                 )
-                rate = _activity_rate(logs, window_seconds, self._min_coverage)
+                rate = _activity_rate(logs, self._min_span_seconds)
                 entry["activity_current"] = rate
                 if rate is not None:
                     rates[object_id] = rate
