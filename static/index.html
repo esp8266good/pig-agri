@@ -870,6 +870,8 @@
     let anomalyMap = {};           // { object_id: { activity_anomaly, temp_anomaly, ... } }
     let vodAlerts = [];            // VOD 模式下的歷史 alerts
     let liveAnomalyIntervalId = null;
+    let liveHandoffIntervalId = null;  // 偵測整點 rollover → 重抓 /live 換新小時 URL
+    let currentLiveUrl = null;         // 目前 live 載入的 m3u8 URL（含小時段）
     let currentObjectIds = new Set();  // 最近一次 WS frame 出現的 object_id
 
     // ── Transport / scrubber state ────────────────────────────
@@ -1011,8 +1013,7 @@
       countBadge.textContent = '—';
       latencyChip.style.display = 'none';
       clearTimeout(vodDebounceTimer);
-      clearInterval(liveAnomalyIntervalId);
-      liveAnomalyIntervalId = null;
+      stopLiveTimers();
       anomalyMap = {};
       vodAlerts  = [];
       currentObjectIds.clear();
@@ -1078,7 +1079,7 @@
       trackingCache.clear();
       transportDragging = false;
       seekTrack.classList.remove('dragging');
-      clearInterval(liveAnomalyIntervalId);
+      stopLiveTimers();
       anomalyMap = {};
       vodAlerts  = [];
       latestBoxes = [];
@@ -1088,7 +1089,7 @@
         .forEach(s => s.classList.remove('selected'));
       wsRetryCount = 0;
       loadStream();
-      liveAnomalyIntervalId = setInterval(refreshAnomalyMap, 30000);
+      startLiveTimers();
       refreshAnomalyMap();
       refreshNotifications();
     }
@@ -1580,6 +1581,35 @@
     animFrameId = requestAnimationFrame(drawBoxes);
 
     // ── HLS stream ────────────────────────────────────────────
+    // 整點 rollover：後端 ffmpeg 換到新小時目錄、舊小時 playlist 凍結（不再
+    // append、無 ENDLIST）。前端定期重抓 /live，若 URL（含小時段）變了就
+    // loadSource 新小時 → 避免 live 卡死在凍結 playlist 直到手動重整。
+    async function checkLiveHandoff() {
+      if (!isLive || !hls || !currentCamera) return;
+      try {
+        const res = await fetch(`/stream/${currentCamera}/live?type=${currentType}`);
+        if (!res.ok) return;
+        const live = await res.json();
+        if (live.url && live.url !== currentLiveUrl) {
+          currentLiveUrl = live.url;
+          hls.loadSource(live.url);   // 沿用 attachMedia，重解析新小時 playlist
+          video.play().catch(() => {});
+        }
+      } catch (_) { /* 暫時性網路錯誤，下個 tick 再試 */ }
+    }
+
+    // live 模式的兩個週期任務（異常地圖刷新 + 整點小時交接）統一管理，
+    // 避免散落的 setInterval/clearInterval 漏清。
+    function startLiveTimers() {
+      stopLiveTimers();
+      liveAnomalyIntervalId = setInterval(refreshAnomalyMap, 30000);
+      liveHandoffIntervalId = setInterval(checkLiveHandoff, 12000);
+    }
+    function stopLiveTimers() {
+      clearInterval(liveAnomalyIntervalId); liveAnomalyIntervalId = null;
+      clearInterval(liveHandoffIntervalId); liveHandoffIntervalId = null;
+    }
+
     async function loadStream() {
       if (!currentCamera) return;
 
@@ -1595,6 +1625,7 @@
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const live = await res.json();
         const url = live.url;
+        currentLiveUrl = url;
 
         if (Hls.isSupported()) {
           hls = new Hls({
@@ -1835,7 +1866,7 @@
         currentWeekStart = getWeekStart(new Date());
         updateWeekNavButtons();
         loadTimeline();
-        liveAnomalyIntervalId = setInterval(refreshAnomalyMap, 30000);
+        startLiveTimers();
         refreshAnomalyMap();
         refreshNotifications();
         loadSettings();
@@ -1847,7 +1878,7 @@
 
     camSelect.addEventListener('change', () => {
       currentCamera = camSelect.value;
-      clearInterval(liveAnomalyIntervalId);
+      stopLiveTimers();
       anomalyMap = {};
       vodAlerts  = [];
       currentObjectIds.clear();
@@ -1867,7 +1898,7 @@
       }
       loadStream();
       loadTimeline();
-      liveAnomalyIntervalId = setInterval(refreshAnomalyMap, 30000);
+      startLiveTimers();
       refreshAnomalyMap();
       refreshNotifications();
     });
