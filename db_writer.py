@@ -215,3 +215,91 @@ async def upsert_settings(pool: asyncpg.Pool, updates: dict[str, str]) -> None:
            ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()""",
         [(k, v) for k, v in updates.items()],
     )
+
+
+async def list_saved_segments(
+    pool: asyncpg.Pool, camera_id: str, start_ts: float, end_ts: float
+) -> list[dict]:
+    rows = await pool.fetch(
+        """SELECT id, camera_id, hour_ts, label, note
+           FROM saved_segments
+           WHERE camera_id=$1 AND hour_ts >= $2 AND hour_ts < $3
+           ORDER BY hour_ts""",
+        camera_id, int(start_ts), int(end_ts),
+    )
+    return [dict(r) for r in rows]
+
+
+async def list_bookmarks(
+    pool: asyncpg.Pool, camera_id: Optional[str] = None
+) -> list[dict]:
+    if camera_id is not None:
+        rows = await pool.fetch(
+            """SELECT id, camera_id, hour_ts, label, note
+               FROM saved_segments
+               WHERE label IS NOT NULL AND camera_id=$1
+               ORDER BY hour_ts DESC""",
+            camera_id,
+        )
+    else:
+        rows = await pool.fetch(
+            """SELECT id, camera_id, hour_ts, label, note
+               FROM saved_segments
+               WHERE label IS NOT NULL
+               ORDER BY hour_ts DESC""",
+        )
+    return [dict(r) for r in rows]
+
+
+async def upsert_saved_segment(
+    pool: asyncpg.Pool,
+    camera_id: str,
+    hour_ts: int,
+    label: Optional[str] = None,
+    note: Optional[str] = None,
+) -> int:
+    """label/note 為 None 時 COALESCE 保留既有值（保留動作不覆蓋既有書籤）；
+    非 None 則設定/覆蓋（書籤動作）。回傳 row id。"""
+    row = await pool.fetchrow(
+        """INSERT INTO saved_segments (camera_id, hour_ts, label, note)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (camera_id, hour_ts) DO UPDATE
+             SET label = COALESCE($3, saved_segments.label),
+                 note  = COALESCE($4, saved_segments.note)
+           RETURNING id""",
+        camera_id, int(hour_ts), label, note,
+    )
+    return row["id"]
+
+
+async def update_saved_segment(
+    pool: asyncpg.Pool, seg_id: int, label: Optional[str], note: Optional[str]
+) -> bool:
+    """明確 SET（label 可被設成 NULL → 降級成純保留）。"""
+    status = await pool.execute(
+        "UPDATE saved_segments SET label=$2, note=$3 WHERE id=$1",
+        seg_id, label, note,
+    )
+    return status != "UPDATE 0"
+
+
+async def delete_saved_segment(pool: asyncpg.Pool, seg_id: int) -> bool:
+    status = await pool.execute(
+        "DELETE FROM saved_segments WHERE id=$1", seg_id
+    )
+    return status != "DELETE 0"
+
+
+async def get_protected_hours(pool: asyncpg.Pool) -> set[tuple[str, int]]:
+    rows = await pool.fetch("SELECT camera_id, hour_ts FROM saved_segments")
+    return {(r["camera_id"], int(r["hour_ts"])) for r in rows}
+
+
+async def delete_saved_segments_by_hours(
+    pool: asyncpg.Pool, camera_id: str, hours: list[int]
+) -> int:
+    status = await pool.execute(
+        "DELETE FROM saved_segments WHERE camera_id=$1 AND hour_ts = ANY($2)",
+        camera_id, [int(h) for h in hours],
+    )
+    return int(status.split()[-1]) if status else 0

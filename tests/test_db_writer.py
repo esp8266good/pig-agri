@@ -249,3 +249,72 @@ def test_upsert_settings_calls_executemany(mock_pool):
     assert "INSERT INTO user_settings" in sql
     assert ("jpeg_quality", "90") in pairs
     assert ("hls_retention_days", "7") in pairs
+
+
+def test_list_saved_segments_queries_range(mock_pool):
+    from db_writer import list_saved_segments
+    mock_pool.fetch.return_value = [
+        {"id": 1, "camera_id": "cam_01", "hour_ts": 1000, "label": None, "note": None},
+    ]
+    result = asyncio.run(list_saved_segments(mock_pool, "cam_01", 0, 5000))
+    mock_pool.fetch.assert_called_once()
+    sql = mock_pool.fetch.call_args[0][0]
+    assert "FROM saved_segments" in sql
+    assert result[0]["camera_id"] == "cam_01"
+
+
+def test_list_bookmarks_filters_label_not_null(mock_pool):
+    from db_writer import list_bookmarks
+    mock_pool.fetch.return_value = [
+        {"id": 2, "camera_id": "cam_01", "hour_ts": 2000, "label": "採血前", "note": None},
+    ]
+    result = asyncio.run(list_bookmarks(mock_pool, "cam_01"))
+    sql = mock_pool.fetch.call_args[0][0]
+    assert "label IS NOT NULL" in sql
+    assert result[0]["label"] == "採血前"
+
+
+def test_upsert_saved_segment_uses_on_conflict(mock_pool):
+    from db_writer import upsert_saved_segment
+    mock_pool.fetchrow.return_value = {"id": 7}
+    seg_id = asyncio.run(upsert_saved_segment(mock_pool, "cam_01", 3000, label="x", note=None))
+    sql = mock_pool.fetchrow.call_args[0][0]
+    assert "INSERT INTO saved_segments" in sql
+    assert "ON CONFLICT" in sql
+    assert seg_id == 7
+
+
+def test_update_saved_segment_returns_bool(mock_pool):
+    from db_writer import update_saved_segment
+    mock_pool.execute.return_value = "UPDATE 1"
+    assert asyncio.run(update_saved_segment(mock_pool, 7, "new", "note")) is True
+    mock_pool.execute.return_value = "UPDATE 0"
+    assert asyncio.run(update_saved_segment(mock_pool, 99, "x", None)) is False
+
+
+def test_delete_saved_segment_returns_bool(mock_pool):
+    from db_writer import delete_saved_segment
+    mock_pool.execute.return_value = "DELETE 1"
+    assert asyncio.run(delete_saved_segment(mock_pool, 7)) is True
+    mock_pool.execute.return_value = "DELETE 0"
+    assert asyncio.run(delete_saved_segment(mock_pool, 99)) is False
+
+
+def test_get_protected_hours_returns_set_of_tuples(mock_pool):
+    from db_writer import get_protected_hours
+    mock_pool.fetch.return_value = [
+        {"camera_id": "cam_01", "hour_ts": 1000},
+        {"camera_id": "cam_02", "hour_ts": 2000},
+    ]
+    result = asyncio.run(get_protected_hours(mock_pool))
+    assert result == {("cam_01", 1000), ("cam_02", 2000)}
+
+
+def test_delete_saved_segments_by_hours_uses_any(mock_pool):
+    from db_writer import delete_saved_segments_by_hours
+    mock_pool.execute.return_value = "DELETE 2"
+    n = asyncio.run(delete_saved_segments_by_hours(mock_pool, "cam_01", [1000, 2000]))
+    sql = mock_pool.execute.call_args[0][0]
+    assert "DELETE FROM saved_segments" in sql
+    assert "= ANY(" in sql
+    assert n == 2
