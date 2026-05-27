@@ -303,3 +303,25 @@ async def delete_saved_segments_by_hours(
         camera_id, [int(h) for h in hours],
     )
     return int(status.split()[-1]) if status else 0
+
+
+async def delete_recordings_in_range(
+    pool: asyncpg.Pool, camera_id: str, start_ts: float, end_ts: float
+) -> dict:
+    """刪該時段的 DB 軌跡與告警，回傳各自刪除列數。"""
+    tl_status = await pool.execute(
+        """DELETE FROM tracking_logs
+           WHERE camera_id=$1 AND timestamp >= $2 AND timestamp < $3""",
+        camera_id, start_ts, end_ts,
+    )
+    ha_status = await pool.execute(
+        """DELETE FROM health_alerts
+           WHERE camera_id=$1
+             AND EXTRACT(EPOCH FROM triggered_at) >= $2
+             AND EXTRACT(EPOCH FROM triggered_at) < $3""",
+        camera_id, start_ts, end_ts,
+    )
+    return {
+        "tracking_logs": int(tl_status.split()[-1]) if tl_status else 0,
+        "health_alerts": int(ha_status.split()[-1]) if ha_status else 0,
+    }

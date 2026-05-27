@@ -318,3 +318,16 @@ def test_delete_saved_segments_by_hours_uses_any(mock_pool):
     assert "DELETE FROM saved_segments" in sql
     assert "= ANY(" in sql
     assert n == 2
+
+
+def test_delete_recordings_in_range_deletes_both_tables(mock_pool):
+    from db_writer import delete_recordings_in_range
+    mock_pool.execute.side_effect = ["DELETE 12", "DELETE 3"]
+    result = asyncio.run(
+        delete_recordings_in_range(mock_pool, "cam_01", 1000.0, 4600.0)
+    )
+    assert mock_pool.execute.call_count == 2
+    sqls = [c[0][0] for c in mock_pool.execute.call_args_list]
+    assert any("DELETE FROM tracking_logs" in s for s in sqls)
+    assert any("DELETE FROM health_alerts" in s for s in sqls)
+    assert result == {"tracking_logs": 12, "health_alerts": 3}
