@@ -91,8 +91,7 @@ def test_get_settings_no_pool_returns_env_defaults(client_no_pool):
     resp = client_no_pool.get("/settings")
     assert resp.status_code == 200
     data = resp.json()
-    # 有四個 key，值為環境變數預設值（字串形式）
-    assert "jpeg_quality" in data
+    # 有三個 key，值為環境變數預設值（字串形式）
     assert "analysis_interval_minutes" in data
     assert "anomaly_std_threshold" in data
     assert "hls_retention_days" in data
@@ -102,7 +101,7 @@ def test_get_settings_with_pool_returns_db_values(client_with_pool):
     resp = client_with_pool.get("/settings")
     assert resp.status_code == 200
     data = resp.json()
-    assert data.get("jpeg_quality") == "85"
+    assert data.get("hls_retention_days") == "30"
     assert data.get("analysis_interval_minutes") == "60"
 
 
@@ -110,19 +109,18 @@ def test_put_settings_valid_keys_returns_ok(client_with_pool):
     with patch("routers.settings.get_all_settings", new_callable=AsyncMock) as mock_get, \
          patch("routers.settings.upsert_settings", new_callable=AsyncMock):
         mock_get.return_value = {
-            "jpeg_quality": "90",
             "analysis_interval_minutes": "30",
             "anomaly_std_threshold": "2.0",
             "hls_retention_days": "7",
         }
         resp = client_with_pool.put(
             "/settings",
-            json={"jpeg_quality": "90", "hls_retention_days": "7"},
+            json={"analysis_interval_minutes": "30", "hls_retention_days": "7"},
         )
     assert resp.status_code == 200
     data = resp.json()
     assert data["ok"] is True
-    assert set(data["updated"]) == {"jpeg_quality", "hls_retention_days"}
+    assert set(data["updated"]) == {"analysis_interval_minutes", "hls_retention_days"}
 
 
 def test_put_settings_invalid_keys_returns_400(client_with_pool):
@@ -136,7 +134,7 @@ def test_put_settings_invalid_keys_returns_400(client_with_pool):
 def test_put_settings_no_pool_returns_503(client_no_pool):
     resp = client_no_pool.put(
         "/settings",
-        json={"jpeg_quality": "90"},
+        json={"hls_retention_days": "90"},
     )
     assert resp.status_code == 503
 
@@ -145,7 +143,6 @@ def test_put_settings_triggers_scheduler_reload(client_with_pool):
     with patch("routers.settings.get_all_settings", new_callable=AsyncMock) as mock_get, \
          patch("routers.settings.upsert_settings", new_callable=AsyncMock):
         mock_get.return_value = {
-            "jpeg_quality": "85",
             "analysis_interval_minutes": "60",
             "anomaly_std_threshold": "2.5",
             "hls_retention_days": "30",
@@ -164,7 +161,6 @@ def test_put_temp_toggle_in_allowed_keys(client_with_pool):
     with patch("routers.settings.get_all_settings", new_callable=AsyncMock) as mock_get, \
          patch("routers.settings.upsert_settings", new_callable=AsyncMock):
         mock_get.return_value = {
-            "jpeg_quality": "85",
             "analysis_interval_minutes": "30",
             "anomaly_std_threshold": "3.0",
             "hls_retention_days": "90",

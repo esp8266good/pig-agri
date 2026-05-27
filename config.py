@@ -76,9 +76,6 @@ class Settings(BaseSettings):
     zmq_warmup_secs: float = 0.5   # slow joiner warm-up（秒）
     zmq_stale_ms: float = 500.0    # 幀過期門檻（毫秒）
 
-    # ── 影像 ───────────────────────────────────────────────────
-    jpeg_quality: int = 70
-
     # ── 推論 ───────────────────────────────────────────────────
     model_weights: str = "./ref/HybridSORT/pretrained/best_ckpt.pth.tar"
     # Note: pydantic reserves 'model_config'; use model_config_path here.

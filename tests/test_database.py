@@ -40,7 +40,6 @@ async def test_user_settings_defaults_inserted():
         rows = await conn.fetch("SELECT key FROM user_settings")
         keys = {r["key"] for r in rows}
     await database.disconnect()
-    assert "jpeg_quality" in keys
     assert "analysis_interval_minutes" in keys
     assert "anomaly_std_threshold" in keys
     assert "hls_retention_days" in keys

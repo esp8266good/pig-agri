@@ -41,7 +41,6 @@ CREATE TABLE IF NOT EXISTS user_settings (
 );
 
 INSERT INTO user_settings (key, value, updated_at) VALUES
-    ('jpeg_quality', '70', NOW()),
     ('analysis_interval_minutes', '30', NOW()),
     ('anomaly_std_threshold', '3.0', NOW()),
     ('hls_retention_days', '90', NOW())

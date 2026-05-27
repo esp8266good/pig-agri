@@ -64,7 +64,7 @@ def test_settings_get_returns_defaults_when_no_pool(client):
     resp = client.get("/settings")
     assert resp.status_code == 200
     data = resp.json()
-    assert "jpeg_quality" in data
+    assert "hls_retention_days" in data
 
 
 def test_notes_get_returns_stub(client):

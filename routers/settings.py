@@ -7,7 +7,6 @@ from db_writer import get_all_settings, upsert_settings
 router = APIRouter(prefix="/settings", tags=["settings"])
 
 ALLOWED_KEYS = frozenset({
-    "jpeg_quality",
     "analysis_interval_minutes",
     "analysis_window_minutes",
     "anomaly_std_threshold",
@@ -32,7 +31,6 @@ async def get_settings():
     pool = database.get_pool()
     if pool is None:
         return {
-            "jpeg_quality":              str(app_settings.jpeg_quality),
             "analysis_interval_minutes": str(app_settings.analysis_interval_minutes),
             "analysis_window_minutes":   str(app_settings.analysis_window_minutes),
             "anomaly_std_threshold":     str(app_settings.anomaly_std_threshold),
