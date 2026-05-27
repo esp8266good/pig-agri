@@ -63,7 +63,6 @@ def client_with_pool():
     import analysis.scheduler as scheduler_mod
     mock_pool = AsyncMock()
     mock_pool.fetch.return_value = [
-        {"key": "jpeg_quality", "value": "85"},
         {"key": "analysis_interval_minutes", "value": "60"},
         {"key": "anomaly_std_threshold", "value": "2.0"},
         {"key": "hls_retention_days", "value": "30"},
