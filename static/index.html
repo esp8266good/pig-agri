@@ -816,10 +816,6 @@
     <div id="tab-settings" class="tab-content">
       <div class="settings-form">
         <div class="settings-field">
-          <label for="set-jpeg-quality">影像壓縮品質（50–95）</label>
-          <input type="number" id="set-jpeg-quality" min="50" max="95" step="1">
-        </div>
-        <div class="settings-field">
           <label for="set-analysis-interval">分析間隔（分鐘）</label>
           <select id="set-analysis-interval">
             <option value="15">15 分鐘</option>
@@ -1370,13 +1366,11 @@
         const resp = await fetch('/settings');
         if (!resp.ok) return;
         const data = await resp.json();
-        const q = document.getElementById('set-jpeg-quality');
         const a = document.getElementById('set-analysis-interval');
         const t = document.getElementById('set-anomaly-threshold');
         const r = document.getElementById('set-hls-retention');
         const w = document.getElementById('set-analysis-window');
         const te = document.getElementById('set-temp-enabled');
-        if (q && data.jpeg_quality !== undefined)              q.value = data.jpeg_quality;
         if (a && data.analysis_interval_minutes !== undefined) a.value = data.analysis_interval_minutes;
         if (t && data.anomaly_std_threshold !== undefined)     t.value = data.anomaly_std_threshold;
         if (r && data.hls_retention_days !== undefined)        r.value = data.hls_retention_days;
@@ -1388,7 +1382,6 @@
 
     async function saveSettings() {
       const body = {
-        jpeg_quality:              document.getElementById('set-jpeg-quality').value,
         analysis_interval_minutes: document.getElementById('set-analysis-interval').value,
         analysis_window_minutes:   document.getElementById('set-analysis-window').value,
         anomaly_std_threshold:     document.getElementById('set-anomaly-threshold').value,
