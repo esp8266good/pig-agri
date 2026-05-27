@@ -132,9 +132,41 @@ def test_recordings_delete_empty_hours_400(client):
     assert resp.status_code == 400
 
 
-def test_retention_loop_passes_protected(client):
-    import inspect
+def test_run_retention_once_skips_when_no_pool(client):
+    import asyncio as _a
     import main
-    src = inspect.getsource(main._retention_loop)
-    assert "get_protected_hours" in src
-    assert "protected=" in src
+    with (
+        patch("database.get_pool", return_value=None),
+        patch("main.purge_expired_hls") as m_purge,
+    ):
+        _a.run(main._run_retention_once())
+    m_purge.assert_not_called()
+
+
+def test_run_retention_once_purges_with_protected(client):
+    import asyncio as _a
+    import main
+    with (
+        patch("database.get_pool", return_value=object()),
+        patch("main.get_all_settings", new_callable=AsyncMock) as m_set,
+        patch("main.get_protected_hours", new_callable=AsyncMock) as m_prot,
+        patch("main.purge_expired_hls") as m_purge,
+    ):
+        m_set.return_value = {"hls_retention_days": "30"}
+        m_prot.return_value = {("cam_01", 1000)}
+        _a.run(main._run_retention_once())
+    m_purge.assert_called_once()
+    assert m_purge.call_args.kwargs.get("protected") == {("cam_01", 1000)}
+
+
+def test_run_retention_once_skips_when_db_read_fails(client):
+    import asyncio as _a
+    import main
+    with (
+        patch("database.get_pool", return_value=object()),
+        patch("main.get_all_settings", new_callable=AsyncMock) as m_set,
+        patch("main.purge_expired_hls") as m_purge,
+    ):
+        m_set.side_effect = RuntimeError("db down")
+        _a.run(main._run_retention_once())
+    m_purge.assert_not_called()

@@ -25,30 +25,31 @@ from zmq_receiver import zmq_receiver
 _RETENTION_INTERVAL_SECONDS = 1 * 3600
 
 
+async def _run_retention_once() -> None:
+    """單輪 retention 巡檢。DB 不可用或讀取失敗 → 跳過本輪、不刪任何東西，
+    確保「保留/書籤」時段在無法取得權威保護集合時絕不被誤刪（保留 = 絕不
+    自動刪的承諾優先於磁碟回收；錯過一輪無妨，下輪 DB 恢復即補上）。"""
+    pool = database.get_pool()
+    if pool is None:
+        logger.warning("HLS retention：DB 不可用，跳過本輪巡檢（不刪除）")
+        return
+    try:
+        db_settings = await get_all_settings(pool)
+        protected = await get_protected_hours(pool)
+    except Exception as e:
+        logger.warning(f"HLS retention：讀取 DB 失敗，跳過本輪巡檢（不刪除）：{e}")
+        return
+    days = effective_retention_days(db_settings, app_settings.hls_retention_days)
+    purge_expired_hls(app_settings.hls_base_dir, days, protected=protected)
+
+
 async def _retention_loop() -> None:
-    """週期性刪除超過保留天數的 HLS 小時目錄，避免磁碟無限長大。
-    每輪從 DB 讀 hls_retention_days（前端設定即時生效，免重啟）；DB 不可用 /
-    讀取失敗 / 缺鍵 / 壞值 → 回退 app_settings 建構時值。
-    先等一個間隔再首次巡檢（避免啟動時重磁碟 I/O；保留天數遠大於間隔，
-    晚一輪清無妨），之後每 _RETENTION_INTERVAL_SECONDS 跑一次。"""
+    """週期性刪除超過保留天數且未受保護的 HLS 小時目錄。先等一個間隔再首次
+    巡檢（避免啟動時重磁碟 I/O；保留天數遠大於間隔，晚一輪清無妨）。"""
     while True:
         await asyncio.sleep(_RETENTION_INTERVAL_SECONDS)
         try:
-            pool = database.get_pool()
-            db_settings = None
-            protected: set[tuple[str, int]] = set()
-            if pool is not None:
-                try:
-                    db_settings = await get_all_settings(pool)
-                    protected = await get_protected_hours(pool)
-                except Exception as e:
-                    logger.warning(f"HLS retention 讀取 DB 設定失敗，回退 app_settings：{e}")
-            days = effective_retention_days(
-                db_settings, app_settings.hls_retention_days
-            )
-            purge_expired_hls(
-                app_settings.hls_base_dir, days, protected=protected
-            )
+            await _run_retention_once()
         except Exception as e:  # 巡檢失敗不可拖垮服務
             logger.warning(f"HLS retention 巡檢失敗：{e}")
 
