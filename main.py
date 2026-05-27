@@ -15,7 +15,7 @@ from hls_manager import hls_manager
 from hls_retention import effective_retention_days, purge_expired_hls
 from db_writer import get_all_settings
 from inference.pipeline import inference_pipeline
-from routers import alerts, notes, stream, tracking
+from routers import alerts, notes, stream, storage, tracking
 from routers import settings as settings_router
 from zmq_receiver import zmq_receiver
 
@@ -95,3 +95,4 @@ app.include_router(tracking.router)
 app.include_router(alerts.router)
 app.include_router(settings_router.router)
 app.include_router(notes.router)
+app.include_router(storage.router)
