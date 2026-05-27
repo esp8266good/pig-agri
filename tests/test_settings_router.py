@@ -191,3 +191,9 @@ def test_get_settings_no_pool_includes_temp_and_window(client_no_pool):
 def test_live_pdt_offset_removed_from_allowed_keys():
     from routers.settings import ALLOWED_KEYS
     assert "live_pdt_offset_seconds" not in ALLOWED_KEYS
+
+
+def test_retention_interval_is_hourly():
+    with _dummy_zmq_sources():
+        import main
+        assert main._RETENTION_INTERVAL_SECONDS == 3600
