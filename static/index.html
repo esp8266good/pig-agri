@@ -355,29 +355,38 @@
       flex-direction: column;
       gap: var(--space-2);
     }
-    #week-nav {
-      display: flex;
-      align-items: center;
-      gap: var(--space-3);
-      flex-wrap: wrap;
-    }
-    .week-nav-btn {
-      padding: var(--space-1) var(--space-3);
+    #calendar {
       background: var(--surface-2);
+      border-radius: var(--radius-md);
+      padding: var(--space-2);
+    }
+    #calendar-header { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-1); }
+    #calendar-label { flex: 1; text-align: center; font-size: var(--text-sm); color: var(--text); }
+    .cal-nav-btn {
+      padding: var(--space-1) var(--space-2);
+      background: var(--surface-3);
       border: 1px solid var(--border);
       border-radius: var(--radius-sm);
       color: var(--text);
-      font-size: var(--text-sm);
-      transition: background var(--transition);
+      cursor: pointer;
     }
-    .week-nav-btn:hover:not(:disabled) { background: var(--surface-3); }
-    .week-nav-btn:disabled { opacity: 0.35; cursor: not-allowed; }
-    #week-label {
-      flex: 1;
-      text-align: center;
-      font-size: var(--text-sm);
-      color: var(--text-muted);
+    .cal-nav-btn:hover:not(:disabled) { background: var(--surface-2); }
+    .cal-nav-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+    #calendar-weekdays, #calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+    #calendar-weekdays span { text-align: center; font-size: 11px; color: var(--text-muted); padding: 2px 0; }
+    .cal-day {
+      text-align: center; font-size: 12px; padding: 6px 0; border-radius: 4px;
+      color: var(--text-muted); cursor: pointer; position: relative;
     }
+    .cal-day.in-month { color: var(--text); }
+    .cal-day.empty { visibility: hidden; cursor: default; }
+    .cal-day.has-rec::after {
+      content: ""; position: absolute; bottom: 3px; left: 50%; transform: translateX(-50%);
+      width: 4px; height: 4px; border-radius: 50%; background: var(--accent);
+    }
+    .cal-day:not(.empty):hover { background: var(--surface-3); }
+    .cal-day.day-selected { background: var(--accent); color: #000; font-weight: 600; }
+    #timeline-controls { display: flex; align-items: center; gap: var(--space-2); }
     #live-btn {
       padding: var(--space-1) var(--space-3);
       background: var(--accent);
@@ -392,7 +401,7 @@
     #timeline-bar {
       display: flex;
       width: 100%;
-      height: 24px;
+      height: 30px;
       background: var(--surface-2);
       border-radius: var(--radius-md);
       overflow: hidden;
@@ -778,14 +787,20 @@
 
   <!-- Timeline -->
   <div id="timeline-section">
-    <div id="week-nav">
-      <button class="week-nav-btn" id="prev-week-btn" onclick="prevWeek()" aria-label="上一週">&#8249;</button>
-      <span id="week-label"></span>
-      <button class="week-nav-btn" id="next-week-btn" onclick="nextWeek()" aria-label="下一週">&#8250;</button>
+    <div id="calendar">
+      <div id="calendar-header">
+        <button class="cal-nav-btn" id="prev-month-btn" onclick="prevMonth()" aria-label="上一月">&#8249;</button>
+        <span id="calendar-label"></span>
+        <button class="cal-nav-btn" id="next-month-btn" onclick="nextMonth()" aria-label="下一月">&#8250;</button>
+      </div>
+      <div id="calendar-weekdays"><span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span></div>
+      <div id="calendar-grid"></div>
+    </div>
+    <div id="timeline-controls">
       <button id="live-btn" onclick="switchToLive()" style="display:none">● Live</button>
       <label class="select-toggle"><input type="checkbox" id="select-mode-toggle">選取</label>
     </div>
-    <div id="timeline-bar" role="list" aria-label="時間軸（每格代表一小時）"></div>
+    <div id="timeline-bar" role="list" aria-label="所選日期的每小時時間軸"></div>
     <div id="storage-action-bar" role="toolbar" aria-label="儲存管理操作">
       <span id="storage-sel-count">已選 0 小時</span>
       <button id="btn-retain" onclick="onRetainClick()">保留</button>
@@ -900,7 +915,9 @@
     let currentType = 'rgb';
     let animFrameId = null;
     let isLive = true;
-    let currentWeekStart = null;   // 本週週一 00:00:00 UTC 的 Unix 秒
+    let currentMonth = null;        // Date：顯示中月份（本地，設為該月 1 號）
+    let selectedDay = null;         // 選取日本地午夜的 Unix 秒（3600 倍數）
+    let monthHoursSet = new Set();  // 當月有資料的 hour_ts（3600 倍數）
     let vodDebounceTimer = null;
     let vodFetching = false;   // prevent overlapping VOD tracking requests
     let anomalyMap = {};           // { object_id: { activity_anomaly, temp_anomaly, ... } }
@@ -936,9 +953,10 @@
     const latencyVal  = document.getElementById('latency-val');
     const toastEl   = document.getElementById('toast');
     const liveBtn        = document.getElementById('live-btn');
-    const prevWeekBtn    = document.getElementById('prev-week-btn');
-    const nextWeekBtn    = document.getElementById('next-week-btn');
-    const weekLabelEl    = document.getElementById('week-label');
+    const calLabelEl     = document.getElementById('calendar-label');
+    const calGridEl      = document.getElementById('calendar-grid');
+    const prevMonthBtn   = document.getElementById('prev-month-btn');
+    const nextMonthBtn   = document.getElementById('next-month-btn');
     const timelineBar    = document.getElementById('timeline-bar');
     const bellBadge      = document.getElementById('bell-badge');
     const pigStatusBody  = document.getElementById('pig-status-body');
@@ -973,65 +991,88 @@
     }
 
     // ── Timeline helpers ──────────────────────────────────────
-    function getWeekStart(date) {
+    function localDayStart(date) {
       const d = new Date(date);
-      const day = d.getUTCDay();               // 0=Sun, 1=Mon...
-      const diff = day === 0 ? -6 : 1 - day;  // 距離週一的天數
-      d.setUTCDate(d.getUTCDate() + diff);
-      d.setUTCHours(0, 0, 0, 0);
-      return d.getTime() / 1000;
+      d.setHours(0, 0, 0, 0);
+      return Math.floor(d.getTime() / 1000);
     }
 
-    function formatWeekLabel(weekStartTs) {
-      const s = new Date(weekStartTs * 1000);
-      const e = new Date((weekStartTs + 6 * 86400) * 1000);
-      const pad = n => String(n).padStart(2, '0');
-      const startStr = `${pad(s.getUTCMonth()+1)}/${pad(s.getUTCDate())}`;
-      const endStr   = `${pad(e.getUTCMonth()+1)}/${pad(e.getUTCDate())}`;
-      return `${s.getUTCFullYear()}年${s.getUTCMonth()+1}月 ${startStr} – ${endStr}`;
+    function dayHasData(dayTs) {
+      for (let h = 0; h < 24; h++) {
+        if (monthHoursSet.has(dayTs + h * 3600)) return true;
+      }
+      return false;
     }
 
-    function updateWeekNavButtons() {
-      const nowWeekStart = getWeekStart(new Date());
-      const minWeekStart = getWeekStart(new Date(Date.now() - 90 * 86400 * 1000));
-      prevWeekBtn.disabled = currentWeekStart <= minWeekStart;
-      nextWeekBtn.disabled = currentWeekStart >= nowWeekStart;
-      weekLabelEl.textContent = formatWeekLabel(currentWeekStart);
-    }
-
-    function prevWeek() {
-      clearSelection();
-      currentWeekStart -= 7 * 86400;
-      updateWeekNavButtons();
-      loadTimeline();
-    }
-
-    function nextWeek() {
-      clearSelection();
-      currentWeekStart += 7 * 86400;
-      updateWeekNavButtons();
-      loadTimeline();
-    }
-
-    async function loadTimeline() {
-      if (!currentCamera || !currentWeekStart) return;
-      const startTs = currentWeekStart;
-      const endTs   = currentWeekStart + 7 * 24 * 3600;
+    async function loadCalendar() {
+      monthHoursSet = new Set();
+      if (!currentCamera || !currentMonth) return;
+      const y = currentMonth.getFullYear(), m = currentMonth.getMonth();
+      const monthStart = Math.floor(new Date(y, m, 1).getTime() / 1000);
+      const monthEnd   = Math.floor(new Date(y, m + 1, 1).getTime() / 1000);
       try {
-        const resp = await fetch(`/stream/${currentCamera}/timeline?start_ts=${startTs}&end_ts=${endTs}`);
-        if (!resp.ok) return;
-        const { hours } = await resp.json();
-        await loadSavedSegments();
-        renderTimeline(hours);
+        const resp = await fetch(`/stream/${currentCamera}/timeline?start_ts=${monthStart}&end_ts=${monthEnd}`);
+        if (resp.ok) {
+          const { hours } = await resp.json();
+          hours.forEach(h => monthHoursSet.add(h));
+        }
       } catch (_) {}
+      renderCalendar();
     }
 
-    function renderTimeline(hours) {
+    function renderCalendar() {
+      if (!currentMonth) return;
+      const y = currentMonth.getFullYear(), m = currentMonth.getMonth();
+      calLabelEl.textContent = `${y} 年 ${m + 1} 月`;
+      const firstDow = new Date(y, m, 1).getDay();        // 0=Sun
+      const daysInMonth = new Date(y, m + 1, 0).getDate();
+      calGridEl.innerHTML = '';
+      for (let i = 0; i < firstDow; i++) {
+        const e = document.createElement('div');
+        e.className = 'cal-day empty';
+        calGridEl.appendChild(e);
+      }
+      for (let d = 1; d <= daysInMonth; d++) {
+        const dayTs = Math.floor(new Date(y, m, d).getTime() / 1000);
+        const cell = document.createElement('div');
+        cell.className = 'cal-day in-month';
+        cell.textContent = d;
+        if (dayHasData(dayTs)) cell.classList.add('has-rec');
+        if (dayTs === selectedDay) cell.classList.add('day-selected');
+        cell.addEventListener('click', () => selectDay(dayTs));
+        calGridEl.appendChild(cell);
+      }
+      const thisMonthFirst = new Date();
+      thisMonthFirst.setDate(1); thisMonthFirst.setHours(0, 0, 0, 0);
+      nextMonthBtn.disabled = new Date(y, m, 1) >= thisMonthFirst;
+    }
+
+    function prevMonth() {
+      clearSelection();
+      currentMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1);
+      loadCalendar();
+    }
+
+    function nextMonth() {
+      clearSelection();
+      currentMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1);
+      loadCalendar();
+    }
+
+    async function selectDay(dayTs) {
+      selectedDay = dayTs;
+      clearSelection();
+      await loadDaySegments();
+      renderDayBar();
+      renderCalendar();
+    }
+
+    function renderDayBar() {
       timelineBar.innerHTML = '';
-      const hourSet = new Set(hours);
-      for (let i = 0; i < 168; i++) {
-        const slotTs = currentWeekStart + i * 3600;
-        const hasData = hourSet.has(slotTs);
+      if (!selectedDay) return;
+      for (let h = 0; h < 24; h++) {
+        const slotTs = selectedDay + h * 3600;
+        const hasData = monthHoursSet.has(slotTs);
         const slot = document.createElement('div');
         slot.className = 'timeline-slot' + (hasData ? ' has-data' : '');
         slot.setAttribute('role', 'listitem');
@@ -1057,6 +1098,15 @@
       }
     }
 
+    async function loadTimeline() {
+      if (!currentCamera) return;
+      await loadCalendar();
+      if (selectedDay) {
+        await loadDaySegments();
+        renderDayBar();
+      }
+    }
+
     function updateActionBar() {
       const bar = document.getElementById('storage-action-bar');
       document.getElementById('storage-sel-count').textContent = `已選 ${selectedHours.size} 小時`;
@@ -1070,12 +1120,11 @@
       updateActionBar();
     }
 
-    async function loadSavedSegments() {
+    async function loadDaySegments() {
       savedSegmentsMap = new Map();
-      if (!currentCamera || !currentWeekStart) return;
-      const startTs = currentWeekStart, endTs = currentWeekStart + 7 * 24 * 3600;
+      if (!currentCamera || !selectedDay) return;
       try {
-        const resp = await fetch(`/storage/segments?camera_id=${currentCamera}&start_ts=${startTs}&end_ts=${endTs}`);
+        const resp = await fetch(`/storage/segments?camera_id=${currentCamera}&start_ts=${selectedDay}&end_ts=${selectedDay + 86400}`);
         if (!resp.ok) return;
         const { segments } = await resp.json();
         segments.forEach(s => savedSegmentsMap.set(s.hour_ts, s));
@@ -2133,8 +2182,9 @@
         currentCamera = (cachedCam && cameras.includes(cachedCam)) ? cachedCam : cameras[0];
         camSelect.value = currentCamera;
         loadStream();
-        currentWeekStart = getWeekStart(new Date());
-        updateWeekNavButtons();
+        const today = new Date();
+        currentMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+        selectedDay = localDayStart(today);
         loadTimeline();
         startLiveTimers();
         refreshAnomalyMap();
