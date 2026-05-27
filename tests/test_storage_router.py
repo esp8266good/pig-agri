@@ -132,6 +132,12 @@ def test_recordings_delete_empty_hours_400(client):
     assert resp.status_code == 400
 
 
+def test_recordings_delete_misaligned_hours_422(client):
+    resp = client.post("/storage/recordings/delete",
+                       json={"camera_id": "cam_01", "hours": [1000]})  # not multiple of 3600
+    assert resp.status_code == 422
+
+
 def test_run_retention_once_skips_when_no_pool(client):
     import asyncio as _a
     import main

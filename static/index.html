@@ -2165,6 +2165,7 @@
           .forEach(s => s.classList.remove('selected'));
       }
       clearSelection();
+      if (typeof closeDeleteModal === 'function') closeDeleteModal();
       loadStream();
       loadTimeline();
       startLiveTimers();
