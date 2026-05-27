@@ -807,6 +807,8 @@
               onclick="switchTab('notifications')">通知中心</button>
       <button class="tab-btn" data-tab="settings"
               onclick="switchTab('settings')">設定</button>
+      <button class="tab-btn" data-tab="bookmarks"
+              onclick="switchTab('bookmarks'); loadBookmarks()">書籤</button>
     </div>
 
     <div id="tab-pig-status" class="tab-content active">
@@ -872,6 +874,10 @@
           <span id="settings-status"></span>
         </div>
       </div>
+    </div>
+
+    <div id="tab-bookmarks" class="tab-content">
+      <ul id="bookmark-list" style="list-style:none;margin:0;padding:var(--space-3) var(--space-4)"></ul>
     </div>
   </div>
 
@@ -1108,7 +1114,94 @@
       } catch (_) { alert('書籤失敗'); }
     }
 
-    function onDeleteRecClick() { alert('刪除功能於下一步啟用'); }
+    async function loadBookmarks() {
+      const ul = document.getElementById('bookmark-list');
+      if (!ul || !currentCamera) return;
+      try {
+        const resp = await fetch(`/storage/bookmarks?camera_id=${currentCamera}`);
+        if (!resp.ok) return;
+        const { bookmarks } = await resp.json();
+        ul.innerHTML = '';
+        if (bookmarks.length === 0) {
+          ul.innerHTML = '<li style="opacity:.6">尚無書籤</li>';
+          return;
+        }
+        bookmarks.forEach(b => {
+          const li = document.createElement('li');
+          li.style.cssText = 'display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--surface-3)';
+          const when = new Date(b.hour_ts * 1000).toLocaleString('zh-TW',
+            { month: '2-digit', day: '2-digit', hour: '2-digit' });
+          const link = document.createElement('a');
+          link.href = '#'; link.textContent = `★ ${b.label}`;
+          link.style.cssText = 'color:var(--accent);text-decoration:none;flex:1';
+          link.onclick = (e) => { e.preventDefault(); loadVod(b.hour_ts); };
+          const time = document.createElement('span');
+          time.textContent = when; time.style.cssText = 'opacity:.7;font-size:12px';
+          const del = document.createElement('button');
+          del.textContent = '移除'; del.style.cssText = 'padding:2px 8px;cursor:pointer';
+          del.onclick = async () => {
+            if (!confirm(`移除書籤「${b.label}」？（不刪影片）`)) return;
+            await fetch(`/storage/segments/${b.id}`, { method: 'DELETE' });
+            loadBookmarks(); loadTimeline();
+          };
+          li.append(link, time, del);
+          ul.appendChild(li);
+        });
+      } catch (_) {}
+    }
+
+    function onDeleteRecClick() {
+      if (selectedHours.size === 0) return;
+      const hours = [...selectedHours].sort((a, b) => a - b);
+      const fmt = ts => new Date(ts * 1000).toLocaleString('zh-TW',
+        { month: '2-digit', day: '2-digit', hour: '2-digit' });
+      document.getElementById('delete-modal-summary').textContent =
+        `將刪除 ${hours.length} 個小時：${hours.map(fmt).join('、')}`;
+      const protectedSel = hours.filter(h => savedSegmentsMap.has(h));
+      const warn = document.getElementById('delete-modal-warn');
+      const check = document.getElementById('delete-confirm-check');
+      const btn = document.getElementById('delete-confirm-btn');
+      if (protectedSel.length > 0) {
+        const ul = document.getElementById('delete-modal-protected');
+        ul.innerHTML = '';
+        protectedSel.forEach(h => {
+          const seg = savedSegmentsMap.get(h);
+          const li = document.createElement('li');
+          li.textContent = `${fmt(h)}${seg.label ? '（書籤：' + seg.label + '）' : '（保留）'}`;
+          ul.appendChild(li);
+        });
+        warn.style.display = '';
+        check.checked = false;
+        btn.disabled = true;
+        check.onchange = () => { btn.disabled = !check.checked; };
+      } else {
+        warn.style.display = 'none';
+        btn.disabled = false;
+        check.onchange = null;
+      }
+      document.getElementById('delete-modal').style.display = 'flex';
+    }
+
+    function closeDeleteModal() {
+      document.getElementById('delete-modal').style.display = 'none';
+    }
+
+    async function confirmDeleteRecordings() {
+      const hours = [...selectedHours];
+      try {
+        const resp = await fetch('/storage/recordings/delete', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ camera_id: currentCamera, hours }),
+        });
+        if (!resp.ok) throw new Error();
+        const r = await resp.json();
+        closeDeleteModal();
+        clearSelection();
+        await loadTimeline();
+        if (typeof loadBookmarks === 'function') loadBookmarks();
+        alert(`已刪除 ${r.deleted_hours} 小時（影片目錄 ${r.dirs_removed}、軌跡 ${r.tracking_logs}、告警 ${r.health_alerts}）`);
+      } catch (_) { alert('刪除失敗'); }
+    }
 
     // ── VOD mode ──────────────────────────────────────────────
     function loadVod(startTs) {
@@ -2077,6 +2170,7 @@
       startLiveTimers();
       refreshAnomalyMap();
       refreshNotifications();
+      if (typeof loadBookmarks === 'function') loadBookmarks();
     });
 
     // pig 列表：可點欄頭排序 + 「只顯示選取」開關（一次性綁定）
@@ -2097,5 +2191,24 @@
 
     init();
   </script>
+
+  <div id="delete-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;align-items:center;justify-content:center">
+    <div style="background:var(--surface-2);padding:var(--space-4);border-radius:12px;max-width:420px;width:90%">
+      <h3 style="margin:0 0 8px">確認刪除存檔</h3>
+      <p id="delete-modal-summary"></p>
+      <div id="delete-modal-warn" style="display:none;background:rgba(255,68,68,.15);border:1px solid #ff4444;border-radius:8px;padding:8px;margin:8px 0">
+        <strong style="color:#ff6666">⚠ 下列時段已被保留/書籤：</strong>
+        <ul id="delete-modal-protected" style="margin:6px 0 0;padding-left:18px"></ul>
+        <label style="display:flex;gap:6px;margin-top:8px;align-items:center">
+          <input type="checkbox" id="delete-confirm-check">我了解這些時段已被保留/書籤，仍要刪除
+        </label>
+      </div>
+      <p style="color:#ff6666;font-size:13px">此操作不可逆，將同時刪除影片與該時段的追蹤/告警紀錄。</p>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+        <button onclick="closeDeleteModal()">取消</button>
+        <button id="delete-confirm-btn" onclick="confirmDeleteRecordings()" style="background:#ff4444;color:#fff">刪除</button>
+      </div>
+    </div>
+  </div>
 </body>
 </html>
