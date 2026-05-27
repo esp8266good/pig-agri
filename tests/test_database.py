@@ -30,6 +30,7 @@ async def test_required_tables_exist():
     assert "health_alerts" in table_names
     assert "pig_notes" in table_names
     assert "user_settings" in table_names
+    assert "saved_segments" in table_names
 
 
 @pytest.mark.asyncio

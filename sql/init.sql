@@ -40,6 +40,17 @@ CREATE TABLE IF NOT EXISTS user_settings (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS saved_segments (
+    id         BIGSERIAL PRIMARY KEY,
+    camera_id  VARCHAR(16) NOT NULL,
+    hour_ts    BIGINT NOT NULL,
+    label      TEXT,
+    note       TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (camera_id, hour_ts)
+);
+CREATE INDEX IF NOT EXISTS idx_saved_segments_cam ON saved_segments (camera_id, hour_ts);
+
 INSERT INTO user_settings (key, value, updated_at) VALUES
     ('analysis_interval_minutes', '30', NOW()),
     ('anomaly_std_threshold', '3.0', NOW()),
