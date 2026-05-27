@@ -13,7 +13,7 @@ from analysis.scheduler import Scheduler
 from config import settings as app_settings
 from hls_manager import hls_manager
 from hls_retention import effective_retention_days, purge_expired_hls
-from db_writer import get_all_settings
+from db_writer import get_all_settings, get_protected_hours
 from inference.pipeline import inference_pipeline
 from routers import alerts, notes, stream, storage, tracking
 from routers import settings as settings_router
@@ -36,15 +36,19 @@ async def _retention_loop() -> None:
         try:
             pool = database.get_pool()
             db_settings = None
+            protected: set[tuple[str, int]] = set()
             if pool is not None:
                 try:
                     db_settings = await get_all_settings(pool)
+                    protected = await get_protected_hours(pool)
                 except Exception as e:
                     logger.warning(f"HLS retention 讀取 DB 設定失敗，回退 app_settings：{e}")
             days = effective_retention_days(
                 db_settings, app_settings.hls_retention_days
             )
-            purge_expired_hls(app_settings.hls_base_dir, days)
+            purge_expired_hls(
+                app_settings.hls_base_dir, days, protected=protected
+            )
         except Exception as e:  # 巡檢失敗不可拖垮服務
             logger.warning(f"HLS retention 巡檢失敗：{e}")
 

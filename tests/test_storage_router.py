@@ -130,3 +130,11 @@ def test_recordings_delete_empty_hours_400(client):
     resp = client.post("/storage/recordings/delete",
                        json={"camera_id": "cam_01", "hours": []})
     assert resp.status_code == 400
+
+
+def test_retention_loop_passes_protected(client):
+    import inspect
+    import main
+    src = inspect.getsource(main._retention_loop)
+    assert "get_protected_hours" in src
+    assert "protected=" in src
