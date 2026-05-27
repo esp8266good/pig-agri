@@ -1,7 +1,7 @@
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 import database
 from config import settings as app_settings
@@ -37,6 +37,13 @@ class SegmentCreate(BaseModel):
     label: Optional[str] = None
     note: Optional[str] = None
 
+    @field_validator("hours")
+    @classmethod
+    def _hours_aligned(cls, v: list[int]) -> list[int]:
+        if any(int(h) % 3600 != 0 for h in v):
+            raise ValueError("hours must be hour-aligned (multiples of 3600)")
+        return v
+
 
 class SegmentUpdate(BaseModel):
     label: Optional[str] = None
@@ -46,6 +53,13 @@ class SegmentUpdate(BaseModel):
 class RecordingsDelete(BaseModel):
     camera_id: str
     hours: list[int]
+
+    @field_validator("hours")
+    @classmethod
+    def _hours_aligned(cls, v: list[int]) -> list[int]:
+        if any(int(h) % 3600 != 0 for h in v):
+            raise ValueError("hours must be hour-aligned (multiples of 3600)")
+        return v
 
 
 @router.get("/segments")

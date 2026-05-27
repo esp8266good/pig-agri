@@ -69,7 +69,7 @@ def test_post_segments_creates(client):
     with patch("routers.storage.upsert_saved_segment", new_callable=AsyncMock) as m:
         m.return_value = 5
         resp = client.post("/storage/segments",
-                           json={"camera_id": "cam_01", "hours": [1000, 4600], "label": "採血前"})
+                           json={"camera_id": "cam_01", "hours": [3600, 7200], "label": "採血前"})
     assert resp.status_code == 200
     assert resp.json()["count"] == 2
     assert m.await_count == 2
@@ -107,11 +107,26 @@ def test_recordings_delete_calls_fs_and_db(client):
         m_db.return_value = {"tracking_logs": 10, "health_alerts": 2}
         m_seg.return_value = 1
         resp = client.post("/storage/recordings/delete",
-                           json={"camera_id": "cam_01", "hours": [1000]})
+                           json={"camera_id": "cam_01", "hours": [3600]})
     assert resp.status_code == 200
     body = resp.json()
     assert body["ok"] is True
     assert body["deleted_hours"] == 1
+    assert body["dirs_removed"] == 2
+    assert body["tracking_logs"] == 10
+    assert body["health_alerts"] == 2
     m_fs.assert_called_once()
     m_db.assert_awaited_once()
     m_seg.assert_awaited_once()
+
+
+def test_post_segments_misaligned_hours_422(client):
+    resp = client.post("/storage/segments",
+                       json={"camera_id": "cam_01", "hours": [1000]})  # not multiple of 3600
+    assert resp.status_code == 422
+
+
+def test_recordings_delete_empty_hours_400(client):
+    resp = client.post("/storage/recordings/delete",
+                       json={"camera_id": "cam_01", "hours": []})
+    assert resp.status_code == 400
