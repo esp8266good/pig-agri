@@ -1,7 +1,11 @@
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from hls_retention import find_expired_hour_dirs, purge_expired_hls
+from hls_retention import (
+    find_expired_hour_dirs,
+    purge_expired_hls,
+    effective_retention_days,
+)
 
 
 def _mk(base: Path, cam: str, stype: str, dt: datetime) -> Path:
@@ -44,3 +48,19 @@ def test_purge_deletes_only_expired_and_returns_them(tmp_path):
     assert not old.exists()
     assert not old2.exists()
     assert recent.exists()  # 當前/近期保留，絕不誤刪
+
+
+def test_effective_retention_uses_db_value_when_present():
+    assert effective_retention_days({"hls_retention_days": "30"}, 90.0) == 30.0
+
+
+def test_effective_retention_falls_back_when_key_missing():
+    assert effective_retention_days({"other": "1"}, 90.0) == 90.0
+
+
+def test_effective_retention_falls_back_on_unparsable_value():
+    assert effective_retention_days({"hls_retention_days": "abc"}, 90.0) == 90.0
+
+
+def test_effective_retention_falls_back_when_db_settings_none():
+    assert effective_retention_days(None, 90.0) == 90.0

@@ -63,3 +63,18 @@ def purge_expired_hls(
     if deleted:
         logger.info(f"HLS retention：刪除 {len(deleted)} 個過期小時目錄（>{retention_days}d）")
     return deleted
+
+
+def effective_retention_days(
+    db_settings: dict | None, fallback_days: float
+) -> float:
+    """DB 有 hls_retention_days 且可解析 → 用 DB 值（單一權威）；
+    否則回退 fallback_days（呼叫端傳入 app_settings 建構時值）。"""
+    if db_settings is not None:
+        raw = db_settings.get("hls_retention_days")
+        if raw is not None:
+            try:
+                return float(raw)
+            except (ValueError, TypeError):
+                pass
+    return float(fallback_days)
