@@ -2129,7 +2129,9 @@
           camSelect.appendChild(opt);
         });
 
-        currentCamera = cameras[0];
+        const cachedCam = (() => { try { return localStorage.getItem('lastCamera'); } catch (_) { return null; } })();
+        currentCamera = (cachedCam && cameras.includes(cachedCam)) ? cachedCam : cameras[0];
+        camSelect.value = currentCamera;
         loadStream();
         currentWeekStart = getWeekStart(new Date());
         updateWeekNavButtons();
@@ -2146,6 +2148,7 @@
 
     camSelect.addEventListener('change', () => {
       currentCamera = camSelect.value;
+      try { localStorage.setItem('lastCamera', currentCamera); } catch (_) {}
       stopLiveTimers();
       anomalyMap = {};
       vodAlerts  = [];
