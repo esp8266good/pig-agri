@@ -401,6 +401,7 @@
     .timeline-slot {
       flex: 1;
       background: var(--surface-3);
+      position: relative;
     }
     .timeline-slot.has-data {
       background: var(--accent-dim);
@@ -409,6 +410,13 @@
     }
     .timeline-slot.has-data:hover { background: rgba(34,187,119,0.35); }
     .timeline-slot.selected { background: var(--accent); }
+    .timeline-slot.slot-selected { outline: 2px solid var(--accent); outline-offset: -2px; }
+    .timeline-slot.protected::after { content: "🔒"; position: absolute; top: 0; right: 1px; font-size: 8px; }
+    .timeline-slot.bookmarked::after { content: "★"; position: absolute; top: 0; right: 1px; font-size: 8px; color: #ffd24d; }
+    #storage-action-bar { display: none; gap: var(--space-2); align-items: center; padding: var(--space-2) var(--space-3); background: var(--surface-2); border-radius: 8px; margin-top: var(--space-2); }
+    #storage-action-bar.visible { display: flex; }
+    #storage-action-bar button { padding: 4px 10px; border-radius: 6px; cursor: pointer; }
+    .select-toggle { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; font-size: 13px; cursor: pointer; }
     .status-pill.vod {
       color: var(--warning);
       background: rgba(224,160,48,0.15);
@@ -775,8 +783,16 @@
       <span id="week-label"></span>
       <button class="week-nav-btn" id="next-week-btn" onclick="nextWeek()" aria-label="下一週">&#8250;</button>
       <button id="live-btn" onclick="switchToLive()" style="display:none">● Live</button>
+      <label class="select-toggle"><input type="checkbox" id="select-mode-toggle">選取</label>
     </div>
     <div id="timeline-bar" role="list" aria-label="時間軸（每格代表一小時）"></div>
+    <div id="storage-action-bar" role="toolbar" aria-label="儲存管理操作">
+      <span id="storage-sel-count">已選 0 小時</span>
+      <button id="btn-retain" onclick="onRetainClick()">保留</button>
+      <button id="btn-bookmark" onclick="onBookmarkClick()">書籤</button>
+      <button id="btn-delete-rec" onclick="onDeleteRecClick()">刪除</button>
+      <button id="btn-clear-sel" onclick="clearSelection()">取消選取</button>
+    </div>
   </div>
 
   <!-- WS reconnect toast -->
@@ -891,6 +907,9 @@
     let soloMode = false;          // 「只顯示選取」開關
     let sortKey = 'activity';      // 'activity' | 'temp' | 'id'
     let sortDir = 1;               // 1 = 升序（活動/溫度低先、ID 小先）；-1 = 降序
+    let selectMode = false;
+    let selectedHours = new Set();        // hour_ts (number)
+    let savedSegmentsMap = new Map();     // hour_ts -> {id, label, note}
 
     // ── Transport / scrubber state ────────────────────────────
     let transportDragging = false;
@@ -975,12 +994,14 @@
     }
 
     function prevWeek() {
+      clearSelection();
       currentWeekStart -= 7 * 86400;
       updateWeekNavButtons();
       loadTimeline();
     }
 
     function nextWeek() {
+      clearSelection();
       currentWeekStart += 7 * 86400;
       updateWeekNavButtons();
       loadTimeline();
@@ -994,6 +1015,7 @@
         const resp = await fetch(`/stream/${currentCamera}/timeline?start_ts=${startTs}&end_ts=${endTs}`);
         if (!resp.ok) return;
         const { hours } = await resp.json();
+        await loadSavedSegments();
         renderTimeline(hours);
       } catch (_) {}
     }
@@ -1008,17 +1030,85 @@
         slot.className = 'timeline-slot' + (hasData ? ' has-data' : '');
         slot.setAttribute('role', 'listitem');
         slot.title = new Date(slotTs * 1000).toLocaleString('zh-TW');
+        const seg = savedSegmentsMap.get(slotTs);
+        if (seg) slot.classList.add(seg.label ? 'bookmarked' : 'protected');
+        if (selectedHours.has(slotTs)) slot.classList.add('slot-selected');
         if (hasData) {
           slot.addEventListener('click', () => {
-            document.querySelectorAll('.timeline-slot.selected')
-              .forEach(s => s.classList.remove('selected'));
-            slot.classList.add('selected');
-            loadVod(slotTs);
+            if (selectMode) {
+              if (selectedHours.has(slotTs)) { selectedHours.delete(slotTs); slot.classList.remove('slot-selected'); }
+              else { selectedHours.add(slotTs); slot.classList.add('slot-selected'); }
+              updateActionBar();
+            } else {
+              document.querySelectorAll('.timeline-slot.selected')
+                .forEach(s => s.classList.remove('selected'));
+              slot.classList.add('selected');
+              loadVod(slotTs);
+            }
           });
         }
         timelineBar.appendChild(slot);
       }
     }
+
+    function updateActionBar() {
+      const bar = document.getElementById('storage-action-bar');
+      document.getElementById('storage-sel-count').textContent = `已選 ${selectedHours.size} 小時`;
+      bar.classList.toggle('visible', selectMode && selectedHours.size > 0);
+    }
+
+    function clearSelection() {
+      selectedHours.clear();
+      document.querySelectorAll('.timeline-slot.slot-selected')
+        .forEach(s => s.classList.remove('slot-selected'));
+      updateActionBar();
+    }
+
+    async function loadSavedSegments() {
+      savedSegmentsMap = new Map();
+      if (!currentCamera || !currentWeekStart) return;
+      const startTs = currentWeekStart, endTs = currentWeekStart + 7 * 24 * 3600;
+      try {
+        const resp = await fetch(`/storage/segments?camera_id=${currentCamera}&start_ts=${startTs}&end_ts=${endTs}`);
+        if (!resp.ok) return;
+        const { segments } = await resp.json();
+        segments.forEach(s => savedSegmentsMap.set(s.hour_ts, s));
+      } catch (_) {}
+    }
+
+    async function onRetainClick() {
+      if (selectedHours.size === 0) return;
+      const hours = [...selectedHours];
+      try {
+        const resp = await fetch('/storage/segments', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ camera_id: currentCamera, hours }),
+        });
+        if (!resp.ok) throw new Error();
+        clearSelection();
+        await loadTimeline();
+      } catch (_) { alert('保留失敗'); }
+    }
+
+    async function onBookmarkClick() {
+      if (selectedHours.size === 0) return;
+      const label = prompt('書籤名稱：');
+      if (label === null || label.trim() === '') return;
+      const note = prompt('備註（可留空）：') || null;
+      const hours = [...selectedHours];
+      try {
+        const resp = await fetch('/storage/segments', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ camera_id: currentCamera, hours, label: label.trim(), note }),
+        });
+        if (!resp.ok) throw new Error();
+        clearSelection();
+        await loadTimeline();
+        if (typeof loadBookmarks === 'function') loadBookmarks();
+      } catch (_) { alert('書籤失敗'); }
+    }
+
+    function onDeleteRecClick() { alert('刪除功能於下一步啟用'); }
 
     // ── VOD mode ──────────────────────────────────────────────
     function loadVod(startTs) {
@@ -1980,6 +2070,7 @@
         trackingCache.clear();
         document.querySelectorAll('.timeline-slot.selected')
           .forEach(s => s.classList.remove('selected'));
+        clearSelection();
       }
       loadStream();
       loadTimeline();
@@ -1995,6 +2086,13 @@
     {
       const soloCb = document.getElementById('solo-checkbox');
       if (soloCb) soloCb.addEventListener('change', e => { soloMode = e.target.checked; });
+    }
+    {
+      const t = document.getElementById('select-mode-toggle');
+      if (t) t.addEventListener('change', e => {
+        selectMode = e.target.checked;
+        clearSelection();
+      });
     }
 
     init();
