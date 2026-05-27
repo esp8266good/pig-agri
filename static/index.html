@@ -2070,8 +2070,8 @@
         trackingCache.clear();
         document.querySelectorAll('.timeline-slot.selected')
           .forEach(s => s.classList.remove('selected'));
-        clearSelection();
       }
+      clearSelection();
       loadStream();
       loadTimeline();
       startLiveTimers();
