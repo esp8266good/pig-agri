@@ -61,7 +61,7 @@ def _iso_local(ts: float) -> str:
     return f"{base}{off[:3]}:{off[3:]}"
 
 
-def _make_ffmpeg_cmd(out_dir: Path) -> list[str]:
+def _make_ffmpeg_cmd(out_dir: Path, start_number: int = 0) -> list[str]:
     gop = TARGET_FPS * 2
     return [
         "ffmpeg", "-y",
@@ -77,12 +77,15 @@ def _make_ffmpeg_cmd(out_dir: Path) -> list[str]:
         "-hls_list_size", "0",
         "-hls_flags", "append_list+program_date_time",
         "-hls_segment_filename", str(out_dir / "seg_%03d.ts"),
+        # start_number 用於 _restart_in_place 接續編號：HLS spec 要求 segment URI 不可變，
+        # ffmpeg 中途死後復生不能用 seg_000 覆蓋既存段，須從 max+1 起算。
+        "-start_number", str(start_number),
         "-loglevel", FFMPEG_LOG_LEVEL,
         str(out_dir / "index.m3u8"),
     ]
 
 
-def _start_ffmpeg(out_dir: Path) -> subprocess.Popen:
+def _start_ffmpeg(out_dir: Path, start_number: int = 0) -> subprocess.Popen:
     # 當 FFMPEG_LOG_LEVEL 為 debug/info 時，把 stderr pipe 出來方便檢查
     stderr_target = (
         subprocess.PIPE
@@ -90,7 +93,7 @@ def _start_ffmpeg(out_dir: Path) -> subprocess.Popen:
         else subprocess.DEVNULL
     )
     proc = subprocess.Popen(
-        _make_ffmpeg_cmd(out_dir),
+        _make_ffmpeg_cmd(out_dir, start_number=start_number),
         stdin=subprocess.PIPE,
         stdout=subprocess.DEVNULL,
         stderr=stderr_target,
@@ -161,6 +164,16 @@ class HLSStream:
         self._emit_log: deque[tuple[int, float]] = deque(maxlen=_FED_LOG_MAX)
         self._writer_last_frame: Optional[tuple[bytes, Optional[float]]] = None
 
+        # 序列化 writer._emit_frame 的 stdin 寫入 vs _restart/_restart_in_place 的
+        # proc swap：避免 writer 寫到剛被 close 的 stdin 觸發 BrokenPipeError → 過去
+        # 這是 race 殺死 writer thread、造成 8 小時 segment 空檔的根因。
+        self._proc_lock = threading.Lock()
+        # _restart_in_place（ffmpeg 中途死復生）用 -start_number 接續舊 segment 編號；
+        # _scan_new_segments 需扣除此偏移才能把新段名 (seg_<offset>.ts) 映射到新 ffmpeg
+        # 內部的 emit_idx=0 對應 capture_ts。hour rollover (_restart) 重置為 0。
+        self._seg_index_offset: int = 0
+        self._revive_count: int = 0  # 觀測 ffmpeg 中途死的次數
+
         # 啟動 writer 執行緒，以固定節奏把 buffer 裡的幀送進 ffmpeg
         self._start_writer()
 
@@ -211,7 +224,14 @@ class HLSStream:
                 m = re.match(r"seg_(\d+)\.ts$", name)
                 if not m:
                     continue
-                expected = round(int(m.group(1)) * TARGET_FPS * _HLS_TIME)
+                # _seg_index_offset：_restart_in_place 復生時讓新 ffmpeg
+                # 從 -start_number=offset 開始；新段名為 seg_<offset+k>.ts，
+                # 但其首幀對應的是新 ffmpeg 內部 emit_idx = k*TARGET_FPS*_HLS_TIME。
+                # hour rollover 重置 offset=0、segment 編號從 seg_000 起算 → 行為不變。
+                relative = int(m.group(1)) - self._seg_index_offset
+                if relative < 0:
+                    continue  # 舊 ffmpeg 寫的段，PDT 應該已記錄
+                expected = round(relative * TARGET_FPS * _HLS_TIME)
                 if emit_log is None:
                     emit_log = list(self._emit_log)
                 if emit_log:
@@ -340,28 +360,43 @@ class HLSStream:
         """寫一幀進 ffmpeg stdin，並在寫入那刻記 (emit_idx, capture_ts)。
         writer 等速每 tick 寫一幀（含補幀）→ emit_idx 與 ffmpeg 輸出幀
         1:1；segment NNN 首幀 == emit_idx round(NNN*TARGET_FPS*_HLS_TIME)。
-        回傳 False 表示 stdin pipe 已斷（writer 應結束）。"""
-        try:
-            self.proc.stdin.write(frame)
-            self.proc.stdin.flush()
-        except BrokenPipeError:
-            logger.warning(
-                f"[{self.camera_id}/{self.stream_type}] ffmpeg stdin pipe broken, "
-                "stream may have crashed"
-            )
-            return False
-        except Exception as e:
-            logger.warning(f"[{self.camera_id}/{self.stream_type}] stdin write error: {e}")
-            return True
+        回傳 False 表示這次寫入失敗（pipe 斷／stdin 已關），由下一輪 writer_tick
+        的 proc.poll() 健康檢查走 _restart_in_place 復生路徑。**不再設
+        self._stopped**——那是過去殺死 writer 導致 8 小時 gap 的根因。"""
+        with self._proc_lock:
+            try:
+                self.proc.stdin.write(frame)
+                self.proc.stdin.flush()
+            except BrokenPipeError:
+                logger.warning(
+                    f"[{self.camera_id}/{self.stream_type}] ffmpeg stdin pipe broken, "
+                    "will revive on next tick"
+                )
+                return False
+            except ValueError:
+                # stdin 已 close（_close_proc 與 write 競態），同樣由下輪 poll 處理
+                return False
+            except Exception as e:
+                logger.warning(f"[{self.camera_id}/{self.stream_type}] stdin write error: {e}")
+                return True
         if capture_ts is not None:
             self._emit_log.append((self._emit_idx, capture_ts))
         self._emit_idx += 1
         return True
 
     def _writer_tick(self) -> None:
-        """單次：取一幀（空則複製上一幀沿用其 capture_ts）寫入 ffmpeg。
-        若 _emit_frame 回傳 False（pipe 斷），設 self._stopped = True
-        通知 _writer_loop 退出（本函式不回傳值）。"""
+        """單次：(1) 若 ffmpeg 已死則原地復生並退出本 tick；(2) 取一幀（空
+        則複製上一幀沿用其 capture_ts）寫入 ffmpeg。_emit_frame 失敗不再
+        設 _stopped，交給下輪 proc.poll() 自癒。"""
+        if self.proc.poll() is not None:
+            try:
+                self._restart_in_place()
+            except Exception as e:
+                logger.error(
+                    f"[{self.camera_id}/{self.stream_type}] revive failed: {e}"
+                )
+                time.sleep(2.0)  # 退避，避免 spawn 連續失敗時緊密重試
+            return
         try:
             frame = self._frame_buffer.popleft()
             self._writer_last_frame = frame
@@ -369,22 +404,29 @@ class HLSStream:
             frame = self._writer_last_frame
         if frame is not None:
             jpeg_bytes, cap = frame
-            if not self._emit_frame(jpeg_bytes, cap):
-                self._stopped = True
+            self._emit_frame(jpeg_bytes, cap)
+            # 回傳值刻意 ignore：失敗→下輪 poll 偵測→revive
 
     def _writer_loop(self) -> None:
         """真實牆鐘節拍器：每 1/TARGET_FPS 真實秒寫一幀，落後過多即重置
         截止時間（不爆衝補償，避免時間軸扭曲）。長期餵入速率因此嚴格
-        鎖在 TARGET_FPS×真實秒，消除造成漂移斜線的持續性速率偏差。"""
+        鎖在 TARGET_FPS×真實秒，消除造成漂移斜線的持續性速率偏差。
+        所有 exception 一律 catch + log，writer thread 只能由 stop() 終結
+        （任何未捕捉錯誤造成 writer 死亡是 8 小時 gap bug 的同源失敗模式）。"""
         interval = 1.0 / TARGET_FPS
         slip = getattr(settings, "hls_slip_resync_seconds", 0.5)
         deadline = time.monotonic()
         while not self._stopped:
-            self._writer_tick()
-            now_m = time.monotonic()
-            if now_m - self._last_scan >= 0.5:
-                self._last_scan = now_m
-                self._scan_new_segments()
+            try:
+                self._writer_tick()
+                now_m = time.monotonic()
+                if now_m - self._last_scan >= 0.5:
+                    self._last_scan = now_m
+                    self._scan_new_segments()
+            except Exception as e:
+                logger.exception(
+                    f"[{self.camera_id}/{self.stream_type}] writer tick exception: {e}"
+                )
             deadline += interval
             now_m = time.monotonic()
             if now_m - deadline > slip:
@@ -394,21 +436,56 @@ class HLSStream:
                 time.sleep(sleep_time)
 
     def _restart(self, new_dir: Path) -> None:
-        """切換到新小時目錄時重啟 ffmpeg process。"""
-        self._close_proc()
-        new_dir.mkdir(parents=True, exist_ok=True)
-        self.proc = _start_ffmpeg(new_dir)
-        self.out_dir = new_dir
+        """切換到新小時目錄時重啟 ffmpeg process。_proc_lock 序列化避免
+        writer 寫到剛 close 的 stdin（過去的 race，殺 writer→8 小時 gap）。"""
+        with self._proc_lock:
+            self._close_proc()
+            new_dir.mkdir(parents=True, exist_ok=True)
+            self.proc = _start_ffmpeg(new_dir)
+            self.out_dir = new_dir
         with self._seg_lock:  # 新小時、新 ffmpeg：舊 segment 對應已無意義
             self._seg_pdt.clear()
             self._seen_segs.clear()
         # _emit_log/_emit_idx 在 _seg_lock 外清：_restart 由持 self._lock 的 feed() 呼叫，與 writer-loop scan 競態窗口極小且無害（沿用既有慣例）
         self._emit_log.clear()
         self._emit_idx = 0
+        self._seg_index_offset = 0  # 新小時 ffmpeg 從 seg_000 開始
         self._writer_last_frame = None
         self._last_scan = 0.0
         logger.info(
             f"Rolled over HLS stream {self.camera_id}/{self.stream_type} → {new_dir}"
+        )
+
+    def _restart_in_place(self) -> None:
+        """ffmpeg 中途死（OOM/libx264 internal/被 oom-killer 殺）→ 原小時
+        目錄原地復生新 ffmpeg，用 -start_number=(max現存編號+1) 接續編號避免
+        覆蓋舊段（HLS spec 要求 segment URI 不可變）。_emit_log/_emit_idx 重置
+        為 0：新 ffmpeg 從它自己的 frame 0 開始計算輸出 segment 內部位置；
+        _seg_index_offset 記錄 start_number，供 _scan_new_segments 映射段名
+        →新 ffmpeg 內 emit_idx。_seg_pdt 不清——舊段 PDT 仍有效。"""
+        next_num = 0
+        try:
+            nums: list[int] = []
+            for p in self.out_dir.glob("seg_*.ts"):
+                m = re.match(r"seg_(\d+)\.ts$", p.name)
+                if m:
+                    nums.append(int(m.group(1)))
+            if nums:
+                next_num = max(nums) + 1
+        except OSError:
+            pass
+        with self._proc_lock:
+            self._close_proc()
+            self.proc = _start_ffmpeg(self.out_dir, start_number=next_num)
+        self._emit_log.clear()
+        self._emit_idx = 0
+        self._seg_index_offset = next_num
+        self._writer_last_frame = None
+        self._last_scan = 0.0
+        self._revive_count += 1
+        logger.warning(
+            f"[{self.camera_id}/{self.stream_type}] revived dead ffmpeg "
+            f"in-place (count={self._revive_count}, start_number={next_num})"
         )
 
     def _close_proc(self) -> None:
