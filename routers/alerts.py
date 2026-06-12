@@ -4,7 +4,12 @@ from fastapi import APIRouter, HTTPException
 
 import database
 from analysis.scheduler import get_anomaly_cache
-from db_writer import mark_alert_read, query_health_alerts
+from db_writer import (
+    delete_alert,
+    delete_alerts_bulk,
+    mark_alert_read,
+    query_health_alerts,
+)
 
 router = APIRouter(prefix="/alerts", tags=["alerts"])
 
@@ -48,3 +53,25 @@ async def mark_read(alert_id: int):
     if not found:
         raise HTTPException(status_code=404, detail="Alert not found")
     return {"ok": True}
+
+
+@router.delete("/{alert_id}")
+async def delete_one(alert_id: int):
+    pool = database.get_pool()
+    if pool is None:
+        raise HTTPException(status_code=503, detail="Database not available")
+    found = await delete_alert(pool, alert_id)
+    if not found:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    return {"ok": True}
+
+
+@router.delete("")
+async def delete_bulk(read_only: bool = True, camera_id: Optional[str] = None):
+    """批量刪除 health_alerts。read_only 預設 True(只刪已讀)是保險,避免
+    誤刪未處理的警示;camera_id 可選用於 narrow 到單一攝影機。"""
+    pool = database.get_pool()
+    if pool is None:
+        raise HTTPException(status_code=503, detail="Database not available")
+    n = await delete_alerts_bulk(pool, read_only=read_only, camera_id=camera_id)
+    return {"deleted": n}

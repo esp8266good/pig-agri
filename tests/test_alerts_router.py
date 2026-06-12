@@ -87,3 +87,40 @@ def test_put_alert_read_not_found(alert_client):
                new_callable=AsyncMock, return_value=False):
         resp = alert_client.put("/alerts/999/read")
     assert resp.status_code == 404
+
+
+# ── 子系統 D:alert 永久刪除 ────────────────────────────────────────────
+
+def test_delete_alert_ok(alert_client):
+    with patch("routers.alerts.delete_alert",
+               new_callable=AsyncMock, return_value=True):
+        resp = alert_client.delete("/alerts/5")
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+
+
+def test_delete_alert_404_when_missing(alert_client):
+    with patch("routers.alerts.delete_alert",
+               new_callable=AsyncMock, return_value=False):
+        resp = alert_client.delete("/alerts/999")
+    assert resp.status_code == 404
+
+
+def test_delete_alerts_bulk_default_read_only(alert_client):
+    with patch("routers.alerts.delete_alerts_bulk",
+               new_callable=AsyncMock, return_value=7) as m:
+        resp = alert_client.delete("/alerts")
+    assert resp.status_code == 200
+    assert resp.json() == {"deleted": 7}
+    kwargs = m.await_args.kwargs
+    assert kwargs.get("read_only") is True
+    assert kwargs.get("camera_id") is None
+
+
+def test_delete_alerts_bulk_with_camera(alert_client):
+    with patch("routers.alerts.delete_alerts_bulk",
+               new_callable=AsyncMock, return_value=3) as m:
+        resp = alert_client.delete("/alerts?camera_id=cam_01")
+    assert resp.status_code == 200
+    kwargs = m.await_args.kwargs
+    assert kwargs.get("camera_id") == "cam_01"
