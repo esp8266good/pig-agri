@@ -843,6 +843,13 @@
     </div>
 
     <div id="tab-notifications" class="tab-content">
+      <div class="notif-toolbar" style="display:flex;gap:var(--space-3);align-items:center;padding:var(--space-3) var(--space-4);border-bottom:1px solid var(--surface-3)">
+        <label style="display:flex;gap:6px;align-items:center;cursor:pointer;font-size:var(--text-xs);color:var(--text-muted)">
+          <input type="checkbox" id="show-read-toggle">
+          <span>顯示已讀</span>
+        </label>
+        <button id="clear-read-btn" class="mark-read-btn" style="margin-left:auto" onclick="onClearReadClick()">清空已讀</button>
+      </div>
       <ul id="alert-list"></ul>
     </div>
 
@@ -922,6 +929,7 @@
     let vodFetching = false;   // prevent overlapping VOD tracking requests
     let anomalyMap = {};           // { object_id: { activity_anomaly, temp_anomaly, ... } }
     let vodAlerts = [];            // VOD 模式下的歷史 alerts
+    let showReadAlerts = false;    // 通知中心「顯示已讀」toggle 狀態
     let liveAnomalyIntervalId = null;
     let liveHandoffIntervalId = null;  // 偵測整點 rollover → 重抓 /live 換新小時 URL
     let currentLiveUrl = null;         // 目前 live 載入的 m3u8 URL（含小時段）
@@ -1553,6 +1561,10 @@
                   onclick="markAlertRead(${alert.id}, this)"
                   ${alert.is_read ? 'disabled' : ''}>
             ${alert.is_read ? '已讀' : '標記已讀'}
+          </button>
+          <button class="mark-read-btn"
+                  onclick="onDeleteAlertClick(${alert.id}, this)">
+            刪除
           </button>`;
         li.addEventListener('click', e => {
           if (e.target.classList.contains('mark-read-btn')) return;
@@ -1566,12 +1578,8 @@
       }
     }
 
-    async function markAlertRead(alertId, btn) {
+    async function _refreshBellBadge() {
       try {
-        await fetch(`/alerts/${alertId}/read`, { method: 'PUT' });
-        btn.textContent = '已讀';
-        btn.disabled = true;
-        btn.closest('.alert-item').classList.remove('unread');
         const d = await fetch('/alerts?unread_only=true').then(r => r.json());
         const n = (d.alerts || []).length;
         bellBadge.textContent = n;
@@ -1579,16 +1587,67 @@
       } catch (_) {}
     }
 
+    function _emptyNotifIfNeeded() {
+      if (alertListEl && alertListEl.children.length === 0) {
+        alertListEl.innerHTML = '<li class="notif-empty">目前無警示記錄</li>';
+      }
+    }
+
+    async function markAlertRead(alertId, btn) {
+      try {
+        const resp = await fetch(`/alerts/${alertId}/read`, { method: 'PUT' });
+        if (!resp.ok) return;
+        const li = btn.closest('.alert-item');
+        if (!showReadAlerts) {
+          li.remove();
+          _emptyNotifIfNeeded();
+        } else {
+          btn.textContent = '已讀';
+          btn.disabled = true;
+          li.classList.remove('unread');
+        }
+        await _refreshBellBadge();
+      } catch (_) {}
+    }
+
+    async function onDeleteAlertClick(alertId, btn) {
+      if (!confirm('永久刪除此警示記錄?')) return;
+      try {
+        const resp = await fetch(`/alerts/${alertId}`, { method: 'DELETE' });
+        if (!resp.ok) { alert('刪除失敗'); return; }
+        btn.closest('.alert-item').remove();
+        _emptyNotifIfNeeded();
+        await _refreshBellBadge();
+      } catch (_) { alert('刪除失敗'); }
+    }
+
+    async function onClearReadClick() {
+      const target = currentCamera ? `「${currentCamera}」` : '所有攝影機';
+      if (!confirm(`永久清空${target}的所有已讀警示?(未讀不會被刪)`)) return;
+      try {
+        const url = currentCamera
+          ? `/alerts?read_only=true&camera_id=${currentCamera}`
+          : '/alerts?read_only=true';
+        const resp = await fetch(url, { method: 'DELETE' });
+        if (!resp.ok) { alert('清空失敗'); return; }
+        const { deleted } = await resp.json();
+        if (deleted === 0) {
+          alert('沒有已讀可清除');
+        } else {
+          alert(`已刪除 ${deleted} 筆已讀警示`);
+        }
+        refreshNotifications();
+      } catch (_) { alert('清空失敗'); }
+    }
+
     async function refreshNotifications() {
       if (!currentCamera) return;
       try {
-        const d = await fetch(`/alerts?camera_id=${currentCamera}&limit=50`)
+        const unread = showReadAlerts ? '' : '&unread_only=true';
+        const d = await fetch(`/alerts?camera_id=${currentCamera}&limit=50${unread}`)
           .then(r => r.json());
         renderNotifications(d.alerts || []);
-        const ud = await fetch('/alerts?unread_only=true').then(r => r.json());
-        const n = (ud.alerts || []).length;
-        bellBadge.textContent = n;
-        bellBadge.style.display = n > 0 ? '' : 'none';
+        await _refreshBellBadge();
       } catch (_) {}
     }
 
@@ -2193,6 +2252,16 @@
       } catch (e) {
         setSkeleton(false);
         setStatus(`無法取得 camera 清單：${e.message}`, 'error');
+      }
+    }
+
+    {
+      const showReadEl = document.getElementById('show-read-toggle');
+      if (showReadEl) {
+        showReadEl.addEventListener('change', e => {
+          showReadAlerts = e.target.checked;
+          refreshNotifications();
+        });
       }
     }
 
