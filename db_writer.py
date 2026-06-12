@@ -203,6 +203,36 @@ async def mark_alert_read(pool: asyncpg.Pool, alert_id: int) -> bool:
     return result != "UPDATE 0"
 
 
+async def delete_alert(pool: asyncpg.Pool, alert_id: int) -> bool:
+    """單筆永久刪除。回傳是否有列被刪。"""
+    result = await pool.execute(
+        "DELETE FROM health_alerts WHERE id = $1", alert_id
+    )
+    return result != "DELETE 0"
+
+
+async def delete_alerts_bulk(
+    pool: asyncpg.Pool,
+    read_only: bool = True,
+    camera_id: Optional[str] = None,
+) -> int:
+    """批量刪除 health_alerts。預設只刪 is_read=TRUE,可選依攝影機篩。
+    `read_only=False` 由呼叫端顯式 opt-in(API 不暴露,避免誤殺未讀)。
+    回傳實際刪除筆數(從 'DELETE N' 末尾解析,asyncpg 慣例)。"""
+    conditions: list[str] = []
+    params: list = []
+    if read_only:
+        conditions.append("is_read = TRUE")
+    if camera_id is not None:
+        conditions.append(f"camera_id = ${len(params) + 1}")
+        params.append(camera_id)
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    result = await pool.execute(
+        f"DELETE FROM health_alerts {where}".rstrip(), *params
+    )
+    return int(result.split()[-1]) if result else 0
+
+
 async def get_all_settings(pool: asyncpg.Pool) -> dict[str, str]:
     rows = await pool.fetch("SELECT key, value FROM user_settings")
     return {r["key"]: r["value"] for r in rows}

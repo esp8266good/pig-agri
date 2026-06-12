@@ -331,3 +331,59 @@ def test_delete_recordings_in_range_deletes_both_tables(mock_pool):
     assert any("DELETE FROM tracking_logs" in s for s in sqls)
     assert any("DELETE FROM health_alerts" in s for s in sqls)
     assert result == {"tracking_logs": 12, "health_alerts": 3}
+
+
+# ── 子系統 D:alert 永久刪除 ────────────────────────────────────────────
+
+def test_delete_alert_returns_true_when_found(mock_pool):
+    from db_writer import delete_alert
+    mock_pool.execute.return_value = "DELETE 1"
+    assert asyncio.run(delete_alert(mock_pool, 42)) is True
+    sql = mock_pool.execute.call_args[0][0]
+    assert "DELETE FROM health_alerts" in sql
+
+
+def test_delete_alert_returns_false_when_missing(mock_pool):
+    from db_writer import delete_alert
+    mock_pool.execute.return_value = "DELETE 0"
+    assert asyncio.run(delete_alert(mock_pool, 999)) is False
+
+
+def test_delete_alerts_bulk_default_filters_read_only(mock_pool):
+    from db_writer import delete_alerts_bulk
+    mock_pool.execute.return_value = "DELETE 7"
+    n = asyncio.run(delete_alerts_bulk(mock_pool))
+    assert n == 7
+    sql = mock_pool.execute.call_args[0][0]
+    assert "DELETE FROM health_alerts" in sql
+    assert "is_read = TRUE" in sql
+    # 預設不帶 camera filter
+    args = mock_pool.execute.call_args[0]
+    assert len(args) == 1  # 只有 sql
+
+
+def test_delete_alerts_bulk_with_camera_filter(mock_pool):
+    from db_writer import delete_alerts_bulk
+    mock_pool.execute.return_value = "DELETE 3"
+    n = asyncio.run(delete_alerts_bulk(mock_pool, camera_id="cam_01"))
+    assert n == 3
+    sql = mock_pool.execute.call_args[0][0]
+    assert "is_read = TRUE" in sql
+    assert "camera_id =" in sql
+    args = mock_pool.execute.call_args[0]
+    assert args[1] == "cam_01"
+
+
+def test_delete_alerts_bulk_read_only_false_drops_filter(mock_pool):
+    """read_only=False 顯式覆寫(API 不暴露但函式語意要清楚)。"""
+    from db_writer import delete_alerts_bulk
+    mock_pool.execute.return_value = "DELETE 10"
+    asyncio.run(delete_alerts_bulk(mock_pool, read_only=False))
+    sql = mock_pool.execute.call_args[0][0]
+    assert "is_read" not in sql
+
+
+def test_delete_alerts_bulk_empty_result_returns_zero(mock_pool):
+    from db_writer import delete_alerts_bulk
+    mock_pool.execute.return_value = "DELETE 0"
+    assert asyncio.run(delete_alerts_bulk(mock_pool)) == 0
