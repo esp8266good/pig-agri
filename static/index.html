@@ -420,8 +420,55 @@
     .timeline-slot.has-data:hover { background: rgba(34,187,119,0.35); }
     .timeline-slot.selected { background: var(--accent); }
     .timeline-slot.slot-selected { outline: 2px solid var(--accent); outline-offset: -2px; }
-    .timeline-slot.protected::after { content: "🔒"; position: absolute; top: 0; right: 1px; font-size: 8px; }
-    .timeline-slot.bookmarked::after { content: "★"; position: absolute; top: 0; right: 1px; font-size: 8px; color: #ffd24d; }
+    /* timeline 標記改為真正可點 button(hit area ≥28×28),取代舊 ::after pseudo-element。
+       slot 本體點擊播放;marker click stopPropagation 後開 popover(編輯/取消)。 */
+    .slot-marker {
+      position: absolute;
+      top: -6px;
+      right: -6px;
+      min-width: 28px;
+      min-height: 28px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      font-size: 14px;
+      line-height: 1;
+      padding: 4px;
+      color: #ffd24d;
+      touch-action: manipulation;
+      z-index: 2;
+      filter: drop-shadow(0 1px 2px rgba(0,0,0,.6));
+    }
+    .slot-marker:hover { background: rgba(255,255,255,.10); border-radius: 6px; }
+    .slot-marker.protected-marker { color: #fff; }
+    .slot-action-menu {
+      position: absolute;
+      background: var(--surface-1);
+      border: 1px solid var(--surface-3);
+      border-radius: 6px;
+      padding: 4px;
+      box-shadow: 0 4px 12px rgba(0,0,0,.5);
+      z-index: 100;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 140px;
+    }
+    .slot-action-menu button {
+      background: transparent;
+      border: none;
+      color: var(--text);
+      padding: 8px 12px;
+      cursor: pointer;
+      text-align: left;
+      font-size: 13px;
+      border-radius: 4px;
+      font: inherit;
+    }
+    .slot-action-menu button:hover { background: var(--surface-2); }
     #storage-action-bar { display: none; gap: var(--space-2); align-items: center; padding: var(--space-2) var(--space-3); background: var(--surface-2); border-radius: 8px; margin-top: var(--space-2); }
     #storage-action-bar.visible { display: flex; }
     #storage-action-bar button { padding: 4px 10px; border-radius: 6px; cursor: pointer; }
@@ -1057,12 +1104,14 @@
 
     function prevMonth() {
       clearSelection();
+      if (typeof closeSlotActionMenu === 'function') closeSlotActionMenu();
       currentMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1);
       loadCalendar();
     }
 
     function nextMonth() {
       clearSelection();
+      if (typeof closeSlotActionMenu === 'function') closeSlotActionMenu();
       currentMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1);
       loadCalendar();
     }
@@ -1070,6 +1119,7 @@
     async function selectDay(dayTs) {
       selectedDay = dayTs;
       clearSelection();
+      if (typeof closeSlotActionMenu === 'function') closeSlotActionMenu();
       await loadDaySegments();
       renderDayBar();
       renderCalendar();
@@ -1086,7 +1136,18 @@
         slot.setAttribute('role', 'listitem');
         slot.title = new Date(slotTs * 1000).toLocaleString('zh-TW');
         const seg = savedSegmentsMap.get(slotTs);
-        if (seg) slot.classList.add(seg.label ? 'bookmarked' : 'protected');
+        if (seg) {
+          slot.classList.add(seg.label ? 'bookmarked' : 'protected');
+          const marker = document.createElement('button');
+          marker.className = 'slot-marker' + (seg.label ? '' : ' protected-marker');
+          marker.textContent = seg.label ? '★' : '🔒';
+          marker.title = seg.label ? `書籤:${seg.label}(點擊管理)` : '保留中(點擊管理)';
+          marker.onclick = (e) => {
+            e.stopPropagation();
+            openSlotActionMenu(marker, seg);
+          };
+          slot.appendChild(marker);
+        }
         if (selectedHours.has(slotTs)) slot.classList.add('slot-selected');
         if (hasData) {
           slot.addEventListener('click', () => {
@@ -1104,6 +1165,58 @@
         }
         timelineBar.appendChild(slot);
       }
+    }
+
+    let _slotActionMenuEl = null;
+    function closeSlotActionMenu() {
+      if (_slotActionMenuEl) {
+        _slotActionMenuEl.remove();
+        _slotActionMenuEl = null;
+        document.removeEventListener('click', _onSlotMenuOutside);
+      }
+    }
+    function _onSlotMenuOutside(e) {
+      if (_slotActionMenuEl && !_slotActionMenuEl.contains(e.target)) {
+        closeSlotActionMenu();
+      }
+    }
+    function openSlotActionMenu(anchor, seg) {
+      closeSlotActionMenu();
+      const menu = document.createElement('div');
+      menu.className = 'slot-action-menu';
+      const mkBtn = (label, onClick) => {
+        const b = document.createElement('button');
+        b.textContent = label;
+        b.onclick = (e) => { e.stopPropagation(); closeSlotActionMenu(); onClick(); };
+        return b;
+      };
+      if (seg.label) {
+        menu.appendChild(mkBtn('編輯書籤', () => openBookmarkEditModal(seg)));
+        menu.appendChild(mkBtn('取消書籤', () => onUnmarkSlot(seg, '取消書籤')));
+      } else {
+        menu.appendChild(mkBtn('取消保留', () => onUnmarkSlot(seg, '取消保留')));
+      }
+      menu.appendChild(mkBtn('關閉', () => {}));
+      document.body.appendChild(menu);
+      const rect = anchor.getBoundingClientRect();
+      const mw = menu.offsetWidth;
+      let left = rect.left + window.scrollX;
+      if (left + mw > window.innerWidth - 8) left = window.innerWidth - mw - 8;
+      if (left < 8) left = 8;
+      menu.style.left = `${left}px`;
+      menu.style.top = `${rect.bottom + window.scrollY + 4}px`;
+      _slotActionMenuEl = menu;
+      // 延遲掛 listener,避免本次 click 立刻被當「outside」
+      setTimeout(() => document.addEventListener('click', _onSlotMenuOutside), 0);
+    }
+    async function onUnmarkSlot(seg, label) {
+      if (!confirm(`${label}此小時?(不刪影片)`)) return;
+      try {
+        const resp = await fetch(`/storage/segments/${seg.id}`, { method: 'DELETE' });
+        if (!resp.ok) throw new Error();
+        await loadTimeline();
+        if (typeof loadBookmarks === 'function') await loadBookmarks();
+      } catch (_) { alert('操作失敗'); }
     }
 
     async function loadTimeline() {
@@ -2334,6 +2447,7 @@
       clearSelection();
       if (typeof closeDeleteModal === 'function') closeDeleteModal();
       if (typeof closeBookmarkEditModal === 'function') closeBookmarkEditModal();
+      if (typeof closeSlotActionMenu === 'function') closeSlotActionMenu();
       loadStream();
       loadTimeline();
       startLiveTimers();
