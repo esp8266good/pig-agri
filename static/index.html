@@ -1185,7 +1185,9 @@
         }
         bookmarks.forEach(b => {
           const li = document.createElement('li');
-          li.style.cssText = 'display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--surface-3)';
+          li.style.cssText = 'display:flex;flex-direction:column;gap:4px;padding:8px 0;border-bottom:1px solid var(--surface-3)';
+          const row = document.createElement('div');
+          row.style.cssText = 'display:flex;gap:8px;align-items:center';
           const when = new Date(b.hour_ts * 1000).toLocaleString('zh-TW',
             { month: '2-digit', day: '2-digit', hour: '2-digit' });
           const link = document.createElement('a');
@@ -1194,17 +1196,60 @@
           link.onclick = (e) => { e.preventDefault(); loadVod(b.hour_ts); };
           const time = document.createElement('span');
           time.textContent = when; time.style.cssText = 'opacity:.7;font-size:12px';
+          const edit = document.createElement('button');
+          edit.textContent = '編輯'; edit.style.cssText = 'padding:2px 8px;cursor:pointer';
+          edit.onclick = () => openBookmarkEditModal(b);
           const del = document.createElement('button');
           del.textContent = '移除'; del.style.cssText = 'padding:2px 8px;cursor:pointer';
           del.onclick = async () => {
-            if (!confirm(`移除書籤「${b.label}」？（不刪影片）`)) return;
+            if (!confirm(`移除書籤「${b.label}」?(不刪影片)`)) return;
             await fetch(`/storage/segments/${b.id}`, { method: 'DELETE' });
             loadBookmarks(); loadTimeline();
           };
-          li.append(link, time, del);
+          row.append(link, time, edit, del);
+          li.appendChild(row);
+          if (b.note) {
+            const noteDiv = document.createElement('div');
+            noteDiv.textContent = b.note;
+            noteDiv.style.cssText = 'font-size:12px;opacity:.75;padding-left:8px;white-space:pre-wrap;color:var(--text-muted)';
+            li.appendChild(noteDiv);
+          }
           ul.appendChild(li);
         });
       } catch (_) {}
+    }
+
+    let _editingBookmarkId = null;
+    function openBookmarkEditModal(seg) {
+      _editingBookmarkId = seg.id;
+      document.getElementById('bookmark-edit-label').value = seg.label || '';
+      document.getElementById('bookmark-edit-note').value = seg.note || '';
+      const m = document.getElementById('bookmark-edit-modal');
+      m.style.display = 'flex';
+    }
+    function closeBookmarkEditModal() {
+      _editingBookmarkId = null;
+      const m = document.getElementById('bookmark-edit-modal');
+      if (m) m.style.display = 'none';
+    }
+    async function saveBookmarkEdit() {
+      if (_editingBookmarkId === null) return;
+      const label = document.getElementById('bookmark-edit-label').value.trim();
+      const note = document.getElementById('bookmark-edit-note').value.trim() || null;
+      if (!label) { alert('名稱不可空白'); return; }
+      const btn = document.getElementById('bookmark-edit-save-btn');
+      btn.disabled = true;
+      try {
+        const resp = await fetch(`/storage/segments/${_editingBookmarkId}`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ label, note }),
+        });
+        if (!resp.ok) throw new Error();
+        closeBookmarkEditModal();
+        await loadBookmarks();
+        await loadTimeline();  // savedSegmentsMap 也要刷新(label 可能變)
+      } catch (_) { alert('儲存失敗'); }
+      finally { btn.disabled = false; }
     }
 
     function onDeleteRecClick() {
@@ -2288,6 +2333,7 @@
       }
       clearSelection();
       if (typeof closeDeleteModal === 'function') closeDeleteModal();
+      if (typeof closeBookmarkEditModal === 'function') closeBookmarkEditModal();
       loadStream();
       loadTimeline();
       startLiveTimers();
@@ -2314,6 +2360,28 @@
 
     init();
   </script>
+
+  <div id="bookmark-edit-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;align-items:center;justify-content:center">
+    <div style="background:var(--surface-2);padding:var(--space-4);border-radius:12px;max-width:420px;width:90%">
+      <h3 style="margin:0 0 12px">編輯書籤</h3>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <label style="display:flex;flex-direction:column;gap:4px;font-size:13px">
+          <span>名稱</span>
+          <input id="bookmark-edit-label" type="text" maxlength="100"
+                 style="padding:6px 8px;background:var(--surface-1);border:1px solid var(--surface-3);color:var(--text);border-radius:4px;font:inherit">
+        </label>
+        <label style="display:flex;flex-direction:column;gap:4px;font-size:13px">
+          <span>備註(可留空)</span>
+          <textarea id="bookmark-edit-note" rows="3" maxlength="500"
+                    style="padding:6px 8px;background:var(--surface-1);border:1px solid var(--surface-3);color:var(--text);border-radius:4px;font:inherit;resize:vertical"></textarea>
+        </label>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+        <button onclick="closeBookmarkEditModal()">取消</button>
+        <button id="bookmark-edit-save-btn" onclick="saveBookmarkEdit()">儲存</button>
+      </div>
+    </div>
+  </div>
 
   <div id="delete-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;align-items:center;justify-content:center">
     <div style="background:var(--surface-2);padding:var(--space-4);border-radius:12px;max-width:420px;width:90%">
