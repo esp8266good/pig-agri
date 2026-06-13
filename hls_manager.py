@@ -213,6 +213,10 @@ class HLSStream:
         ephemeral/record 目標目錄變更→_restart。capture_ts 為真實擷取牆鐘。"""
         mode, target = self._desired_target()
         if mode == "drop":
+            # drop = 錄影碟與 ephemeral 碟同時不可寫（雙重故障）。丟幀且刻意不更新
+            # last_feed_time → 30s 後 watchdog 逐出此 stream。磁碟恢復後，若當下無人
+            # 觀看（無 /live 請求觸發 ensure_started 重建 stream），錄影要等下一個
+            # /live 請求才自動續錄；有觀看者則前端 12s checkLiveHandoff 會自癒。
             self._dropped_frames += 1
             return
         with self._lock:

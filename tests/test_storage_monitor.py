@@ -213,3 +213,22 @@ def test_run_once_debounce_delays_down_transition(tmp_path):
     assert mon.get_snapshot()["recording_state"] == "down"
     assert "storage_unwritable" in fired
 
+
+def test_recovered_alert_fires_on_degraded_to_ok(tmp_path):
+    """down→degraded→ok 的多步恢復：最後 degraded→ok 仍須發 storage_recovered。"""
+    mon = sm.StorageMonitor()
+    s = sm.StorageSettings(debounce_count=1, min_free_bytes=0)  # min_free_bytes=0 → 空間永遠夠
+    now = datetime(2026, 6, 13, 12, 0)
+    fired = []
+
+    async def cb(metric, cur, mean):
+        fired.append(metric)
+
+    # 直接把內部狀態設為 degraded（模擬已從 down 恢復到 degraded 的中間態）
+    mon._record_state = "degraded"
+    # 健康的 tmp_path → 這輪讀數為 ok（min_free_bytes=0）→ degraded→ok 轉換
+    _run(mon.run_once(recording_base=tmp_path, ephemeral_base=tmp_path,
+                      settings=s, now=now, alert_cb=cb))
+    assert mon.get_snapshot()["recording_state"] == "ok"
+    assert "storage_recovered" in fired
+

@@ -257,7 +257,7 @@ class StorageMonitor:
                 await alert_cb("storage_low_space", free_gb, min_gb)
             elif new_record == "down":
                 await alert_cb("storage_unwritable", free_gb, min_gb)
-            elif new_record == "ok" and prev_record == "down":
+            elif new_record == "ok" and prev_record != "ok":
                 await alert_cb("storage_recovered", free_gb, min_gb)
 
 
