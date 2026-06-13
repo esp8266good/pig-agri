@@ -12,6 +12,16 @@ ALLOWED_KEYS = frozenset({
     "anomaly_std_threshold",
     "hls_retention_days",
     "temp_anomaly_enabled",
+    # 儲存健康監控（storage_monitor loop 每輪讀 DB → 即時生效、不需 reload）
+    "storage_check_interval_seconds",
+    "storage_min_free_gb",
+    "storage_min_free_inodes_ratio",
+    "storage_debounce_count",
+    "storage_volume_marker",
+    # 夜間 no-record 排程
+    "recording_schedule_enabled",
+    "recording_off_start",
+    "recording_off_end",
 })
 
 _RELOAD_KEYS = {
@@ -31,11 +41,19 @@ async def get_settings():
     pool = database.get_pool()
     if pool is None:
         return {
-            "analysis_interval_minutes": str(app_settings.analysis_interval_minutes),
-            "analysis_window_minutes":   str(app_settings.analysis_window_minutes),
-            "anomaly_std_threshold":     str(app_settings.anomaly_std_threshold),
-            "hls_retention_days":        str(app_settings.hls_retention_days),
-            "temp_anomaly_enabled":      str(app_settings.temp_anomaly_enabled).lower(),
+            "analysis_interval_minutes":   str(app_settings.analysis_interval_minutes),
+            "analysis_window_minutes":     str(app_settings.analysis_window_minutes),
+            "anomaly_std_threshold":       str(app_settings.anomaly_std_threshold),
+            "hls_retention_days":          str(app_settings.hls_retention_days),
+            "temp_anomaly_enabled":        str(app_settings.temp_anomaly_enabled).lower(),
+            "storage_check_interval_seconds": str(app_settings.storage_check_interval_seconds),
+            "storage_min_free_gb":            str(app_settings.storage_min_free_gb),
+            "storage_min_free_inodes_ratio":  str(app_settings.storage_min_free_inodes_ratio),
+            "storage_debounce_count":         str(app_settings.storage_debounce_count),
+            "storage_volume_marker":          app_settings.storage_volume_marker,
+            "recording_schedule_enabled":     str(app_settings.recording_schedule_enabled).lower(),
+            "recording_off_start":            app_settings.recording_off_start,
+            "recording_off_end":              app_settings.recording_off_end,
         }
     return await get_all_settings(pool)
 
