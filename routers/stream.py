@@ -16,15 +16,21 @@ router = APIRouter(prefix="/stream", tags=["stream"])
 async def serve_hls(
     camera_id: str, stream_type: str, date_hour: str, filename: str
 ):
-    # live playlist：回傳後端自管 PDT（真實擷取時間）的版本，前端
-    # hls.playingDate 才會 ≡ 真實時間、bbox 零漂移。非當前小時 / 無
-    # 對應 stream → corrected 回 None，落回服務磁碟檔（歷史/已輪替）。
+    # live playlist：回傳後端自管 PDT 版本（非當前小時/無 stream → None → fallback）。
     if filename == "index.m3u8":
         corrected = hls_manager.corrected_m3u8(camera_id, stream_type, date_hour)
         if corrected is not None:
             return PlainTextResponse(
                 corrected, media_type="application/vnd.apple.mpegurl"
             )
+    # 先試 active stream 的當前 out_dir（含 ephemeral /dev/shm）；命中 date_hour 才用。
+    active_dir = hls_manager.active_out_dir(camera_id, stream_type, date_hour)
+    if active_dir is not None:
+        ad = active_dir.resolve()
+        fp = (ad / filename).resolve()
+        if fp.is_relative_to(ad) and fp.exists():
+            return FileResponse(fp)
+    # fallback：歷史錄影一律在 hls_base_dir。
     base = Path(settings.hls_base_dir).resolve()
     file_path = (base / camera_id / stream_type / date_hour / filename).resolve()
     if not file_path.is_relative_to(base) or not file_path.exists():
