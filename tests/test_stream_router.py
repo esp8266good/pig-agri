@@ -194,3 +194,34 @@ def test_timeline_excludes_out_of_range_hours(tmp_path, monkeypatch):
     data = resp.json()
     assert ts_in in data["hours"]
     assert len(data["hours"]) == 1
+
+
+def test_serve_hls_serves_ts_from_active_ephemeral_dir(tmp_path, monkeypatch):
+    """ephemeral 模式 .ts 在 _EPHEMERAL_BASE（非 hls_base）；serve_hls 須從 active
+    stream 的 out_dir 撈得到，而非只看 hls_base。"""
+    import inference.pipeline as pipeline_mod
+    import hls_manager
+
+    eph_dir = tmp_path / "eph" / "cam_01" / "rgb" / "_live"
+    eph_dir.mkdir(parents=True)
+    (eph_dir / "seg_005.ts").write_bytes(b"TSDATA")
+
+    monkeypatch.setattr(hls_manager.hls_manager, "active_out_dir",
+                        lambda cam, st, dh: eph_dir if dh == "_live" else None)
+    monkeypatch.setattr(hls_manager.hls_manager, "corrected_m3u8",
+                        lambda cam, st, dh: None)
+
+    with (
+        patch("database.connect", new_callable=AsyncMock),
+        patch("database.disconnect", new_callable=AsyncMock),
+        patch("zmq_receiver.zmq_receiver.start"),
+        patch("zmq_receiver.zmq_receiver.stop"),
+        patch.object(pipeline_mod.inference_pipeline, "start"),
+        patch.object(pipeline_mod.inference_pipeline, "stop"),
+        patch("hls_manager.hls_manager.stop_all"),
+    ):
+        from main import app
+        with TestClient(app) as c:
+            resp = c.get("/stream/hls/cam_01/rgb/_live/seg_005.ts")
+    assert resp.status_code == 200
+    assert resp.content == b"TSDATA"

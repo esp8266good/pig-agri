@@ -192,3 +192,12 @@ def test_retention_interval_is_hourly():
     with _dummy_zmq_sources():
         import main
         assert main._RETENTION_INTERVAL_SECONDS == 3600
+
+
+def test_storage_keys_in_allowed():
+    from routers.settings import ALLOWED_KEYS
+    for k in ("storage_min_free_gb", "storage_check_interval_seconds",
+              "storage_min_free_inodes_ratio", "storage_debounce_count",
+              "storage_volume_marker", "recording_schedule_enabled",
+              "recording_off_start", "recording_off_end"):
+        assert k in ALLOWED_KEYS

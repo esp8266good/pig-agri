@@ -750,6 +750,10 @@
     }
     #save-settings-btn:hover { opacity: 0.85; }
     #settings-status { font-size: var(--text-xs); color: var(--text-muted); }
+    .storage-pill { font-size: 14px; margin-left: 8px; cursor: default; }
+    .storage-pill.ok { color: #2ecc71; }
+    .storage-pill.degraded { color: #f39c12; }
+    .storage-pill.down { color: #e74c3c; }
   </style>
 </head>
 <body>
@@ -771,6 +775,7 @@
     <button id="bell-btn" onclick="switchTab('notifications'); document.getElementById('bottom-panel').scrollIntoView({behavior:'smooth'})" aria-label="通知中心">
       🔔 <span id="bell-badge" style="display:none">0</span>
     </button>
+    <span id="storage-pill" class="storage-pill" title="儲存狀態" style="display:none">●</span>
   </header>
 
   <!-- Controls -->
@@ -937,6 +942,26 @@
         <div class="settings-field">
           <label for="set-hls-retention">影像保留天數（1–365）</label>
           <input type="number" id="set-hls-retention" min="1" max="365" step="1">
+        </div>
+        <div class="settings-field">
+          <label for="set-recording_schedule_enabled">夜間不錄影</label>
+          <input type="checkbox" id="set-recording_schedule_enabled">
+        </div>
+        <div class="settings-field">
+          <label for="set-recording_off_start">不錄影起</label>
+          <input type="time" id="set-recording_off_start" value="17:00">
+        </div>
+        <div class="settings-field">
+          <label for="set-recording_off_end">不錄影迄</label>
+          <input type="time" id="set-recording_off_end" value="06:30">
+        </div>
+        <div class="settings-field">
+          <label for="set-storage_min_free_gb">最低可用空間 (GB)</label>
+          <input type="number" id="set-storage_min_free_gb" min="1" step="1">
+        </div>
+        <div class="settings-field">
+          <label for="set-storage_check_interval_seconds">監控間隔 (秒)</label>
+          <input type="number" id="set-storage_check_interval_seconds" min="5" step="5">
         </div>
         <div class="settings-save-row">
           <button id="save-settings-btn" onclick="saveSettings()">儲存設定</button>
@@ -1826,6 +1851,18 @@
         if (w && data.analysis_window_minutes !== undefined)   w.value = data.analysis_window_minutes;
         if (te && data.temp_anomaly_enabled !== undefined)
           te.value = String(data.temp_anomaly_enabled).toLowerCase() === 'true' ? 'true' : 'false';
+        const _sse = document.getElementById('set-recording_schedule_enabled');
+        if (_sse) _sse.checked = String(data.recording_schedule_enabled) === 'true';
+        const _smap = {
+          'set-recording_off_start': 'recording_off_start',
+          'set-recording_off_end': 'recording_off_end',
+          'set-storage_min_free_gb': 'storage_min_free_gb',
+          'set-storage_check_interval_seconds': 'storage_check_interval_seconds',
+        };
+        for (const [id, key] of Object.entries(_smap)) {
+          const el = document.getElementById(id);
+          if (el && data[key] != null) el.value = data[key];
+        }
       } catch (_) {}
     }
 
@@ -1836,6 +1873,11 @@
         anomaly_std_threshold:     document.getElementById('set-anomaly-threshold').value,
         hls_retention_days:        document.getElementById('set-hls-retention').value,
         temp_anomaly_enabled:      document.getElementById('set-temp-enabled').value,
+        recording_schedule_enabled: String(document.getElementById('set-recording_schedule_enabled').checked),
+        recording_off_start:        document.getElementById('set-recording_off_start').value,
+        recording_off_end:          document.getElementById('set-recording_off_end').value,
+        storage_min_free_gb:        document.getElementById('set-storage_min_free_gb').value,
+        storage_check_interval_seconds: document.getElementById('set-storage_check_interval_seconds').value,
       };
       const statusEl = document.getElementById('settings-status');
       try {
@@ -1854,6 +1896,27 @@
       } catch (e) {
         statusEl.textContent = `✗ 網路錯誤`;
       }
+    }
+
+    // ── Storage health pill ────────────────────────────────────
+    async function pollStorageHealth() {
+      try {
+        const r = await fetch('/storage/health');
+        if (!r.ok) return;
+        const h = await r.json();
+        const pill = document.getElementById('storage-pill');
+        if (!pill) return;
+        const mode = h.target_mode || 'record';
+        const recState = h.recording_state || 'ok';
+        let cls = 'ok', label = '錄影中';
+        if (mode === 'drop') { cls = 'down'; label = '儲存故障：丟幀'; }
+        else if (recState === 'down') { cls = 'down'; label = '錄影碟故障 → ephemeral live'; }
+        else if (mode === 'ephemeral') { cls = 'degraded'; label = h.recording_time === false ? '夜間不錄影（live 中）' : 'ephemeral live'; }
+        else if (recState === 'degraded') { cls = 'degraded'; label = `空間不足（剩 ${h.recording_free_gb}GB）`; }
+        pill.className = 'storage-pill ' + cls;
+        pill.title = label;
+        pill.style.display = '';
+      } catch (e) { /* 靜默：監控小燈非關鍵路徑 */ }
     }
 
     // ── Type toggle ───────────────────────────────────────────
@@ -2407,6 +2470,8 @@
         refreshAnomalyMap();
         refreshNotifications();
         loadSettings();
+        pollStorageHealth();
+        setInterval(pollStorageHealth, 20000);
       } catch (e) {
         setSkeleton(false);
         setStatus(`無法取得 camera 清單：${e.message}`, 'error');

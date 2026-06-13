@@ -15,6 +15,7 @@ from db_writer import (
     upsert_saved_segment,
 )
 from hls_retention import delete_recording_hours
+from storage_monitor import monitor as storage_health_monitor
 
 router = APIRouter(prefix="/storage", tags=["storage"])
 
@@ -130,3 +131,9 @@ async def delete_recordings(body: RecordingsDelete):
         "tracking_logs": tl,
         "health_alerts": ha,
     }
+
+
+@router.get("/health")
+async def get_storage_health():
+    """儲存健康快照（前端 header 狀態小燈輪詢）。不需 DB。"""
+    return storage_health_monitor.get_snapshot()

@@ -603,3 +603,112 @@ def test_make_ffmpeg_cmd_accepts_start_number(tmp_path):
     cmd0 = _make_ffmpeg_cmd(tmp_path)
     if "-start_number" in cmd0:
         assert cmd0[cmd0.index("-start_number") + 1] == "0"
+
+
+def test_ffmpeg_cmd_rolling_uses_delete_segments(tmp_path, monkeypatch):
+    from hls_manager import _make_ffmpeg_cmd
+    cmd = _make_ffmpeg_cmd(tmp_path, rolling=True)
+    joined = " ".join(cmd)
+    assert "delete_segments" in joined
+    assert cmd[cmd.index("-hls_list_size") + 1] == "8"
+
+
+def test_ffmpeg_cmd_uses_config_crf_and_codec(tmp_path, monkeypatch):
+    from hls_manager import _make_ffmpeg_cmd
+    monkeypatch.setattr("hls_manager.settings.hls_crf", 28, raising=False)
+    monkeypatch.setattr("hls_manager.settings.hls_video_codec", "libx265", raising=False)
+    cmd = _make_ffmpeg_cmd(tmp_path)
+    assert cmd[cmd.index("-crf") + 1] == "28"
+    assert cmd[cmd.index("-c:v") + 1] == "libx265"
+
+
+def test_ffmpeg_cmd_default_still_keeps_all_segments(tmp_path):
+    from hls_manager import _make_ffmpeg_cmd
+    cmd = _make_ffmpeg_cmd(tmp_path)
+    assert cmd[cmd.index("-hls_list_size") + 1] == "0"
+    assert "delete_segments" not in " ".join(cmd)
+
+
+# ─── Task 6 新測試：模式感知輸出（record/ephemeral/drop）────────────────────
+
+
+def test_feed_drops_frame_in_drop_mode(tmp_path, monkeypatch):
+    stream, _ = _make_stream(tmp_path, monkeypatch)
+    monkeypatch.setattr("storage_monitor.get_target_mode", lambda: "drop")
+    before = len(stream._frame_buffer)
+    stream.feed(b"jpegdata", capture_ts=123.0)
+    assert len(stream._frame_buffer) == before     # 沒進 buffer
+    assert stream._dropped_frames == 1
+
+
+def test_feed_switches_to_ephemeral_dir(tmp_path, monkeypatch):
+    stream, _ = _make_stream(tmp_path, monkeypatch)
+    eph = tmp_path / "eph"
+    monkeypatch.setattr("hls_manager._EPHEMERAL_BASE", str(eph))
+    monkeypatch.setattr("storage_monitor.get_target_mode", lambda: "ephemeral")
+    calls = {}
+    def fake_restart(new_dir, *, rolling=False, mode="record"):
+        calls["dir"] = new_dir; calls["rolling"] = rolling; calls["mode"] = mode
+        stream.out_dir = new_dir; stream.mode = mode; stream.rolling = rolling
+    monkeypatch.setattr(stream, "_restart", fake_restart)
+    stream.feed(b"j", capture_ts=1.0)
+    assert calls["mode"] == "ephemeral"
+    assert calls["rolling"] is True
+    assert calls["dir"].name == "_live"
+
+
+def test_writer_tick_skips_when_drop(tmp_path, monkeypatch):
+    stream, proc = _make_stream(tmp_path, monkeypatch)
+    monkeypatch.setattr("storage_monitor.get_target_mode", lambda: "drop")
+    proc.poll.return_value = 1            # 假裝 ffmpeg 死
+    revived = {"n": 0}
+    monkeypatch.setattr(stream, "_restart_in_place",
+                        lambda: revived.__setitem__("n", revived["n"] + 1))
+    stream._writer_tick()
+    assert revived["n"] == 0              # drop 模式不 revive（不 spawn 失敗 ffmpeg）
+
+
+def test_scan_new_segments_skips_sidecar_in_rolling(tmp_path, monkeypatch):
+    from hls_manager import TARGET_FPS, _HLS_TIME
+    stream, _ = _make_stream(tmp_path, monkeypatch)
+    stream.rolling = True
+    stream._emit_log.append((round(TARGET_FPS * _HLS_TIME), 1700.0))
+    (stream.out_dir / "seg_001.ts").write_bytes(b"x")
+    stream._scan_new_segments()
+    assert not (stream.out_dir / "pdt.jsonl").exists()   # rolling 不寫 sidecar
+    assert "seg_001.ts" in stream._seg_pdt               # 但 in-memory PDT 仍記（live 需要）
+
+
+def test_active_out_dir_matches_hour(tmp_path, monkeypatch):
+    from hls_manager import HLSManager
+    monkeypatch.setattr("hls_manager.settings.hls_base_dir", str(tmp_path))
+    with patch("hls_manager._start_ffmpeg") as mk:
+        mk.return_value = MagicMock(stdin=MagicMock(), poll=MagicMock(return_value=None))
+        with patch("hls_manager.HLSStream._start_writer", lambda self: None):
+            mgr = HLSManager.__new__(HLSManager)
+            mgr._streams = {}
+            mgr._lock = threading.Lock()
+            d = mgr.ensure_started("cam_01", "rgb")
+            assert mgr.active_out_dir("cam_01", "rgb", d.name) == d
+            assert mgr.active_out_dir("cam_01", "rgb", "1999-01-01-00") is None
+
+
+def test_ensure_started_falls_back_to_ephemeral_when_record_dir_unwritable(tmp_path, monkeypatch):
+    """cold-start 時錄影碟不可寫（mkdir 失敗）→ 降級 ephemeral live（不 500）。"""
+    from hls_manager import HLSManager
+    # 錄影碟指向一個「父是檔案」的路徑 → mkdir 必失敗
+    deadfile = tmp_path / "deadrec"
+    deadfile.write_text("x")
+    monkeypatch.setattr("hls_manager.settings.hls_base_dir", str(deadfile / "sub"))
+    eph = tmp_path / "eph"
+    monkeypatch.setattr("hls_manager._EPHEMERAL_BASE", str(eph))
+    monkeypatch.setattr("storage_monitor.get_target_mode", lambda: "record")
+    with patch("hls_manager._start_ffmpeg") as mk:
+        mk.return_value = MagicMock(stdin=MagicMock(), poll=MagicMock(return_value=None))
+        with patch("hls_manager.HLSStream._start_writer", lambda self: None):
+            mgr = HLSManager.__new__(HLSManager)
+            mgr._streams = {}
+            mgr._lock = threading.Lock()
+            out = mgr.ensure_started("cam_01", "rgb")
+    assert out.name == "_live"                 # 已降級 ephemeral
+    assert str(eph) in str(out)
