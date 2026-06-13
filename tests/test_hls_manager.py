@@ -603,3 +603,27 @@ def test_make_ffmpeg_cmd_accepts_start_number(tmp_path):
     cmd0 = _make_ffmpeg_cmd(tmp_path)
     if "-start_number" in cmd0:
         assert cmd0[cmd0.index("-start_number") + 1] == "0"
+
+
+def test_ffmpeg_cmd_rolling_uses_delete_segments(tmp_path, monkeypatch):
+    from hls_manager import _make_ffmpeg_cmd
+    cmd = _make_ffmpeg_cmd(tmp_path, rolling=True)
+    joined = " ".join(cmd)
+    assert "delete_segments" in joined
+    assert cmd[cmd.index("-hls_list_size") + 1] == "8"
+
+
+def test_ffmpeg_cmd_uses_config_crf_and_codec(tmp_path, monkeypatch):
+    from hls_manager import _make_ffmpeg_cmd
+    monkeypatch.setattr("hls_manager.settings.hls_crf", 28, raising=False)
+    monkeypatch.setattr("hls_manager.settings.hls_video_codec", "libx265", raising=False)
+    cmd = _make_ffmpeg_cmd(tmp_path)
+    assert cmd[cmd.index("-crf") + 1] == "28"
+    assert cmd[cmd.index("-c:v") + 1] == "libx265"
+
+
+def test_ffmpeg_cmd_default_still_keeps_all_segments(tmp_path):
+    from hls_manager import _make_ffmpeg_cmd
+    cmd = _make_ffmpeg_cmd(tmp_path)
+    assert cmd[cmd.index("-hls_list_size") + 1] == "0"
+    assert "delete_segments" not in " ".join(cmd)

@@ -61,21 +61,30 @@ def _iso_local(ts: float) -> str:
     return f"{base}{off[:3]}:{off[3:]}"
 
 
-def _make_ffmpeg_cmd(out_dir: Path, start_number: int = 0) -> list[str]:
+def _make_ffmpeg_cmd(out_dir: Path, start_number: int = 0, *,
+                     rolling: bool = False) -> list[str]:
     gop = TARGET_FPS * 2
+    crf = str(getattr(settings, "hls_crf", 23))
+    codec = getattr(settings, "hls_video_codec", "libx264")
+    # rolling=True（ephemeral live）：限制清單長度 + delete_segments → 滾動視窗、
+    # 舊段自動刪、磁碟佔用恆定為數秒。rolling=False（錄影）：全留（現狀）。
+    list_size = "8" if rolling else "0"
+    flags = "append_list+program_date_time"
+    if rolling:
+        flags = "delete_segments+" + flags
     return [
         "ffmpeg", "-y",
         "-f", "mjpeg",
         "-framerate", str(TARGET_FPS),  # 輸入速率（writer 已鎖此真實速率）；非輸出 -vf fps
         "-i", "pipe:0",
         "-an",
-        "-c:v", "libx264",
+        "-c:v", codec,
         "-preset", "veryfast",
-        "-crf", "23",
+        "-crf", crf,
         "-g", str(gop),
         "-hls_time", str(_HLS_TIME),
-        "-hls_list_size", "0",
-        "-hls_flags", "append_list+program_date_time",
+        "-hls_list_size", list_size,
+        "-hls_flags", flags,
         "-hls_segment_filename", str(out_dir / "seg_%03d.ts"),
         # start_number 用於 _restart_in_place 接續編號：HLS spec 要求 segment URI 不可變，
         # ffmpeg 中途死後復生不能用 seg_000 覆蓋既存段，須從 max+1 起算。
@@ -85,25 +94,22 @@ def _make_ffmpeg_cmd(out_dir: Path, start_number: int = 0) -> list[str]:
     ]
 
 
-def _start_ffmpeg(out_dir: Path, start_number: int = 0) -> subprocess.Popen:
-    # 當 FFMPEG_LOG_LEVEL 為 debug/info 時，把 stderr pipe 出來方便檢查
+def _start_ffmpeg(out_dir: Path, start_number: int = 0, *,
+                  rolling: bool = False) -> subprocess.Popen:
     stderr_target = (
         subprocess.PIPE
         if FFMPEG_LOG_LEVEL in ("debug", "info", "verbose")
         else subprocess.DEVNULL
     )
     proc = subprocess.Popen(
-        _make_ffmpeg_cmd(out_dir, start_number=start_number),
+        _make_ffmpeg_cmd(out_dir, start_number=start_number, rolling=rolling),
         stdin=subprocess.PIPE,
         stdout=subprocess.DEVNULL,
         stderr=stderr_target,
     )
     if stderr_target == subprocess.PIPE:
-        # 背景執行緒消耗 stderr，避免 pipe buffer 滿了造成卡住
         threading.Thread(
-            target=_drain_stderr,
-            args=(proc,),
-            daemon=True,
+            target=_drain_stderr, args=(proc,), daemon=True,
             name=f"ffmpeg-stderr-{out_dir.name}",
         ).start()
     return proc
