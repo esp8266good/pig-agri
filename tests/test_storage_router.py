@@ -138,6 +138,15 @@ def test_recordings_delete_misaligned_hours_422(client):
     assert resp.status_code == 422
 
 
+def test_storage_health_returns_snapshot(client, monkeypatch):
+    import storage_monitor
+    monkeypatch.setattr(storage_monitor.monitor, "get_snapshot",
+                        lambda: {"target_mode": "record", "recording_state": "ok"})
+    resp = client.get("/storage/health")
+    assert resp.status_code == 200
+    assert resp.json()["target_mode"] == "record"
+
+
 def test_run_retention_once_skips_when_no_pool(client):
     import asyncio as _a
     import main
