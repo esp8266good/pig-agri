@@ -84,3 +84,19 @@ def test_settings_has_fast_reid_config():
 def test_settings_has_fast_reid_weights():
     s = Settings()
     assert s.fast_reid_weights == "./ref/HybridSORT/pretrained/model_0054.pth"
+
+
+def test_storage_and_encoder_defaults():
+    from config import Settings
+    s = Settings()
+    assert s.hls_ephemeral_dir == "/dev/shm/pig_live"
+    assert s.hls_crf == 23
+    assert s.hls_video_codec == "libx264"
+    assert s.storage_check_interval_seconds == 20
+    assert s.storage_min_free_gb == 10.0
+    assert s.storage_min_free_inodes_ratio == 0.02
+    assert s.storage_debounce_count == 2
+    assert s.storage_volume_marker == ""
+    assert s.recording_schedule_enabled is True
+    assert s.recording_off_start == "17:00"
+    assert s.recording_off_end == "06:30"

@@ -62,6 +62,25 @@ class Settings(BaseSettings):
     hls_discontinuity_seconds: float = 8.0  # 相鄰段 capture_ts 差超過此值 → #EXT-X-DISCONTINUITY
     hls_retention_days: int = 90
 
+    # ── Ephemeral live + 編碼旋鈕 ──────────────────────────────
+    # 夜間 no-record / 錄影碟掛掉時，live 改寫這裡（滾動 buffer、錄影碟零寫入）。
+    # 預設 tmpfs（零磨耗）；不可用時由 storage_monitor.effective_ephemeral_dir 回退系統碟。
+    hls_ephemeral_dir: str = "/dev/shm/pig_live"
+    hls_crf: int = 23                  # 調高（如 28）→ 檔案變小、寫入量降，畫質降
+    hls_video_codec: str = "libx264"
+
+    # ── 儲存健康監控 ───────────────────────────────────────────
+    storage_check_interval_seconds: int = 20
+    storage_min_free_gb: float = 10.0
+    storage_min_free_inodes_ratio: float = 0.02
+    storage_debounce_count: int = 2
+    storage_volume_marker: str = ""    # 掛載防誤判標記檔名（空＝不檢查）
+
+    # ── 夜間 no-record 排程（前端可調）────────────────────────
+    recording_schedule_enabled: bool = True
+    recording_off_start: str = "17:00"   # 本地時間 HH:MM
+    recording_off_end: str = "06:30"
+
     # ── Logging ────────────────────────────────────────────────
     ffmpeg_log_level: str = "error"
     log_level: str = "INFO"
