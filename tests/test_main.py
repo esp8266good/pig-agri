@@ -1,3 +1,4 @@
+import asyncio
 import sys
 from unittest.mock import MagicMock
 
@@ -86,3 +87,35 @@ def test_alerts_active_returns_empty_cache(client):
     resp = client.get("/alerts/active")
     assert resp.status_code == 200
     assert resp.json() == {"cache": {}}
+
+
+def test_storage_alert_writes_health_alert(monkeypatch):
+    import main
+    captured = {}
+
+    async def fake_write(pool, *, camera_id, object_id, metric,
+                         current_value, mean_value, std_value):
+        captured.update(camera_id=camera_id, metric=metric, object_id=object_id)
+        return 1
+
+    monkeypatch.setattr(main, "write_health_alert", fake_write, raising=False)
+    monkeypatch.setattr(main.database, "get_pool", lambda: object())
+    asyncio.run(main._storage_alert("storage_unwritable", 3.0, 10.0))
+    assert captured["metric"] == "storage_unwritable"
+    assert captured["camera_id"] == "_system"
+    assert captured["object_id"] == 0
+
+
+def test_storage_alert_no_pool_does_not_write(monkeypatch):
+    """DB 不可用 → 不呼叫 write_health_alert，只 log。"""
+    import main
+    called = {"n": 0}
+
+    async def fake_write(*a, **k):
+        called["n"] += 1
+        return 1
+
+    monkeypatch.setattr(main, "write_health_alert", fake_write, raising=False)
+    monkeypatch.setattr(main.database, "get_pool", lambda: None)
+    asyncio.run(main._storage_alert("storage_unwritable", 0.0, 10.0))
+    assert called["n"] == 0

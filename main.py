@@ -82,7 +82,11 @@ async def _storage_monitor_loop() -> None:
         interval = app_settings.storage_check_interval_seconds
         try:
             pool = database.get_pool()
-            db_settings = await get_all_settings(pool) if pool is not None else None
+            if pool is not None:
+                db_settings = await get_all_settings(pool)
+            else:
+                db_settings = None
+                logger.debug("storage monitor：DB 不可用，本輪用 app_settings 預設")
             s = storage_monitor.resolve_settings(db_settings, app_settings)
             interval = max(5, s.check_interval_seconds)
             await storage_monitor.monitor.run_once(
