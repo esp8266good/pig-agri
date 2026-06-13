@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime
 
 import pytest
@@ -113,11 +114,8 @@ def test_resolve_settings_falls_back_when_db_none():
     assert s.schedule_enabled is True
 
 
-import asyncio
-
-
 def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 def test_target_mode_record_when_writable_and_recording_time(tmp_path, monkeypatch):
@@ -189,3 +187,28 @@ def test_snapshot_has_expected_keys(tmp_path):
     for k in ("recording_state", "ephemeral_state", "target_mode",
               "recording_time", "recording_free_gb"):
         assert k in snap
+
+
+def test_run_once_debounce_delays_down_transition(tmp_path):
+    """debounce_count=2：單次壞讀數不翻轉/不告警；連兩次才翻 down + 告警。"""
+    mon = sm.StorageMonitor()
+    s = sm.StorageSettings(debounce_count=2)
+    now = datetime(2026, 6, 13, 12, 0)
+    bad = tmp_path / "afile"
+    bad.write_text("x")
+    rec_down = bad / "sub"   # 永遠 probe 失敗
+    fired = []
+
+    async def cb(metric, cur, mean):
+        fired.append(metric)
+
+    # 第一次壞讀數：尚未翻轉（仍 record）、不告警
+    _run(mon.run_once(recording_base=rec_down, ephemeral_base=tmp_path,
+                      settings=s, now=now, alert_cb=cb))
+    assert mon.get_snapshot()["recording_state"] == "ok"
+    assert fired == []
+    # 第二次壞讀數：翻 down + 告警
+    _run(mon.run_once(recording_base=rec_down, ephemeral_base=tmp_path,
+                      settings=s, now=now, alert_cb=cb))
+    assert mon.get_snapshot()["recording_state"] == "down"
+    assert "storage_unwritable" in fired

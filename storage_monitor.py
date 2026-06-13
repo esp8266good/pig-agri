@@ -204,10 +204,10 @@ class StorageMonitor:
         probe = write_probe(base)
         marker = marker_present(base, settings.volume_marker) if check_marker else True
         try:
-            free_bytes, free_ratio, free_inodes = check_free_space(base)
+            free_bytes, free_ratio, free_inodes_ratio = check_free_space(base)
         except OSError:
-            free_bytes, free_ratio, free_inodes, probe = 0, 0.0, 0.0, False
-        reading = classify_health(probe, marker, free_bytes, free_inodes, settings)
+            free_bytes, free_ratio, free_inodes_ratio, probe = 0, 0.0, 0.0, False
+        reading = classify_health(probe, marker, free_bytes, free_inodes_ratio, settings)
         return reading, free_bytes, free_ratio
 
     async def run_once(self, *, recording_base, ephemeral_base,
@@ -249,6 +249,8 @@ class StorageMonitor:
             }
 
         if transitioned and alert_cb is not None:
+            # 註：down→degraded（探針恢復但空間仍低）刻意不發告警——只在完全
+            # 恢復 ok 才發 storage_recovered，避免半恢復狀態洗告警。
             min_gb = settings.min_free_bytes / 1024**3
             free_gb = rec_free / 1024**3
             if new_record == "degraded" and prev_record == "ok":
