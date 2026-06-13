@@ -131,6 +131,11 @@ def _drain_stderr(proc: subprocess.Popen) -> None:
 # buffer 只保留最新的 N 幀，避免記憶體無限增長
 FRAME_BUFFER_SIZE: int = getattr(settings, "hls_frame_buffer_size", 10)
 
+import storage_monitor as _sm
+_EPHEMERAL_BASE: str = _sm.effective_ephemeral_dir(
+    getattr(settings, "hls_ephemeral_dir", "/dev/shm/pig_live")
+)
+
 
 class HLSStream:
     def __init__(
@@ -180,6 +185,12 @@ class HLSStream:
         self._seg_index_offset: int = 0
         self._revive_count: int = 0  # 觀測 ffmpeg 中途死的次數
 
+        # 模式感知（storage_monitor.target_mode）：record（小時目錄全留）/
+        # ephemeral（_live 滾動 buffer）。drop 由 feed/writer 守衛處理。
+        self.mode: str = "record"
+        self.rolling: bool = False
+        self._dropped_frames: int = 0
+
         # 啟動 writer 執行緒，以固定節奏把 buffer 裡的幀送進 ffmpeg
         self._start_writer()
 
@@ -198,12 +209,15 @@ class HLSStream:
         jpeg_bytes: bytes,
         capture_ts: Optional[float] = None,
     ) -> None:
-        """把新幀放入 buffer；若 buffer 滿則自動丟棄最舊幀（deque maxlen 行為）。
-        capture_ts 為該幀真實擷取牆鐘（後端自管 PDT）。"""
+        """把新幀放入 buffer。依 target_mode 切換輸出目標：drop→丟幀；
+        ephemeral/record 目標目錄變更→_restart。capture_ts 為真實擷取牆鐘。"""
+        mode, target = self._desired_target()
+        if mode == "drop":
+            self._dropped_frames += 1
+            return
         with self._lock:
-            new_dir = self._hour_dir()
-            if new_dir != self.out_dir:
-                self._restart(new_dir)
+            if mode != self.mode or target != self.out_dir:
+                self._restart(target, rolling=(mode == "ephemeral"), mode=mode)
         if capture_ts is not None:
             self._last_capture_ts = capture_ts
         self.last_feed_time = time.time()
@@ -255,6 +269,8 @@ class HLSStream:
                 for k in sorted(self._seg_pdt)[:-2000]:
                     self._seg_pdt.pop(k, None)
         for seg_name, cap in new_rows:
+            if self.rolling:
+                continue  # ephemeral：不寫 pdt.jsonl（夜間不需 VOD、省寫入）
             try:
                 with (out_dir / "pdt.jsonl").open("a") as fh:
                     fh.write(json.dumps({"seg": seg_name, "pdt": cap}) + "\n")
@@ -362,6 +378,18 @@ class HLSStream:
             / datetime.now().strftime("%Y-%m-%d-%H")
         )
 
+    def _desired_target(self) -> tuple[str, "Optional[Path]"]:
+        """依 storage_monitor.target_mode 決定 (mode, out_dir)。drop → (drop, None)。"""
+        import storage_monitor
+        mode = storage_monitor.get_target_mode()
+        if mode == "drop":
+            return "drop", None
+        if mode == "ephemeral":
+            return "ephemeral", (
+                Path(_EPHEMERAL_BASE) / self.camera_id / self.stream_type / "_live"
+            )
+        return "record", self._hour_dir()
+
     def _emit_frame(self, frame: bytes, capture_ts: Optional[float]) -> bool:
         """寫一幀進 ffmpeg stdin，並在寫入那刻記 (emit_idx, capture_ts)。
         writer 等速每 tick 寫一幀（含補幀）→ emit_idx 與 ffmpeg 輸出幀
@@ -394,6 +422,9 @@ class HLSStream:
         """單次：(1) 若 ffmpeg 已死則原地復生並退出本 tick；(2) 取一幀（空
         則複製上一幀沿用其 capture_ts）寫入 ffmpeg。_emit_frame 失敗不再
         設 _stopped，交給下輪 proc.poll() 自癒。"""
+        import storage_monitor
+        if storage_monitor.get_target_mode() == "drop":
+            return  # drop：不 emit、不 revive（磁碟死時不 spawn 失敗 ffmpeg）
         if self.proc.poll() is not None:
             try:
                 self._restart_in_place()
@@ -441,25 +472,26 @@ class HLSStream:
             if sleep_time > 0:
                 time.sleep(sleep_time)
 
-    def _restart(self, new_dir: Path) -> None:
-        """切換到新小時目錄時重啟 ffmpeg process。_proc_lock 序列化避免
-        writer 寫到剛 close 的 stdin（過去的 race，殺 writer→8 小時 gap）。"""
+    def _restart(self, new_dir: Path, *, rolling: bool = False,
+                 mode: str = "record") -> None:
+        """切換輸出目標（小時 rollover 或 record↔ephemeral 模式切換）時重啟 ffmpeg。"""
         with self._proc_lock:
             self._close_proc()
             new_dir.mkdir(parents=True, exist_ok=True)
-            self.proc = _start_ffmpeg(new_dir)
+            self.proc = _start_ffmpeg(new_dir, rolling=rolling)
             self.out_dir = new_dir
-        with self._seg_lock:  # 新小時、新 ffmpeg：舊 segment 對應已無意義
+            self.mode = mode
+            self.rolling = rolling
+        with self._seg_lock:
             self._seg_pdt.clear()
             self._seen_segs.clear()
-        # _emit_log/_emit_idx 在 _seg_lock 外清：_restart 由持 self._lock 的 feed() 呼叫，與 writer-loop scan 競態窗口極小且無害（沿用既有慣例）
         self._emit_log.clear()
         self._emit_idx = 0
-        self._seg_index_offset = 0  # 新小時 ffmpeg 從 seg_000 開始
+        self._seg_index_offset = 0
         self._writer_last_frame = None
         self._last_scan = 0.0
         logger.info(
-            f"Rolled over HLS stream {self.camera_id}/{self.stream_type} → {new_dir}"
+            f"HLS {self.camera_id}/{self.stream_type} → {new_dir} (mode={mode})"
         )
 
     def _restart_in_place(self) -> None:
@@ -482,7 +514,8 @@ class HLSStream:
             pass
         with self._proc_lock:
             self._close_proc()
-            self.proc = _start_ffmpeg(self.out_dir, start_number=next_num)
+            self.proc = _start_ffmpeg(self.out_dir, start_number=next_num,
+                                      rolling=self.rolling)
         self._emit_log.clear()
         self._emit_idx = 0
         self._seg_index_offset = next_num
@@ -528,20 +561,35 @@ class HLSManager:
         )
 
     def ensure_started(self, camera_id: str, stream_type: str) -> Path:
+        import storage_monitor
         key: StreamKey = (camera_id, stream_type)
         with self._lock:
             if key not in self._streams:
-                out_dir = (
-                    Path(settings.hls_base_dir)
-                    / camera_id
-                    / stream_type
-                    / datetime.now().strftime("%Y-%m-%d-%H")
-                )
+                mode = storage_monitor.get_target_mode()
+                rolling = mode == "ephemeral"
+                if rolling:
+                    out_dir = Path(_EPHEMERAL_BASE) / camera_id / stream_type / "_live"
+                else:
+                    out_dir = (Path(settings.hls_base_dir) / camera_id / stream_type
+                               / datetime.now().strftime("%Y-%m-%d-%H"))
                 out_dir.mkdir(parents=True, exist_ok=True)
-                proc = _start_ffmpeg(out_dir)
-                self._streams[key] = HLSStream(camera_id, stream_type, proc, out_dir)
-                logger.info(f"Started HLS stream {camera_id}/{stream_type} → {out_dir}")
+                proc = _start_ffmpeg(out_dir, rolling=rolling)
+                stream = HLSStream(camera_id, stream_type, proc, out_dir)
+                stream.mode = mode if mode != "drop" else "record"
+                stream.rolling = rolling
+                self._streams[key] = stream
+                logger.info(f"Started HLS stream {camera_id}/{stream_type} → {out_dir} (mode={mode})")
             return self._streams[key].out_dir
+
+    def active_out_dir(self, camera_id: str, stream_type: str,
+                       date_hour: str) -> "Optional[Path]":
+        """若有 active stream 且其 out_dir.name 命中 date_hour（含 ephemeral '_live'）
+        → 回該 out_dir（serve_hls 據此撈 .ts，不限定 hls_base）；否則 None。"""
+        with self._lock:
+            stream = self._streams.get((camera_id, stream_type))
+        if stream is not None and stream.out_dir.name == date_hour:
+            return stream.out_dir
+        return None
 
     def feed(
         self,
