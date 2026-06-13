@@ -111,3 +111,81 @@ def test_resolve_settings_falls_back_when_db_none():
     assert s.min_free_bytes == 10 * 1024**3
     assert s.off_start_min == 17 * 60
     assert s.schedule_enabled is True
+
+
+import asyncio
+
+
+def _run(coro):
+    return asyncio.get_event_loop().run_until_complete(coro)
+
+
+def test_target_mode_record_when_writable_and_recording_time(tmp_path, monkeypatch):
+    mon = sm.StorageMonitor()
+    s = sm.StorageSettings(debounce_count=1)
+    now = datetime(2026, 6, 13, 12, 0)  # 中午 → 錄影時段
+    _run(mon.run_once(recording_base=tmp_path, ephemeral_base=tmp_path,
+                      settings=s, now=now, alert_cb=None))
+    assert mon.get_target_mode() == "record"
+
+
+def test_target_mode_ephemeral_during_no_record_window(tmp_path):
+    mon = sm.StorageMonitor()
+    s = sm.StorageSettings(debounce_count=1)
+    now = datetime(2026, 6, 13, 23, 0)  # 深夜 → no-record
+    _run(mon.run_once(recording_base=tmp_path, ephemeral_base=tmp_path,
+                      settings=s, now=now, alert_cb=None))
+    assert mon.get_target_mode() == "ephemeral"
+
+
+def test_target_mode_ephemeral_when_recording_disk_down(tmp_path):
+    """錄影碟掛掉（探針失敗）但在錄影時段 → 自動轉 ephemeral（不 drop）。"""
+    mon = sm.StorageMonitor()
+    s = sm.StorageSettings(debounce_count=1)
+    now = datetime(2026, 6, 13, 12, 0)
+    bad = tmp_path / "afile"
+    bad.write_text("x")
+    rec_down = bad / "sub"             # probe 失敗
+    eph_ok = tmp_path / "eph"
+    _run(mon.run_once(recording_base=rec_down, ephemeral_base=eph_ok,
+                      settings=s, now=now, alert_cb=None))
+    assert mon.get_target_mode() == "ephemeral"
+
+
+def test_target_mode_drop_when_both_down(tmp_path):
+    mon = sm.StorageMonitor()
+    s = sm.StorageSettings(debounce_count=1)
+    now = datetime(2026, 6, 13, 12, 0)
+    bad = tmp_path / "afile"
+    bad.write_text("x")
+    _run(mon.run_once(recording_base=bad / "r", ephemeral_base=bad / "e",
+                      settings=s, now=now, alert_cb=None))
+    assert mon.get_target_mode() == "drop"
+
+
+def test_alert_fired_on_recording_disk_down_transition(tmp_path):
+    mon = sm.StorageMonitor()
+    s = sm.StorageSettings(debounce_count=1)
+    now = datetime(2026, 6, 13, 12, 0)
+    bad = tmp_path / "afile"
+    bad.write_text("x")
+    fired = []
+
+    async def cb(metric, cur, mean):
+        fired.append(metric)
+
+    _run(mon.run_once(recording_base=bad / "r", ephemeral_base=tmp_path,
+                      settings=s, now=now, alert_cb=cb))
+    assert "storage_unwritable" in fired
+
+
+def test_snapshot_has_expected_keys(tmp_path):
+    mon = sm.StorageMonitor()
+    s = sm.StorageSettings(debounce_count=1)
+    now = datetime(2026, 6, 13, 12, 0)
+    _run(mon.run_once(recording_base=tmp_path, ephemeral_base=tmp_path,
+                      settings=s, now=now, alert_cb=None))
+    snap = mon.get_snapshot()
+    for k in ("recording_state", "ephemeral_state", "target_mode",
+              "recording_time", "recording_free_gb"):
+        assert k in snap

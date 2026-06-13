@@ -172,3 +172,96 @@ def resolve_settings(db: "dict | None", app_settings) -> StorageSettings:
         off_start_min=parse_hhmm(str(g("recording_off_start", app_settings.recording_off_start))),
         off_end_min=parse_hhmm(str(g("recording_off_end", app_settings.recording_off_end))),
     )
+
+
+class StorageMonitor:
+    """維護錄影碟/ephemeral 碟兩個遲滯狀態，合成單一 target_mode。
+    feed/writer 以 get_target_mode() 讀取（cheap、有鎖）；背景 loop 呼叫 run_once。"""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._record_state = "ok"
+        self._eph_state = "ok"
+        self._record_count = 0
+        self._eph_count = 0
+        self._target_mode = "record"   # 啟動預設＝現狀錄影
+        self._snapshot: dict = {
+            "recording_state": "ok", "ephemeral_state": "ok",
+            "target_mode": "record", "recording_time": True,
+            "recording_free_gb": 0.0, "recording_free_ratio": 0.0,
+            "ephemeral_free_gb": 0.0, "last_transition_ts": None,
+        }
+
+    def get_target_mode(self) -> str:
+        with self._lock:
+            return self._target_mode
+
+    def get_snapshot(self) -> dict:
+        with self._lock:
+            return dict(self._snapshot)
+
+    def _read_base(self, base, settings: StorageSettings, check_marker: bool):
+        probe = write_probe(base)
+        marker = marker_present(base, settings.volume_marker) if check_marker else True
+        try:
+            free_bytes, free_ratio, free_inodes = check_free_space(base)
+        except OSError:
+            free_bytes, free_ratio, free_inodes, probe = 0, 0.0, 0.0, False
+        reading = classify_health(probe, marker, free_bytes, free_inodes, settings)
+        return reading, free_bytes, free_ratio
+
+    async def run_once(self, *, recording_base, ephemeral_base,
+                       settings: StorageSettings, now: datetime, alert_cb) -> None:
+        rec_reading, rec_free, rec_ratio = self._read_base(recording_base, settings, True)
+        eph_reading, eph_free, _ = self._read_base(ephemeral_base, settings, False)
+        recording_time = is_recording_time(
+            now, settings.off_start_min, settings.off_end_min, settings.schedule_enabled)
+
+        with self._lock:
+            prev_record = self._record_state
+            self._record_state, self._record_count = next_state(
+                self._record_state, rec_reading, self._record_count, settings.debounce_count)
+            self._eph_state, self._eph_count = next_state(
+                self._eph_state, eph_reading, self._eph_count, settings.debounce_count)
+            new_record = self._record_state
+
+            rec_writable = new_record != "down"
+            eph_writable = self._eph_state != "down"
+            if rec_writable and recording_time:
+                mode = "record"
+            elif eph_writable:
+                mode = "ephemeral"
+            else:
+                mode = "drop"
+            self._target_mode = mode
+
+            transitioned = prev_record != new_record
+            self._snapshot = {
+                "recording_state": new_record,
+                "ephemeral_state": self._eph_state,
+                "target_mode": mode,
+                "recording_time": recording_time,
+                "recording_free_gb": round(rec_free / 1024**3, 2),
+                "recording_free_ratio": round(rec_ratio, 4),
+                "ephemeral_free_gb": round(eph_free / 1024**3, 2),
+                "last_transition_ts": (now.timestamp() if transitioned
+                                       else self._snapshot.get("last_transition_ts")),
+            }
+
+        if transitioned and alert_cb is not None:
+            min_gb = settings.min_free_bytes / 1024**3
+            free_gb = rec_free / 1024**3
+            if new_record == "degraded" and prev_record == "ok":
+                await alert_cb("storage_low_space", free_gb, min_gb)
+            elif new_record == "down":
+                await alert_cb("storage_unwritable", free_gb, min_gb)
+            elif new_record == "ok" and prev_record == "down":
+                await alert_cb("storage_recovered", free_gb, min_gb)
+
+
+monitor = StorageMonitor()
+
+
+def get_target_mode() -> str:
+    """hls_manager feed/writer 的廉價讀取點。"""
+    return monitor.get_target_mode()
