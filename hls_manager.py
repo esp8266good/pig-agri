@@ -572,9 +572,22 @@ class HLSManager:
                 else:
                     out_dir = (Path(settings.hls_base_dir) / camera_id / stream_type
                                / datetime.now().strftime("%Y-%m-%d-%H"))
-                out_dir.mkdir(parents=True, exist_ok=True)
+                try:
+                    out_dir.mkdir(parents=True, exist_ok=True)
+                except OSError as e:
+                    # 錄影碟在此刻不可寫（cold-start 早於 monitor 首輪、或碟掛了）→
+                    # 依設計降級 ephemeral live（寫健康的 ephemeral base），不讓 /live 噴 500。
+                    logger.warning(
+                        f"[{camera_id}/{stream_type}] record dir mkdir 失敗（{e}）→ 降級 ephemeral live"
+                    )
+                    rolling = True
+                    mode = "ephemeral"
+                    out_dir = Path(_EPHEMERAL_BASE) / camera_id / stream_type / "_live"
+                    out_dir.mkdir(parents=True, exist_ok=True)
                 proc = _start_ffmpeg(out_dir, rolling=rolling)
                 stream = HLSStream(camera_id, stream_type, proc, out_dir)
+                # stream.mode 追蹤這條 ffmpeg 的實際輸出狀態（不是瞬時 storage 決策）；
+                # drop 不是合法的 ffmpeg 輸出模式，故落到 record（feed/writer 守衛會處理丟幀）。
                 stream.mode = mode if mode != "drop" else "record"
                 stream.rolling = rolling
                 self._streams[key] = stream

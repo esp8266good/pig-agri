@@ -691,3 +691,24 @@ def test_active_out_dir_matches_hour(tmp_path, monkeypatch):
             d = mgr.ensure_started("cam_01", "rgb")
             assert mgr.active_out_dir("cam_01", "rgb", d.name) == d
             assert mgr.active_out_dir("cam_01", "rgb", "1999-01-01-00") is None
+
+
+def test_ensure_started_falls_back_to_ephemeral_when_record_dir_unwritable(tmp_path, monkeypatch):
+    """cold-start 時錄影碟不可寫（mkdir 失敗）→ 降級 ephemeral live（不 500）。"""
+    from hls_manager import HLSManager
+    # 錄影碟指向一個「父是檔案」的路徑 → mkdir 必失敗
+    deadfile = tmp_path / "deadrec"
+    deadfile.write_text("x")
+    monkeypatch.setattr("hls_manager.settings.hls_base_dir", str(deadfile / "sub"))
+    eph = tmp_path / "eph"
+    monkeypatch.setattr("hls_manager._EPHEMERAL_BASE", str(eph))
+    monkeypatch.setattr("storage_monitor.get_target_mode", lambda: "record")
+    with patch("hls_manager._start_ffmpeg") as mk:
+        mk.return_value = MagicMock(stdin=MagicMock(), poll=MagicMock(return_value=None))
+        with patch("hls_manager.HLSStream._start_writer", lambda self: None):
+            mgr = HLSManager.__new__(HLSManager)
+            mgr._streams = {}
+            mgr._lock = threading.Lock()
+            out = mgr.ensure_started("cam_01", "rgb")
+    assert out.name == "_live"                 # 已降級 ephemeral
+    assert str(eph) in str(out)
