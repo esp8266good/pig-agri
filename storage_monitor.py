@@ -84,3 +84,91 @@ def next_state(current: str, reading: str, count: int, debounce: int) -> tuple[s
     if count >= debounce:
         return reading, 0
     return current, count
+
+
+def write_probe(base_dir) -> bool:
+    """在 base_dir 寫極小探針檔 → fsync → 刪除；任何 OSError → False。
+    一次抓到唯讀 remount / 掛載消失 / 權限不足。"""
+    base = Path(base_dir)
+    probe = base / ".storage_probe"
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+        with open(probe, "wb") as fh:
+            fh.write(str(time.time()).encode())
+            fh.flush()
+            os.fsync(fh.fileno())
+        probe.unlink()
+        return True
+    except OSError:
+        return False
+
+
+def marker_present(base_dir, marker: str) -> bool:
+    """掛載防誤判：marker 為空＝不檢查（回 True）；否則該標記檔須存在於 base_dir。
+    USB 碟 unmount 後目錄變回 root fs 空目錄、probe 仍可寫 → 靠 marker 抓出。"""
+    if not marker:
+        return True
+    return (Path(base_dir) / marker).exists()
+
+
+def effective_ephemeral_dir(configured: str,
+                            fallback: str = "data/pig_monitoring/hls_live") -> str:
+    """configured 指向 /dev/shm 但該路徑不可用 → 回退 fallback（系統碟）。"""
+    if configured.startswith("/dev/shm") and not os.path.isdir("/dev/shm"):
+        logger.warning(f"/dev/shm 不可用，ephemeral live 改用 {fallback}")
+        return fallback
+    return configured
+
+
+def _coerce_float(v, default: float) -> float:
+    try:
+        return float(v)
+    except (ValueError, TypeError):
+        return default
+
+
+def _coerce_int(v, default: int) -> int:
+    try:
+        return int(float(v))
+    except (ValueError, TypeError):
+        return default
+
+
+def _coerce_bool(v, default: bool) -> bool:
+    if isinstance(v, bool):
+        return v
+    if v is None:
+        return default
+    return str(v).strip().lower() == "true"
+
+
+def resolve_settings(db: "dict | None", app_settings) -> StorageSettings:
+    """合併 DB（前端可調）與 app_settings（建構時 .env/預設）→ StorageSettings。
+    DB 有值且可解析 → 用 DB；否則回退 app_settings。"""
+    def g(key, default):
+        if db and key in db and db[key] is not None:
+            return db[key]
+        return default
+
+    min_gb = _coerce_float(
+        g("storage_min_free_gb", app_settings.storage_min_free_gb),
+        app_settings.storage_min_free_gb,
+    )
+    return StorageSettings(
+        check_interval_seconds=_coerce_int(
+            g("storage_check_interval_seconds", app_settings.storage_check_interval_seconds),
+            app_settings.storage_check_interval_seconds),
+        min_free_bytes=int(min_gb * 1024**3),
+        min_free_inodes_ratio=_coerce_float(
+            g("storage_min_free_inodes_ratio", app_settings.storage_min_free_inodes_ratio),
+            app_settings.storage_min_free_inodes_ratio),
+        debounce_count=_coerce_int(
+            g("storage_debounce_count", app_settings.storage_debounce_count),
+            app_settings.storage_debounce_count),
+        volume_marker=str(g("storage_volume_marker", app_settings.storage_volume_marker) or ""),
+        schedule_enabled=_coerce_bool(
+            g("recording_schedule_enabled", app_settings.recording_schedule_enabled),
+            app_settings.recording_schedule_enabled),
+        off_start_min=parse_hhmm(str(g("recording_off_start", app_settings.recording_off_start))),
+        off_end_min=parse_hhmm(str(g("recording_off_end", app_settings.recording_off_end))),
+    )
