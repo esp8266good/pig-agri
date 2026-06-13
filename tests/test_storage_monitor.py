@@ -1,9 +1,21 @@
 import asyncio
+import sys
 from datetime import datetime
+from unittest.mock import MagicMock
 
 import pytest
 
 import storage_monitor as sm
+
+# ---- 待辦 #12 回避：mock 推論/追蹤套件，讓 import main 不因缺 ZMQ_SOURCES 炸 ----
+for _mod in [
+    "yolox", "yolox.exp", "yolox.utils", "yolox.data", "yolox.data.data_augment",
+    "trackers", "trackers.hybrid_sort_tracker",
+    "trackers.hybrid_sort_tracker.hybrid_sort_reid",
+    "fast_reid", "fast_reid.fast_reid_interfece",
+]:
+    if _mod not in sys.modules:
+        sys.modules[_mod] = MagicMock()
 
 
 def test_parse_hhmm_valid_and_invalid():
@@ -212,3 +224,21 @@ def test_run_once_debounce_delays_down_transition(tmp_path):
                       settings=s, now=now, alert_cb=cb))
     assert mon.get_snapshot()["recording_state"] == "down"
     assert "storage_unwritable" in fired
+
+
+def test_main_storage_alert_writes_health_alert(monkeypatch):
+    import asyncio
+    import main
+    captured = {}
+
+    async def fake_write(pool, *, camera_id, object_id, metric,
+                         current_value, mean_value, std_value):
+        captured.update(camera_id=camera_id, metric=metric, object_id=object_id)
+        return 1
+
+    monkeypatch.setattr(main, "write_health_alert", fake_write, raising=False)
+    monkeypatch.setattr(main.database, "get_pool", lambda: object())
+    asyncio.run(main._storage_alert("storage_unwritable", 3.0, 10.0))
+    assert captured["metric"] == "storage_unwritable"
+    assert captured["camera_id"] == "_system"
+    assert captured["object_id"] == 0
