@@ -7,7 +7,7 @@ Form: https://openai.com/form/codex-for-oss/ (requires ChatGPT login)
 
 ## Q1 — Why does this repository qualify? (490)
 
-pig-agri is a real-time computer-vision system deployed on a working pig farm: it tracks each pig's activity to flag animals needing veterinary blood tests, improving welfare and cutting unneeded draws. It's non-commercial research (my thesis basis). As sole maintainer I keep ~190 passing tests, practice spec-driven development, and document systematic debugging across 100+ commits. The repo is new so stars are low, but this is actively maintained, deployed production code, not a demo.
+pig-agri is a real-time computer-vision system deployed on a working pig farm: it tracks each pig's activity to flag animals needing veterinary blood tests, improving welfare and cutting unneeded draws. It's non-commercial research (my thesis basis). As sole maintainer I keep 240+ passing tests, practice spec-driven development, and document systematic debugging across 100+ commits. The repo is new so stars are low, but this is actively maintained, deployed production code, not a demo.
 
 ## Q2 — How will you use API credits for your project? (467)
 
