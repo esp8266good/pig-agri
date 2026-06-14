@@ -7,7 +7,27 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: pig
+          POSTGRES_PASSWORD: pig_password
+          POSTGRES_DB: pig_monitoring
+        ports:
+          - 15432:5432
+        volumes:
+          - ./sql:/docker-entrypoint-initdb.d
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://pig:pig_password@localhost:15432/pig_monitoring
+
     steps:
       - uses: actions/checkout@v4
 
