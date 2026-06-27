@@ -22,6 +22,13 @@ ALLOWED_KEYS = frozenset({
     "recording_schedule_enabled",
     "recording_off_start",
     "recording_off_end",
+    # ntfy 推播
+    "ntfy_url",
+    "ntfy_enabled",
+    # 夜間停 GPU 排程
+    "gpu_off_schedule_enabled",
+    "gpu_off_start",
+    "gpu_off_end",
 })
 
 _RELOAD_KEYS = {
@@ -54,6 +61,11 @@ async def get_settings():
             "recording_schedule_enabled":     str(app_settings.recording_schedule_enabled).lower(),
             "recording_off_start":            app_settings.recording_off_start,
             "recording_off_end":              app_settings.recording_off_end,
+            "ntfy_url":                       app_settings.ntfy_url,
+            "ntfy_enabled":                   str(app_settings.ntfy_enabled).lower(),
+            "gpu_off_schedule_enabled":       str(app_settings.gpu_off_schedule_enabled).lower(),
+            "gpu_off_start":                  app_settings.gpu_off_start,
+            "gpu_off_end":                    app_settings.gpu_off_end,
         }
     return await get_all_settings(pool)
 

@@ -201,3 +201,10 @@ def test_storage_keys_in_allowed():
               "storage_volume_marker", "recording_schedule_enabled",
               "recording_off_start", "recording_off_end"):
         assert k in ALLOWED_KEYS
+
+
+def test_new_ops_keys_allowed():
+    from routers.settings import ALLOWED_KEYS
+    for k in ("ntfy_url", "ntfy_enabled", "gpu_off_schedule_enabled",
+              "gpu_off_start", "gpu_off_end"):
+        assert k in ALLOWED_KEYS

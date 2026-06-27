@@ -53,5 +53,10 @@ CREATE TABLE IF NOT EXISTS saved_segments (
 INSERT INTO user_settings (key, value, updated_at) VALUES
     ('analysis_interval_minutes', '30', NOW()),
     ('anomaly_std_threshold', '3.0', NOW()),
-    ('hls_retention_days', '90', NOW())
+    ('hls_retention_days', '90', NOW()),
+    ('ntfy_url', 'https://ntfy.ed716.duckdns.org/pig', NOW()),
+    ('ntfy_enabled', 'true', NOW()),
+    ('gpu_off_schedule_enabled', 'false', NOW()),
+    ('gpu_off_start', '22:00', NOW()),
+    ('gpu_off_end', '06:00', NOW())
 ON CONFLICT (key) DO NOTHING;
