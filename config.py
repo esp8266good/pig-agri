@@ -81,6 +81,15 @@ class Settings(BaseSettings):
     recording_off_start: str = "17:00"   # 本地時間 HH:MM
     recording_off_end: str = "06:30"
 
+    # ── ntfy 推播通知（ops/儲存異常 → 手機）────────────────────
+    ntfy_url: str = "https://ntfy.ed716.duckdns.org/pig"
+    ntfy_enabled: bool = True
+
+    # ── 夜間停 GPU 省電（獨立排程；預設關閉，零行為改變）────────
+    gpu_off_schedule_enabled: bool = False
+    gpu_off_start: str = "22:00"   # 本地時間 HH:MM
+    gpu_off_end: str = "06:00"
+
     # ── Logging ────────────────────────────────────────────────
     ffmpeg_log_level: str = "error"
     log_level: str = "INFO"
