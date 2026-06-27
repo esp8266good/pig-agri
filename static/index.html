@@ -972,6 +972,16 @@
           <input type="text" id="set-ntfy_url" placeholder="https://ntfy.../pig">
         </div>
         <div class="settings-field">
+          <label for="set-ntfy_revive_priority">串流重建推播優先級</label>
+          <select id="set-ntfy_revive_priority">
+            <option value="min">min（最安靜）</option>
+            <option value="low">low</option>
+            <option value="default">default</option>
+            <option value="high">high</option>
+            <option value="urgent">urgent</option>
+          </select>
+        </div>
+        <div class="settings-field">
           <label for="set-gpu_off_schedule_enabled">夜間停 GPU</label>
           <input type="checkbox" id="set-gpu_off_schedule_enabled">
         </div>
@@ -1879,6 +1889,7 @@
           'set-storage_min_free_gb': 'storage_min_free_gb',
           'set-storage_check_interval_seconds': 'storage_check_interval_seconds',
           'set-ntfy_url': 'ntfy_url',
+          'set-ntfy_revive_priority': 'ntfy_revive_priority',
           'set-gpu_off_start': 'gpu_off_start',
           'set-gpu_off_end': 'gpu_off_end',
         };
@@ -1907,6 +1918,7 @@
         storage_check_interval_seconds: document.getElementById('set-storage_check_interval_seconds').value,
         ntfy_enabled:               String(document.getElementById('set-ntfy_enabled').checked),
         ntfy_url:                   document.getElementById('set-ntfy_url').value,
+        ntfy_revive_priority:       document.getElementById('set-ntfy_revive_priority').value,
         gpu_off_schedule_enabled:   String(document.getElementById('set-gpu_off_schedule_enabled').checked),
         gpu_off_start:              document.getElementById('set-gpu_off_start').value,
         gpu_off_end:                document.getElementById('set-gpu_off_end').value,

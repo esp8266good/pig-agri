@@ -71,7 +71,9 @@ _NTFY_MAP: dict[str, tuple[str, str, str]] = {
     "storage_recovered":           ("✅ 儲存已恢復", "default", "white_check_mark"),
     "recording_paused":            ("🌙 夜間暫停錄影", "low", "moon"),
     "recording_resumed":           ("✅ 已恢復錄影", "default", "white_check_mark"),
-    "recording_supervisor_revive": ("⚠️ 錄影串流已自動重建", "high", "warning"),
+    # 監督者重建：預設 default（非 high）避免 flaky 攝影機洗版；實際優先級由
+    # ntfy_revive_priority 設定覆蓋（前端可調），此處的 "default" 僅為兜底。
+    "recording_supervisor_revive": ("⚠️ 錄影串流已自動重建", "default", "warning"),
 }
 
 
@@ -83,6 +85,7 @@ async def _push_ntfy(metric: str, free_gb: float) -> None:
         return
     url = app_settings.ntfy_url
     enabled = app_settings.ntfy_enabled
+    revive_priority = app_settings.ntfy_revive_priority
     pool = database.get_pool()
     if pool is not None:
         try:
@@ -91,12 +94,15 @@ async def _push_ntfy(metric: str, free_gb: float) -> None:
                 url = db["ntfy_url"]
             if db.get("ntfy_enabled") is not None:
                 enabled = str(db["ntfy_enabled"]).strip().lower() == "true"
+            if db.get("ntfy_revive_priority"):
+                revive_priority = db["ntfy_revive_priority"]
         except Exception:
             pass
     if not enabled:
         return
     title, priority, tags = spec
     if metric == "recording_supervisor_revive":
+        priority = revive_priority   # 前端可調，避免 flaky 攝影機推播太吵
         msg = "偵測到錄影串流消失，已自動重新啟動"
     else:
         msg = f"{metric} | 錄影碟可用 {free_gb:.1f} GB"
