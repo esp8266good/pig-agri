@@ -481,8 +481,18 @@ class HLSStream:
         """切換輸出目標（小時 rollover 或 record↔ephemeral 模式切換）時重啟 ffmpeg。"""
         with self._proc_lock:
             self._close_proc()
-            new_dir.mkdir(parents=True, exist_ok=True)
-            self.proc = _start_ffmpeg(new_dir, rolling=rolling)
+            try:
+                new_dir.mkdir(parents=True, exist_ok=True)
+                self.proc = _start_ffmpeg(new_dir, rolling=rolling)
+            except OSError as e:
+                # 整點換目錄 / 模式切換失敗：不可向上拋（會冒泡到 feed →
+                # zmq thread 死）。保留舊 out_dir，交給 writer poll() 自癒
+                # 或錄影監督者下一輪重建。
+                logger.warning(
+                    f"[{self.camera_id}/{self.stream_type}] _restart 失敗（{e}），"
+                    "保留舊狀態待自癒"
+                )
+                return
             self.out_dir = new_dir
             self.mode = mode
             self.rolling = rolling
