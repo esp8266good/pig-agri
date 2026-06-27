@@ -963,6 +963,26 @@
           <label for="set-storage_check_interval_seconds">監控間隔 (秒)</label>
           <input type="number" id="set-storage_check_interval_seconds" min="5" step="5">
         </div>
+        <div class="settings-field">
+          <label for="set-ntfy_enabled">ntfy 推播</label>
+          <input type="checkbox" id="set-ntfy_enabled">
+        </div>
+        <div class="settings-field">
+          <label for="set-ntfy_url">ntfy URL</label>
+          <input type="text" id="set-ntfy_url" placeholder="https://ntfy.../pig">
+        </div>
+        <div class="settings-field">
+          <label for="set-gpu_off_schedule_enabled">夜間停 GPU</label>
+          <input type="checkbox" id="set-gpu_off_schedule_enabled">
+        </div>
+        <div class="settings-field">
+          <label for="set-gpu_off_start">停 GPU 起</label>
+          <input type="time" id="set-gpu_off_start" value="22:00">
+        </div>
+        <div class="settings-field">
+          <label for="set-gpu_off_end">停 GPU 迄</label>
+          <input type="time" id="set-gpu_off_end" value="06:00">
+        </div>
         <div class="settings-save-row">
           <button id="save-settings-btn" onclick="saveSettings()">儲存設定</button>
           <span id="settings-status"></span>
@@ -1858,11 +1878,18 @@
           'set-recording_off_end': 'recording_off_end',
           'set-storage_min_free_gb': 'storage_min_free_gb',
           'set-storage_check_interval_seconds': 'storage_check_interval_seconds',
+          'set-ntfy_url': 'ntfy_url',
+          'set-gpu_off_start': 'gpu_off_start',
+          'set-gpu_off_end': 'gpu_off_end',
         };
         for (const [id, key] of Object.entries(_smap)) {
           const el = document.getElementById(id);
           if (el && data[key] != null) el.value = data[key];
         }
+        const _ne = document.getElementById('set-ntfy_enabled');
+        if (_ne) _ne.checked = String(data.ntfy_enabled) === 'true';
+        const _ge = document.getElementById('set-gpu_off_schedule_enabled');
+        if (_ge) _ge.checked = String(data.gpu_off_schedule_enabled) === 'true';
       } catch (_) {}
     }
 
@@ -1878,6 +1905,11 @@
         recording_off_end:          document.getElementById('set-recording_off_end').value,
         storage_min_free_gb:        document.getElementById('set-storage_min_free_gb').value,
         storage_check_interval_seconds: document.getElementById('set-storage_check_interval_seconds').value,
+        ntfy_enabled:               String(document.getElementById('set-ntfy_enabled').checked),
+        ntfy_url:                   document.getElementById('set-ntfy_url').value,
+        gpu_off_schedule_enabled:   String(document.getElementById('set-gpu_off_schedule_enabled').checked),
+        gpu_off_start:              document.getElementById('set-gpu_off_start').value,
+        gpu_off_end:                document.getElementById('set-gpu_off_end').value,
       };
       const statusEl = document.getElementById('settings-status');
       try {
