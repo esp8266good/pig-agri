@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
 import database
+import ntfy_notifier
 import storage_monitor
 from analysis.scheduler import Scheduler
 from config import settings as app_settings
@@ -63,21 +64,63 @@ async def _retention_loop() -> None:
             logger.warning(f"HLS retention 巡檢失敗：{e}")
 
 
+# metric → (ntfy 標題, priority, tags)。未列入的 metric 不推播。
+_NTFY_MAP: dict[str, tuple[str, str, str]] = {
+    "storage_unwritable":          ("🚨 錄影碟不可寫", "urgent", "rotating_light"),
+    "storage_low_space":           ("⚠️ 儲存空間偏低", "high", "warning"),
+    "storage_recovered":           ("✅ 儲存已恢復", "default", "white_check_mark"),
+    "recording_paused":            ("🌙 夜間暫停錄影", "low", "moon"),
+    "recording_resumed":           ("✅ 已恢復錄影", "default", "white_check_mark"),
+    "recording_supervisor_revive": ("⚠️ 錄影串流已自動重建", "high", "warning"),
+}
+
+
+async def _push_ntfy(metric: str, free_gb: float) -> None:
+    """依 metric 推播 ntfy。停用 / URL 空 / metric 未列入 → no-op。
+    URL/開關優先讀 DB（即時生效），失敗回退 app_settings。"""
+    spec = _NTFY_MAP.get(metric)
+    if spec is None:
+        return
+    url = app_settings.ntfy_url
+    enabled = app_settings.ntfy_enabled
+    pool = database.get_pool()
+    if pool is not None:
+        try:
+            db = await get_all_settings(pool)
+            if db.get("ntfy_url") is not None:
+                url = db["ntfy_url"]
+            if db.get("ntfy_enabled") is not None:
+                enabled = str(db["ntfy_enabled"]).strip().lower() == "true"
+        except Exception:
+            pass
+    if not enabled:
+        return
+    title, priority, tags = spec
+    msg = f"{metric} | 錄影碟可用 {free_gb:.1f} GB"
+    await ntfy_notifier.notify(url, title, msg, priority=priority, tags=tags)
+
+
 async def _storage_alert(metric: str, current_value: float, mean_value: float) -> None:
     """storage_monitor 狀態轉換 → 寫一筆系統級 health_alert（進通知中心，
-    不碰 get_anomaly_cache → 不亂亮紅框）。DB 不可用 → 只 log。"""
+    不碰 get_anomaly_cache → 不亂亮紅框）。DB 不可用 → 只 log。
+    不論 DB 是否可用都嘗試推播（_push_ntfy 自行讀 DB/回退 app_settings）。"""
     pool = database.get_pool()
     if pool is None:
         logger.error(f"storage alert {metric} free={current_value:.1f}GB 但 DB 不可用")
-        return
+    else:
+        try:
+            await write_health_alert(
+                pool, camera_id="_system", object_id=0, metric=metric,
+                current_value=float(current_value), mean_value=float(mean_value),
+                std_value=0.0,
+            )
+        except Exception as e:
+            logger.error(f"寫 storage alert 失敗：{e}")
+    # 不論 DB 是否可用都嘗試推播（_push_ntfy 自行讀 DB/回退 app_settings）。
     try:
-        await write_health_alert(
-            pool, camera_id="_system", object_id=0, metric=metric,
-            current_value=float(current_value), mean_value=float(mean_value),
-            std_value=0.0,
-        )
+        await _push_ntfy(metric, current_value)
     except Exception as e:
-        logger.error(f"寫 storage alert 失敗：{e}")
+        logger.warning(f"ntfy 推播失敗：{e}")
 
 
 async def _storage_monitor_loop() -> None:

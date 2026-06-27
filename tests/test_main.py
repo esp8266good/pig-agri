@@ -177,3 +177,36 @@ def test_supervisor_fires_revive_alert_when_stream_went_missing(monkeypatch):
     # 第二輪：上一輪已列入 _supervised_prev、這輪仍 missing → revive 告警
     asyncio.run(main._run_recording_supervisor_once())
     assert "recording_supervisor_revive" in alerts
+
+
+def test_push_ntfy_maps_metric_and_calls_notify(monkeypatch):
+    import main
+    sent = {}
+
+    async def fake_notify(url, title, message, *, priority="default", tags=""):
+        sent.update(url=url, title=title, priority=priority, tags=tags)
+        return True
+
+    monkeypatch.setattr(main.ntfy_notifier, "notify", fake_notify)
+    monkeypatch.setattr(main.database, "get_pool", lambda: None)  # 用 app_settings
+    monkeypatch.setattr(main.app_settings, "ntfy_url", "http://x/pig")
+    monkeypatch.setattr(main.app_settings, "ntfy_enabled", True)
+
+    asyncio.run(main._push_ntfy("storage_unwritable", 3.0))
+    assert sent["url"] == "http://x/pig"
+    assert sent["priority"] == "urgent"
+
+
+def test_push_ntfy_noop_when_disabled(monkeypatch):
+    import main
+    called = {"n": 0}
+
+    async def fake_notify(*a, **k):
+        called["n"] += 1
+        return True
+
+    monkeypatch.setattr(main.ntfy_notifier, "notify", fake_notify)
+    monkeypatch.setattr(main.database, "get_pool", lambda: None)
+    monkeypatch.setattr(main.app_settings, "ntfy_enabled", False)
+    asyncio.run(main._push_ntfy("storage_unwritable", 3.0))
+    assert called["n"] == 0
