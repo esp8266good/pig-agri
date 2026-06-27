@@ -100,3 +100,13 @@ def test_storage_and_encoder_defaults():
     assert s.recording_schedule_enabled is True
     assert s.recording_off_start == "17:00"
     assert s.recording_off_end == "06:30"
+
+
+def test_new_ops_settings_defaults():
+    from config import Settings
+    s = Settings(_env_file=None)
+    assert s.ntfy_url == "https://ntfy.ed716.duckdns.org/pig"
+    assert s.ntfy_enabled is True
+    assert s.gpu_off_schedule_enabled is False
+    assert s.gpu_off_start == "22:00"
+    assert s.gpu_off_end == "06:00"

@@ -48,6 +48,9 @@ FFMPEG_LOG_LEVEL: str = getattr(settings, "ffmpeg_log_level", "warning")  # debu
 _HLS_TIME: int = 4
 # _emit_log 環形上限（約 30 分鐘餘量，遠超單一小時所需）
 _FED_LOG_MAX: int = TARGET_FPS * 1800
+# 錄影監督者：thermal 串流僅在「近期確實有送 thermal 幀」時才確保（避免對
+# 從未裝 thermal 的攝影機平白起一條永遠無資料的 ffmpeg）。
+_THERMAL_SEEN_WINDOW: float = 60.0
 # 非單調 capture_ts 的 clamp 增量
 _PDT_MONOTONIC_EPS: float = 1e-3
 
@@ -481,8 +484,18 @@ class HLSStream:
         """切換輸出目標（小時 rollover 或 record↔ephemeral 模式切換）時重啟 ffmpeg。"""
         with self._proc_lock:
             self._close_proc()
-            new_dir.mkdir(parents=True, exist_ok=True)
-            self.proc = _start_ffmpeg(new_dir, rolling=rolling)
+            try:
+                new_dir.mkdir(parents=True, exist_ok=True)
+                self.proc = _start_ffmpeg(new_dir, rolling=rolling)
+            except OSError as e:
+                # 整點換目錄 / 模式切換失敗：不可向上拋（會冒泡到 feed →
+                # zmq thread 死）。保留舊 out_dir，交給 writer poll() 自癒
+                # 或錄影監督者下一輪重建。
+                logger.warning(
+                    f"[{self.camera_id}/{self.stream_type}] _restart 失敗（{e}），"
+                    "保留舊狀態待自癒"
+                )
+                return
             self.out_dir = new_dir
             self.mode = mode
             self.rolling = rolling
@@ -554,6 +567,7 @@ class HLSManager:
 
     def __init__(self) -> None:
         self._streams: Dict[StreamKey, HLSStream] = {}
+        self._last_seen: Dict[StreamKey, float] = {}
         self._lock = threading.Lock()
         self._watchdog = threading.Thread(
             target=self._watchdog_loop, daemon=True, name="hls-watchdog"
@@ -616,6 +630,7 @@ class HLSManager:
         capture_ts: float | None = None,
     ) -> None:
         key: StreamKey = (camera_id, stream_type)
+        self._last_seen[key] = time.time()
         with self._lock:
             stream = self._streams.get(key)
         if stream is not None:
@@ -668,6 +683,22 @@ class HLSManager:
                 self._evict_stale()
             except Exception as e:
                 logger.error(f"Watchdog loop error: {e}")
+
+    def has_stream(self, camera_id: str, stream_type: str) -> bool:
+        with self._lock:
+            return (camera_id, stream_type) in self._streams
+
+    def desired_recording_keys(self, cameras: list[str]) -> list[StreamKey]:
+        """錄影監督者要確保的串流：每攝影機 rgb 一律含；thermal 僅當近期
+        （_THERMAL_SEEN_WINDOW 秒內）確實送過 thermal 幀。"""
+        now = time.time()
+        keys: list[StreamKey] = []
+        for cam in cameras:
+            keys.append((cam, "rgb"))
+            seen = self._last_seen.get((cam, "thermal"))
+            if seen is not None and now - seen <= _THERMAL_SEEN_WINDOW:
+                keys.append((cam, "thermal"))
+        return keys
 
 
 # ─── 初始化 ──────────────────────────────────────────────────────────────────

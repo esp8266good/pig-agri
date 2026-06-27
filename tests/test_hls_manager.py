@@ -712,3 +712,35 @@ def test_ensure_started_falls_back_to_ephemeral_when_record_dir_unwritable(tmp_p
             out = mgr.ensure_started("cam_01", "rgb")
     assert out.name == "_live"                 # 已降級 ephemeral
     assert str(eph) in str(out)
+
+
+def test_restart_swallows_spawn_failure(tmp_path, monkeypatch):
+    """_restart 時 _start_ffmpeg 失敗 → swallow exception + log，不向上拋（過去會冒泡到 feed → zmq thread）。"""
+    stream, _ = _make_stream(tmp_path, monkeypatch)
+    # 讓 _start_ffmpeg 噴錯，模擬整點換目錄時 spawn 失敗
+    monkeypatch.setattr("hls_manager._start_ffmpeg",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("spawn fail")))
+    new_dir = tmp_path / "newhour"
+    # 不應拋例外（過去會冒泡到 feed → zmq thread）
+    stream._restart(new_dir, rolling=False, mode="record")
+
+
+def test_desired_recording_keys_rgb_always_thermal_when_seen(manager, monkeypatch):
+    # rgb 一律含
+    m, fake_proc = manager
+    keys = m.desired_recording_keys(["cam_01"])
+    assert ("cam_01", "rgb") in keys
+    assert ("cam_01", "thermal") not in keys
+
+    # feed 一筆 thermal（即使沒有 active stream，也應記 last_seen）
+    m.feed("cam_01", "thermal", b"\xff\xd8", capture_ts=None)
+    keys2 = m.desired_recording_keys(["cam_01"])
+    assert ("cam_01", "thermal") in keys2
+
+
+def test_has_stream_reflects_streams(manager):
+    m, fake_proc = manager
+    assert m.has_stream("cam_01", "rgb") is False
+    with patch("hls_manager._start_ffmpeg", return_value=fake_proc):
+        m.ensure_started("cam_01", "rgb")
+    assert m.has_stream("cam_01", "rgb") is True

@@ -80,7 +80,13 @@ def _source_worker(
                 )
                 continue
 
-            on_frame(cfg.label, ts, frame_id, rgb_bytes, thermal_bytes)
+            try:
+                on_frame(cfg.label, ts, frame_id, rgb_bytes, thermal_bytes)
+            except Exception as e:
+                # 單一幀處理失敗（含 HLS feed/_restart 例外）不可殺掉整條
+                # 攝影機接收 thread——否則該攝影機永久停錄，需重啟。
+                logger.warning(f"{tag} on_frame error (continuing): {e}")
+                continue
             recv_count += 1
 
             if recv_count % 100 == 0:

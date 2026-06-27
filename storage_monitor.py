@@ -55,6 +55,13 @@ def is_recording_time(now: datetime, off_start_min: int, off_end_min: int,
     return not in_off
 
 
+def is_inference_active(now: datetime, off_start_min: int, off_end_min: int,
+                        enabled: bool) -> bool:
+    """now 是否在「GPU 推論開啟時段」（gpu_off 窗之外）。停用/無效/空窗 →
+    永遠 active。語意與 is_recording_time 相同（皆判斷『是否在 off 窗外』）。"""
+    return is_recording_time(now, off_start_min, off_end_min, enabled)
+
+
 def check_free_space(path) -> tuple[int, float, float]:
     """(free_bytes, free_ratio, free_inodes_ratio)。路徑不存在 → OSError。"""
     st = os.statvfs(str(path))
@@ -174,6 +181,21 @@ def resolve_settings(db: "dict | None", app_settings) -> StorageSettings:
     )
 
 
+def resolve_gpu_active(db: "dict | None", app_settings, now: datetime) -> bool:
+    """合併 DB（前端可調）與 app_settings → 算當下 GPU 推論是否該開啟。"""
+    def g(key, default):
+        if db and key in db and db[key] is not None:
+            return db[key]
+        return default
+
+    enabled = _coerce_bool(
+        g("gpu_off_schedule_enabled", app_settings.gpu_off_schedule_enabled),
+        app_settings.gpu_off_schedule_enabled)
+    start = parse_hhmm(str(g("gpu_off_start", app_settings.gpu_off_start)))
+    end = parse_hhmm(str(g("gpu_off_end", app_settings.gpu_off_end)))
+    return is_inference_active(now, start, end, enabled)
+
+
 class StorageMonitor:
     """維護錄影碟/ephemeral 碟兩個遲滯狀態，合成單一 target_mode。
     feed/writer 以 get_target_mode() 讀取（cheap、有鎖）；背景 loop 呼叫 run_once。"""
@@ -185,6 +207,7 @@ class StorageMonitor:
         self._record_count = 0
         self._eph_count = 0
         self._target_mode = "record"   # 啟動預設＝現狀錄影
+        self._prev_target_mode = "record"
         self._snapshot: dict = {
             "recording_state": "ok", "ephemeral_state": "ok",
             "target_mode": "record", "recording_time": True,
@@ -259,6 +282,17 @@ class StorageMonitor:
                 await alert_cb("storage_unwritable", free_gb, min_gb)
             elif new_record == "ok" and prev_record != "ok":
                 await alert_cb("storage_recovered", free_gb, min_gb)
+
+        # target_mode 轉換告警（與 record 狀態告警獨立）：排程型暫停/恢復錄影。
+        # 故障型 ephemeral（record 狀態 down）已由 storage_unwritable 涵蓋，
+        # 故 recording_paused 僅在 record 狀態仍 ok 時發（＝純排程造成）。
+        prev_mode = self._prev_target_mode
+        self._prev_target_mode = mode
+        if alert_cb is not None and mode != prev_mode:
+            if mode == "ephemeral" and prev_mode == "record" and new_record == "ok":
+                await alert_cb("recording_paused", rec_free / 1024**3, 0.0)
+            elif mode == "record" and prev_mode == "ephemeral":
+                await alert_cb("recording_resumed", rec_free / 1024**3, 0.0)
 
 
 monitor = StorageMonitor()
