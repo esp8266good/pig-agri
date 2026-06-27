@@ -287,6 +287,30 @@ def test_push_ntfy_revive_priority_overridden_by_db(monkeypatch):
     assert sent["priority"] == "low"
 
 
+def test_push_ntfy_revive_min_suppresses_push(monkeypatch):
+    """ntfy_revive_priority='min' → 串流重建事件完全不推播（機器斷線反覆重建不洗版）。
+    其他 metric 不受此規則影響。"""
+    import main
+    calls = {"n": 0}
+
+    async def fake_notify(*a, **k):
+        calls["n"] += 1
+        return True
+
+    monkeypatch.setattr(main.ntfy_notifier, "notify", fake_notify)
+    monkeypatch.setattr(main.database, "get_pool", lambda: None)
+    monkeypatch.setattr(main.app_settings, "ntfy_url", "http://x/pig")
+    monkeypatch.setattr(main.app_settings, "ntfy_enabled", True)
+    monkeypatch.setattr(main.app_settings, "ntfy_revive_priority", "min")
+
+    # revive 在 min → 不推播
+    asyncio.run(main._push_ntfy("recording_supervisor_revive", 0.0))
+    assert calls["n"] == 0
+    # 但其他告警照常推（min 設定只管 revive）
+    asyncio.run(main._push_ntfy("storage_unwritable", 1.0))
+    assert calls["n"] == 1
+
+
 def test_storage_loop_helper_sets_inference_active(monkeypatch):
     """抽出的 _apply_gpu_schedule 應依 resolve_gpu_active 設 inference 旗標。"""
     import main

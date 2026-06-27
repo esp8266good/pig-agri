@@ -102,6 +102,9 @@ async def _push_ntfy(metric: str, free_gb: float) -> None:
         return
     title, priority, tags = spec
     if metric == "recording_supervisor_revive":
+        # min＝完全不推播此事件：機器斷線會反覆重建、即使 min 優先級仍會塞爆通知。
+        if str(revive_priority).strip().lower() == "min":
+            return
         priority = revive_priority   # 前端可調，避免 flaky 攝影機推播太吵
         msg = "偵測到錄影串流消失，已自動重新啟動"
     else:
