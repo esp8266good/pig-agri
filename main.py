@@ -76,7 +76,7 @@ _NTFY_MAP: dict[str, tuple[str, str, str]] = {
 
 
 async def _push_ntfy(metric: str, free_gb: float) -> None:
-    """依 metric 推播 ntfy。停用 / URL 空 / metric 未列入 → no-op。
+    """依 metric 推播 ntfy。停用 / metric 未列入 → no-op；URL 空由 ntfy_notifier 處理。
     URL/開關優先讀 DB（即時生效），失敗回退 app_settings。"""
     spec = _NTFY_MAP.get(metric)
     if spec is None:

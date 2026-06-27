@@ -98,6 +98,9 @@ def test_storage_alert_writes_health_alert(monkeypatch):
         captured.update(camera_id=camera_id, metric=metric, object_id=object_id)
         return 1
 
+    async def _noop_notify(*a, **k):
+        return False
+    monkeypatch.setattr(main.ntfy_notifier, "notify", _noop_notify)
     monkeypatch.setattr(main, "write_health_alert", fake_write, raising=False)
     monkeypatch.setattr(main.database, "get_pool", lambda: object())
     asyncio.run(main._storage_alert("storage_unwritable", 3.0, 10.0))
@@ -115,6 +118,9 @@ def test_storage_alert_no_pool_does_not_write(monkeypatch):
         called["n"] += 1
         return 1
 
+    async def _noop_notify(*a, **k):
+        return False
+    monkeypatch.setattr(main.ntfy_notifier, "notify", _noop_notify)
     monkeypatch.setattr(main, "write_health_alert", fake_write, raising=False)
     monkeypatch.setattr(main.database, "get_pool", lambda: None)
     asyncio.run(main._storage_alert("storage_unwritable", 0.0, 10.0))
