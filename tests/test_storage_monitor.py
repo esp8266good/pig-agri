@@ -232,3 +232,42 @@ def test_recovered_alert_fires_on_degraded_to_ok(tmp_path):
     assert mon.get_snapshot()["recording_state"] == "ok"
     assert "storage_recovered" in fired
 
+
+def test_recording_paused_alert_on_schedule_ephemeral(tmp_path):
+    """碟健康但進入夜間 no-record 窗（record→ephemeral）→ recording_paused。"""
+    mon = sm.StorageMonitor()
+    s = sm.StorageSettings(debounce_count=1, min_free_bytes=0,
+                           off_start_min=17 * 60, off_end_min=6 * 60 + 30)
+    fired = []
+
+    async def cb(metric, cur, mean):
+        fired.append(metric)
+
+    # 先在錄影時段（record）建立基準
+    _run(mon.run_once(recording_base=tmp_path, ephemeral_base=tmp_path,
+                      settings=s, now=datetime(2026, 6, 13, 12, 0), alert_cb=cb))
+    fired.clear()
+    # 進入 no-record 窗 → ephemeral
+    _run(mon.run_once(recording_base=tmp_path, ephemeral_base=tmp_path,
+                      settings=s, now=datetime(2026, 6, 13, 18, 0), alert_cb=cb))
+    assert mon.get_target_mode() == "ephemeral"
+    assert "recording_paused" in fired
+
+
+def test_recording_resumed_alert_back_to_record(tmp_path):
+    mon = sm.StorageMonitor()
+    s = sm.StorageSettings(debounce_count=1, min_free_bytes=0,
+                           off_start_min=17 * 60, off_end_min=6 * 60 + 30)
+    fired = []
+
+    async def cb(metric, cur, mean):
+        fired.append(metric)
+
+    _run(mon.run_once(recording_base=tmp_path, ephemeral_base=tmp_path,
+                      settings=s, now=datetime(2026, 6, 13, 18, 0), alert_cb=cb))
+    fired.clear()
+    _run(mon.run_once(recording_base=tmp_path, ephemeral_base=tmp_path,
+                      settings=s, now=datetime(2026, 6, 13, 12, 0), alert_cb=cb))
+    assert mon.get_target_mode() == "record"
+    assert "recording_resumed" in fired
+

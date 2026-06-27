@@ -185,6 +185,7 @@ class StorageMonitor:
         self._record_count = 0
         self._eph_count = 0
         self._target_mode = "record"   # 啟動預設＝現狀錄影
+        self._prev_target_mode = "record"
         self._snapshot: dict = {
             "recording_state": "ok", "ephemeral_state": "ok",
             "target_mode": "record", "recording_time": True,
@@ -259,6 +260,17 @@ class StorageMonitor:
                 await alert_cb("storage_unwritable", free_gb, min_gb)
             elif new_record == "ok" and prev_record != "ok":
                 await alert_cb("storage_recovered", free_gb, min_gb)
+
+        # target_mode 轉換告警（與 record 狀態告警獨立）：排程型暫停/恢復錄影。
+        # 故障型 ephemeral（record 狀態 down）已由 storage_unwritable 涵蓋，
+        # 故 recording_paused 僅在 record 狀態仍 ok 時發（＝純排程造成）。
+        prev_mode = self._prev_target_mode
+        self._prev_target_mode = mode
+        if alert_cb is not None and mode != prev_mode:
+            if mode == "ephemeral" and prev_mode == "record" and new_record == "ok":
+                await alert_cb("recording_paused", rec_free / 1024**3, 0.0)
+            elif mode == "record" and prev_mode == "ephemeral":
+                await alert_cb("recording_resumed", rec_free / 1024**3, 0.0)
 
 
 monitor = StorageMonitor()
