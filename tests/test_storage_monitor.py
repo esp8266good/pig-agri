@@ -271,3 +271,28 @@ def test_recording_resumed_alert_back_to_record(tmp_path):
     assert mon.get_target_mode() == "record"
     assert "recording_resumed" in fired
 
+
+def test_is_inference_active_window():
+    # gpu_off 22:00–06:00：窗內 inactive、窗外 active
+    assert sm.is_inference_active(datetime(2026, 6, 13, 23, 0),
+                                  22 * 60, 6 * 60, True) is False
+    assert sm.is_inference_active(datetime(2026, 6, 13, 12, 0),
+                                  22 * 60, 6 * 60, True) is True
+    # 停用 → 永遠 active
+    assert sm.is_inference_active(datetime(2026, 6, 13, 23, 0),
+                                  22 * 60, 6 * 60, False) is True
+
+
+def test_resolve_gpu_active_uses_db_then_fallback():
+    class App:
+        gpu_off_schedule_enabled = False
+        gpu_off_start = "22:00"
+        gpu_off_end = "06:00"
+    now = datetime(2026, 6, 13, 23, 0)
+    # DB 啟用排程 + 窗內 → inactive
+    db = {"gpu_off_schedule_enabled": "true",
+          "gpu_off_start": "22:00", "gpu_off_end": "06:00"}
+    assert sm.resolve_gpu_active(db, App(), now) is False
+    # DB 缺鍵 → 回退 app_settings（停用）→ active
+    assert sm.resolve_gpu_active(None, App(), now) is True
+

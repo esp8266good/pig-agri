@@ -55,6 +55,13 @@ def is_recording_time(now: datetime, off_start_min: int, off_end_min: int,
     return not in_off
 
 
+def is_inference_active(now: datetime, off_start_min: int, off_end_min: int,
+                        enabled: bool) -> bool:
+    """now 是否在「GPU 推論開啟時段」（gpu_off 窗之外）。停用/無效/空窗 →
+    永遠 active。語意與 is_recording_time 相同（皆判斷『是否在 off 窗外』）。"""
+    return is_recording_time(now, off_start_min, off_end_min, enabled)
+
+
 def check_free_space(path) -> tuple[int, float, float]:
     """(free_bytes, free_ratio, free_inodes_ratio)。路徑不存在 → OSError。"""
     st = os.statvfs(str(path))
@@ -172,6 +179,21 @@ def resolve_settings(db: "dict | None", app_settings) -> StorageSettings:
         off_start_min=parse_hhmm(str(g("recording_off_start", app_settings.recording_off_start))),
         off_end_min=parse_hhmm(str(g("recording_off_end", app_settings.recording_off_end))),
     )
+
+
+def resolve_gpu_active(db: "dict | None", app_settings, now: datetime) -> bool:
+    """合併 DB（前端可調）與 app_settings → 算當下 GPU 推論是否該開啟。"""
+    def g(key, default):
+        if db and key in db and db[key] is not None:
+            return db[key]
+        return default
+
+    enabled = _coerce_bool(
+        g("gpu_off_schedule_enabled", app_settings.gpu_off_schedule_enabled),
+        app_settings.gpu_off_schedule_enabled)
+    start = parse_hhmm(str(g("gpu_off_start", app_settings.gpu_off_start)))
+    end = parse_hhmm(str(g("gpu_off_end", app_settings.gpu_off_end)))
+    return is_inference_active(now, start, end, enabled)
 
 
 class StorageMonitor:
