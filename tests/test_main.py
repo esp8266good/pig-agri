@@ -218,6 +218,33 @@ def test_push_ntfy_noop_when_disabled(monkeypatch):
     assert called["n"] == 0
 
 
+def test_push_ntfy_revive_body_has_no_disk_suffix(monkeypatch):
+    """recording_supervisor_revive 不含 GB 後綴；storage_unwritable 含有。"""
+    import main
+    sent = []
+
+    async def fake_notify(url, title, message, *, priority="default", tags=""):
+        sent.append(message)
+        return True
+
+    monkeypatch.setattr(main.ntfy_notifier, "notify", fake_notify)
+    monkeypatch.setattr(main.database, "get_pool", lambda: None)
+    monkeypatch.setattr(main.app_settings, "ntfy_url", "http://x/pig")
+    monkeypatch.setattr(main.app_settings, "ntfy_enabled", True)
+
+    # recording_supervisor_revive 應不含 GB
+    asyncio.run(main._push_ntfy("recording_supervisor_revive", 0.0))
+    assert len(sent) == 1
+    assert "GB" not in sent[0]
+    assert "偵測到錄影串流消失" in sent[0]
+
+    # storage_unwritable 應含 GB
+    asyncio.run(main._push_ntfy("storage_unwritable", 3.5))
+    assert len(sent) == 2
+    assert "GB" in sent[1]
+    assert "3.5" in sent[1]
+
+
 def test_storage_loop_helper_sets_inference_active(monkeypatch):
     """抽出的 _apply_gpu_schedule 應依 resolve_gpu_active 設 inference 旗標。"""
     import main

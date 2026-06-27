@@ -96,7 +96,10 @@ async def _push_ntfy(metric: str, free_gb: float) -> None:
     if not enabled:
         return
     title, priority, tags = spec
-    msg = f"{metric} | 錄影碟可用 {free_gb:.1f} GB"
+    if metric == "recording_supervisor_revive":
+        msg = "偵測到錄影串流消失，已自動重新啟動"
+    else:
+        msg = f"{metric} | 錄影碟可用 {free_gb:.1f} GB"
     await ntfy_notifier.notify(url, title, msg, priority=priority, tags=tags)
 
 
