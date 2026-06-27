@@ -123,6 +123,13 @@ async def _storage_alert(metric: str, current_value: float, mean_value: float) -
         logger.warning(f"ntfy 推播失敗：{e}")
 
 
+def _apply_gpu_schedule(db_settings: "dict | None") -> None:
+    """依 DB/app_settings 的 gpu_off 排程算當下推論是否該開，設 inference 旗標。"""
+    active = storage_monitor.resolve_gpu_active(
+        db_settings, app_settings, datetime.now())
+    inference_pipeline.set_active(active)
+
+
 async def _storage_monitor_loop() -> None:
     """每 storage_check_interval_seconds 量錄影碟/ephemeral 碟健康 → 更新
     target_mode（hls_manager 讀取）+ 狀態轉換時告警。設定每輪讀 DB（即時生效）。
@@ -146,6 +153,7 @@ async def _storage_monitor_loop() -> None:
                 now=datetime.now(),
                 alert_cb=_storage_alert,
             )
+            _apply_gpu_schedule(db_settings)
         except Exception as e:
             logger.warning(f"storage monitor loop 錯誤：{e}")
         await asyncio.sleep(interval)

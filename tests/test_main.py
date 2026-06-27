@@ -216,3 +216,15 @@ def test_push_ntfy_noop_when_disabled(monkeypatch):
     monkeypatch.setattr(main.app_settings, "ntfy_enabled", False)
     asyncio.run(main._push_ntfy("storage_unwritable", 3.0))
     assert called["n"] == 0
+
+
+def test_storage_loop_helper_sets_inference_active(monkeypatch):
+    """抽出的 _apply_gpu_schedule 應依 resolve_gpu_active 設 inference 旗標。"""
+    import main
+    states = []
+    monkeypatch.setattr(main.inference_pipeline, "set_active",
+                        lambda v: states.append(v))
+    monkeypatch.setattr(main.storage_monitor, "resolve_gpu_active",
+                        lambda db, app, now: False)
+    main._apply_gpu_schedule(db_settings=None)
+    assert states == [False]
