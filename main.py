@@ -26,6 +26,13 @@ from zmq_receiver import zmq_receiver
 # 回退 app_settings 建構時值。
 _RETENTION_INTERVAL_SECONDS = 1 * 3600
 
+# 錄影監督者巡檢間隔：每 10s 確保每攝影機錄影串流存在（不依賴有人開直播頁）。
+_SUPERVISOR_INTERVAL_SECONDS = 10
+
+# 上一輪監督者確認過「應存在」的串流 keys；用來區分「首次建立」（不告警）與
+# 「之前在、這輪不見了的重建」（告警 recording_supervisor_revive）。
+_supervised_prev: set = set()
+
 
 async def _run_retention_once() -> None:
     """單輪 retention 巡檢。DB 不可用或讀取失敗 → 跳過本輪、不刪任何東西，
@@ -101,6 +108,40 @@ async def _storage_monitor_loop() -> None:
         await asyncio.sleep(interval)
 
 
+async def _run_recording_supervisor_once() -> None:
+    """確保每個攝影機的錄影串流存在；被逐出/死掉的下一輪重建。drop（雙碟全死）
+    時不重建（無處可寫）。某串流之前在、這輪卻不見 → 視為重建並告警。"""
+    global _supervised_prev
+    if storage_monitor.get_target_mode() == "drop":
+        return
+    cameras = [s.label for s in app_settings.zmq_sources]
+    desired = hls_manager.desired_recording_keys(cameras)
+    revived: list = []
+    for cam, stype in desired:
+        present_before = hls_manager.has_stream(cam, stype)
+        try:
+            hls_manager.ensure_started(cam, stype)
+        except Exception as e:
+            logger.warning(f"[{cam}/{stype}] 錄影監督者 ensure_started 失敗：{e}")
+            continue
+        if not present_before and (cam, stype) in _supervised_prev:
+            revived.append((cam, stype))
+    _supervised_prev = set(desired)
+    for cam, stype in revived:
+        logger.warning(f"[{cam}/{stype}] 錄影監督者重建已消失的串流")
+        await _storage_alert("recording_supervisor_revive", 0.0, 0.0)
+
+
+async def _recording_supervisor_loop() -> None:
+    """週期性確保錄影串流存活。例外只 log，絕不拖垮服務。"""
+    while True:
+        await asyncio.sleep(_SUPERVISOR_INTERVAL_SECONDS)
+        try:
+            await _run_recording_supervisor_once()
+        except Exception as e:
+            logger.warning(f"錄影監督者巡檢失敗：{e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await database.connect()
@@ -112,9 +153,11 @@ async def lifespan(app: FastAPI):
     zmq_receiver.start()
     retention_task = asyncio.create_task(_retention_loop())
     storage_task = asyncio.create_task(_storage_monitor_loop())
+    supervisor_task = asyncio.create_task(_recording_supervisor_loop())
     yield
     retention_task.cancel()
     storage_task.cancel()
+    supervisor_task.cancel()
     zmq_receiver.stop()
     inference_pipeline.stop()
     hls_manager.stop_all()

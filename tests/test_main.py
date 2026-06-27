@@ -119,3 +119,61 @@ def test_storage_alert_no_pool_does_not_write(monkeypatch):
     monkeypatch.setattr(main.database, "get_pool", lambda: None)
     asyncio.run(main._storage_alert("storage_unwritable", 0.0, 10.0))
     assert called["n"] == 0
+
+
+def test_supervisor_ensures_rgb_and_skips_on_drop(monkeypatch):
+    import main
+    ensured = []
+
+    class FakeHls:
+        def desired_recording_keys(self, cams):
+            return [(c, "rgb") for c in cams]
+        def has_stream(self, c, t):
+            return False
+        def ensure_started(self, c, t):
+            ensured.append((c, t))
+
+    monkeypatch.setattr(main, "hls_manager", FakeHls())
+    monkeypatch.setattr(main.app_settings, "zmq_sources",
+                        [type("S", (), {"label": "cam_01"})()])
+    main._supervised_prev = set()
+
+    # drop → 不 ensure
+    monkeypatch.setattr(main.storage_monitor, "get_target_mode", lambda: "drop")
+    asyncio.run(main._run_recording_supervisor_once())
+    assert ensured == []
+
+    # record → ensure rgb
+    monkeypatch.setattr(main.storage_monitor, "get_target_mode", lambda: "record")
+    asyncio.run(main._run_recording_supervisor_once())
+    assert ("cam_01", "rgb") in ensured
+
+
+def test_supervisor_fires_revive_alert_when_stream_went_missing(monkeypatch):
+    import main
+    alerts = []
+
+    async def fake_alert(metric, cur, mean):
+        alerts.append(metric)
+
+    class FakeHls:
+        def desired_recording_keys(self, cams):
+            return [("cam_01", "rgb")]
+        def has_stream(self, c, t):
+            return False   # 一直不存在 → 需重建
+        def ensure_started(self, c, t):
+            pass
+
+    monkeypatch.setattr(main, "hls_manager", FakeHls())
+    monkeypatch.setattr(main, "_storage_alert", fake_alert)
+    monkeypatch.setattr(main.storage_monitor, "get_target_mode", lambda: "record")
+    monkeypatch.setattr(main.app_settings, "zmq_sources",
+                        [type("S", (), {"label": "cam_01"})()])
+
+    # 第一輪：首次建立（_supervised_prev 空）→ 不算 revive、不告警
+    main._supervised_prev = set()
+    asyncio.run(main._run_recording_supervisor_once())
+    assert alerts == []
+    # 第二輪：上一輪已列入 _supervised_prev、這輪仍 missing → revive 告警
+    asyncio.run(main._run_recording_supervisor_once())
+    assert "recording_supervisor_revive" in alerts
