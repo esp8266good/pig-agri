@@ -56,6 +56,7 @@ INSERT INTO user_settings (key, value, updated_at) VALUES
     ('hls_retention_days', '90', NOW()),
     ('ntfy_url', 'https://ntfy.ed716.duckdns.org/pig', NOW()),
     ('ntfy_enabled', 'true', NOW()),
+    ('ntfy_revive_priority', 'default', NOW()),
     ('gpu_off_schedule_enabled', 'false', NOW()),
     ('gpu_off_start', '22:00', NOW()),
     ('gpu_off_end', '06:00', NOW())

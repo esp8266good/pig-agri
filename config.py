@@ -84,6 +84,9 @@ class Settings(BaseSettings):
     # ── ntfy 推播通知（ops/儲存異常 → 手機）────────────────────
     ntfy_url: str = "https://ntfy.ed716.duckdns.org/pig"
     ntfy_enabled: bool = True
+    # 錄影監督者重建串流的推播優先級（flaky 攝影機可能較頻，可在前端調低避免吵）。
+    # 值為 ntfy priority 字串：min / low / default / high / urgent。
+    ntfy_revive_priority: str = "default"
 
     # ── 夜間停 GPU 省電（獨立排程；預設關閉，零行為改變）────────
     gpu_off_schedule_enabled: bool = False

@@ -205,6 +205,6 @@ def test_storage_keys_in_allowed():
 
 def test_new_ops_keys_allowed():
     from routers.settings import ALLOWED_KEYS
-    for k in ("ntfy_url", "ntfy_enabled", "gpu_off_schedule_enabled",
-              "gpu_off_start", "gpu_off_end"):
+    for k in ("ntfy_url", "ntfy_enabled", "ntfy_revive_priority",
+              "gpu_off_schedule_enabled", "gpu_off_start", "gpu_off_end"):
         assert k in ALLOWED_KEYS

@@ -245,6 +245,48 @@ def test_push_ntfy_revive_body_has_no_disk_suffix(monkeypatch):
     assert "3.5" in sent[1]
 
 
+def test_push_ntfy_revive_priority_from_app_settings(monkeypatch):
+    """無 DB 時，revive 推播優先級取自 app_settings.ntfy_revive_priority。"""
+    import main
+    sent = {}
+
+    async def fake_notify(url, title, message, *, priority="default", tags=""):
+        sent["priority"] = priority
+        return True
+
+    monkeypatch.setattr(main.ntfy_notifier, "notify", fake_notify)
+    monkeypatch.setattr(main.database, "get_pool", lambda: None)
+    monkeypatch.setattr(main.app_settings, "ntfy_url", "http://x/pig")
+    monkeypatch.setattr(main.app_settings, "ntfy_enabled", True)
+    monkeypatch.setattr(main.app_settings, "ntfy_revive_priority", "default")
+
+    asyncio.run(main._push_ntfy("recording_supervisor_revive", 0.0))
+    assert sent["priority"] == "default"   # 不再是寫死的 high
+
+
+def test_push_ntfy_revive_priority_overridden_by_db(monkeypatch):
+    """DB 設定 ntfy_revive_priority 覆蓋 app_settings（前端即時生效）。"""
+    import main
+    sent = {}
+
+    async def fake_notify(url, title, message, *, priority="default", tags=""):
+        sent["priority"] = priority
+        return True
+
+    async def fake_get_all_settings(pool):
+        return {"ntfy_revive_priority": "low"}
+
+    monkeypatch.setattr(main.ntfy_notifier, "notify", fake_notify)
+    monkeypatch.setattr(main.database, "get_pool", lambda: object())
+    monkeypatch.setattr(main, "get_all_settings", fake_get_all_settings)
+    monkeypatch.setattr(main.app_settings, "ntfy_url", "http://x/pig")
+    monkeypatch.setattr(main.app_settings, "ntfy_enabled", True)
+    monkeypatch.setattr(main.app_settings, "ntfy_revive_priority", "default")
+
+    asyncio.run(main._push_ntfy("recording_supervisor_revive", 0.0))
+    assert sent["priority"] == "low"
+
+
 def test_storage_loop_helper_sets_inference_active(monkeypatch):
     """抽出的 _apply_gpu_schedule 應依 resolve_gpu_active 設 inference 旗標。"""
     import main
