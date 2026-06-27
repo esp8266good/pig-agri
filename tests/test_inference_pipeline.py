@@ -26,6 +26,7 @@ def _make_pipeline():
     p._executor = None
     p._loop_thread = None
     p._running = False
+    p._active = True
     p._event_loop = None
     p._broadcast_fn = None
     return p
@@ -146,3 +147,31 @@ def test_compute_thermal_intensity_clamps_bbox_to_image_bounds():
     # bbox 超出邊界：x2=800 > 640, y2=600 > 480
     result = _compute_thermal_intensity(thermal, 0.0, 0.0, 800.0, 600.0)
     assert result == pytest.approx(100.0)
+
+
+def test_set_active_false_skips_detector():
+    from inference.pipeline import FrameData, InferencePipeline
+    import numpy as np
+    p = InferencePipeline()
+    mock_detector = MagicMock()
+    mock_detector.test_size = (736, 1280)
+    mock_detector.infer.return_value = [np.ones((1, 7), dtype=np.float32)]
+    p._detector = mock_detector
+    p._reid = MagicMock()
+    p._tracker_pool = MagicMock()
+
+    p.set_active(False)
+    rgb = np.zeros((480, 640, 3), dtype=np.uint8)
+    p._process_batch({"cam_01": FrameData(rgb_np=rgb, thermal_np=None,
+                                          ts=1.0, frame_id=1)})
+    mock_detector.infer.assert_not_called()
+
+    # 恢復 active 後會呼叫 detector（驗證 gate 不是永久關）
+    p.set_active(True)
+    # detector 真的被叫到即可（後續 reid/tracker 為 MagicMock，不深究結果）
+    try:
+        p._process_batch({"cam_01": FrameData(rgb_np=rgb, thermal_np=None,
+                                              ts=1.0, frame_id=1)})
+    except Exception:
+        pass
+    mock_detector.infer.assert_called()

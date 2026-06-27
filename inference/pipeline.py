@@ -52,6 +52,7 @@ class InferencePipeline:
         self._executor: ThreadPoolExecutor | None = None
         self._loop_thread: threading.Thread | None = None
         self._running = False
+        self._active = True
         self._event_loop: asyncio.AbstractEventLoop | None = None
         self._broadcast_fn: Callable | None = None
 
@@ -107,6 +108,11 @@ class InferencePipeline:
                 rgb_np=rgb_np, thermal_np=thermal_np, ts=ts, frame_id=frame_id
             )
 
+    def set_active(self, active: bool) -> None:
+        """夜間省電閘門：False → _process_batch 跳過 GPU 計算（detector/ReID/
+        tracker 皆不呼叫，GPU 閒置）。執行緒間僅單一 bool 寫入，無需鎖。"""
+        self._active = active
+
     def _loop(self) -> None:
         while self._running:
             time.sleep(self.LOOP_INTERVAL)
@@ -118,6 +124,8 @@ class InferencePipeline:
 
     def _process_batch(self, snapshot: dict[str, FrameData]) -> None:
         try:
+            if not self._active:
+                return
             cameras = list(snapshot.keys())
             frames = [snapshot[c] for c in cameras]
             batch_imgs = [f.rgb_np for f in frames]
