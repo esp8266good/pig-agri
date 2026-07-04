@@ -159,7 +159,12 @@ class Settings(BaseSettings):
         dotenv_settings,
         file_secret_settings,
     ):
-        return (init_settings, _NonJsonDotEnvSource(settings_cls), file_secret_settings)
+        # 沿用框架已解析好的 dotenv_settings（含呼叫端傳入的 `_env_file` override，
+        # 例如測試用 `_env_file=None` 隔離真實部署 .env）；只在其上疊加「不做
+        # JSON 解碼」的行為，而非重新以 settings_cls 預設 env_file(".env") 建構
+        # ——否則 `_env_file=None` 會被無視，測試永遠讀到真實 .env。
+        dotenv_settings.__class__ = _NonJsonDotEnvSource
+        return (init_settings, dotenv_settings, file_secret_settings)
 
 
 settings = Settings()

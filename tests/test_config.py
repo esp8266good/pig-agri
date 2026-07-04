@@ -49,7 +49,8 @@ def test_zmq_sources_strips_whitespace():
 
 def test_zmq_sources_default_empty():
     # 未設定 ZMQ_SOURCES 時預設為空 list（啟動時由 ZMQReceiver 拋錯）
-    s = Settings(**_BASE)
+    # _env_file=None：隔離真實部署 .env（裡面設了實際的 ZMQ_SOURCES）
+    s = Settings(**_BASE, _env_file=None)
     assert s.zmq_sources == []
 
 
@@ -59,7 +60,8 @@ def test_zmq_warmup_secs_default():
 
 
 def test_zmq_stale_ms_default():
-    s = Settings(**_BASE)
+    # _env_file=None：隔離真實部署 .env（可能設了非預設的 ZMQ_STALE_MS）
+    s = Settings(**_BASE, _env_file=None)
     assert s.zmq_stale_ms == 500.0
 
 

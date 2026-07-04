@@ -19,25 +19,43 @@ from fastapi.testclient import TestClient
 import database
 import zmq_receiver as zmq_mod
 from analysis import scheduler as scheduler_mod
+from contextlib import contextmanager
+
+
+@contextmanager
+def _dummy_zmq_sources():
+    """隔離真實部署 .env 的 ZMQ_SOURCES（label 非 "cam_01"），讓測試中
+    對 "cam_01" 的 /stream 請求不受實際攝影機設定影響。結束還原。"""
+    from config import ZmqSource, settings as _cfg
+    _orig = _cfg.zmq_sources
+    _cfg.zmq_sources = [ZmqSource(
+        name="t", src_host="127.0.0.1", src_port=5555,
+        src_topic="t", label="cam_01",
+    )]
+    try:
+        yield
+    finally:
+        _cfg.zmq_sources = _orig
 
 
 @pytest.fixture
 def client():
     import inference.pipeline as pipeline_mod
-    with (
-        patch.object(database, "connect", new_callable=AsyncMock),
-        patch.object(database, "disconnect", new_callable=AsyncMock),
-        patch.object(zmq_mod.zmq_receiver, "start"),
-        patch.object(zmq_mod.zmq_receiver, "stop"),
-        patch.object(pipeline_mod.inference_pipeline, "start"),
-        patch.object(pipeline_mod.inference_pipeline, "stop"),
-        patch("hls_manager.hls_manager.stop_all"),
-        patch.object(scheduler_mod.Scheduler, "start", new_callable=AsyncMock),
-        patch.object(scheduler_mod.Scheduler, "stop", new_callable=AsyncMock),
-    ):
-        from main import app
-        with TestClient(app) as c:
-            yield c
+    with _dummy_zmq_sources():
+        with (
+            patch.object(database, "connect", new_callable=AsyncMock),
+            patch.object(database, "disconnect", new_callable=AsyncMock),
+            patch.object(zmq_mod.zmq_receiver, "start"),
+            patch.object(zmq_mod.zmq_receiver, "stop"),
+            patch.object(pipeline_mod.inference_pipeline, "start"),
+            patch.object(pipeline_mod.inference_pipeline, "stop"),
+            patch("hls_manager.hls_manager.stop_all"),
+            patch.object(scheduler_mod.Scheduler, "start", new_callable=AsyncMock),
+            patch.object(scheduler_mod.Scheduler, "stop", new_callable=AsyncMock),
+        ):
+            from main import app
+            with TestClient(app) as c:
+                yield c
 
 
 def test_health_returns_ok(client):

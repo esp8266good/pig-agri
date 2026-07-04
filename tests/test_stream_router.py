@@ -2,23 +2,44 @@ import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
+from contextlib import contextmanager
+
+
+@contextmanager
+def _dummy_zmq_sources():
+    """隔離真實部署 .env 的 ZMQ_SOURCES，讓測試中對 "cam_01"/"rpi_sensors"
+    的 /stream 請求（label 白名單檢查）不受實際攝影機設定影響。結束還原。
+    "unknown_cam" 刻意不在清單內，供 404 測試使用。"""
+    from config import ZmqSource, settings as _cfg
+    _orig = _cfg.zmq_sources
+    _cfg.zmq_sources = [
+        ZmqSource(name="t1", src_host="127.0.0.1", src_port=5555,
+                   src_topic="t", label="cam_01"),
+        ZmqSource(name="t2", src_host="127.0.0.1", src_port=5556,
+                   src_topic="t", label="rpi_sensors"),
+    ]
+    try:
+        yield
+    finally:
+        _cfg.zmq_sources = _orig
 
 
 @pytest.fixture
 def client():
     import inference.pipeline as pipeline_mod
-    with (
-        patch("database.connect", new_callable=AsyncMock),
-        patch("database.disconnect", new_callable=AsyncMock),
-        patch("zmq_receiver.zmq_receiver.start"),
-        patch("zmq_receiver.zmq_receiver.stop"),
-        patch.object(pipeline_mod.inference_pipeline, "start"),
-        patch.object(pipeline_mod.inference_pipeline, "stop"),
-        patch("hls_manager.hls_manager.stop_all"),
-    ):
-        from main import app
-        with TestClient(app) as c:
-            yield c
+    with _dummy_zmq_sources():
+        with (
+            patch("database.connect", new_callable=AsyncMock),
+            patch("database.disconnect", new_callable=AsyncMock),
+            patch("zmq_receiver.zmq_receiver.start"),
+            patch("zmq_receiver.zmq_receiver.stop"),
+            patch.object(pipeline_mod.inference_pipeline, "start"),
+            patch.object(pipeline_mod.inference_pipeline, "stop"),
+            patch("hls_manager.hls_manager.stop_all"),
+        ):
+            from main import app
+            with TestClient(app) as c:
+                yield c
 
 
 def test_live_returns_m3u8_url(client):
