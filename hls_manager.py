@@ -48,9 +48,11 @@ FFMPEG_LOG_LEVEL: str = getattr(settings, "ffmpeg_log_level", "warning")  # debu
 _HLS_TIME: int = 4
 # _emit_log 環形上限（約 30 分鐘餘量，遠超單一小時所需）
 _FED_LOG_MAX: int = TARGET_FPS * 1800
-# 錄影監督者：thermal 串流僅在「近期確實有送 thermal 幀」時才確保（避免對
-# 從未裝 thermal 的攝影機平白起一條永遠無資料的 ffmpeg）。
-_THERMAL_SEEN_WINDOW: float = 60.0
+# 錄影監督者：串流僅在「近期確實有送幀」時才確保（rgb 與 thermal 皆然）。
+# 斷線／從未連上的攝影機不會被平白 mkdir 出小時目錄 + 空 ffmpeg（否則前端
+# timeline 會把空目錄誤判成有錄影片段）。窗須小於 watchdog 逐出門檻
+# （NO_FRAME_TIMEOUT=30s），否則會在「已逐出但仍算近期」的空窗重建出空目錄。
+_RECORDING_SEEN_WINDOW: float = 20.0
 # 非單調 capture_ts 的 clamp 增量
 _PDT_MONOTONIC_EPS: float = 1e-3
 
@@ -689,15 +691,16 @@ class HLSManager:
             return (camera_id, stream_type) in self._streams
 
     def desired_recording_keys(self, cameras: list[str]) -> list[StreamKey]:
-        """錄影監督者要確保的串流：每攝影機 rgb 一律含；thermal 僅當近期
-        （_THERMAL_SEEN_WINDOW 秒內）確實送過 thermal 幀。"""
+        """錄影監督者要確保的串流：rgb 與 thermal 皆僅當該攝影機近期
+        （_RECORDING_SEEN_WINDOW 秒內）確實送過該類型的幀才納入。斷線／
+        從未連上的攝影機不納入 → 不會被建出空的小時錄影目錄。"""
         now = time.time()
         keys: list[StreamKey] = []
         for cam in cameras:
-            keys.append((cam, "rgb"))
-            seen = self._last_seen.get((cam, "thermal"))
-            if seen is not None and now - seen <= _THERMAL_SEEN_WINDOW:
-                keys.append((cam, "thermal"))
+            for stype in ("rgb", "thermal"):
+                seen = self._last_seen.get((cam, stype))
+                if seen is not None and now - seen <= _RECORDING_SEEN_WINDOW:
+                    keys.append((cam, stype))
         return keys
 
 
