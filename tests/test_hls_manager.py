@@ -725,17 +725,34 @@ def test_restart_swallows_spawn_failure(tmp_path, monkeypatch):
     stream._restart(new_dir, rolling=False, mode="record")
 
 
-def test_desired_recording_keys_rgb_always_thermal_when_seen(manager, monkeypatch):
-    # rgb 一律含
+def test_desired_recording_keys_only_recently_seen(manager, monkeypatch):
+    # 從未送幀（斷線/離線）的攝影機 → 不納入，避免建出空錄影目錄
     m, fake_proc = manager
     keys = m.desired_recording_keys(["cam_01"])
-    assert ("cam_01", "rgb") in keys
+    assert ("cam_01", "rgb") not in keys
     assert ("cam_01", "thermal") not in keys
 
-    # feed 一筆 thermal（即使沒有 active stream，也應記 last_seen）
-    m.feed("cam_01", "thermal", b"\xff\xd8", capture_ts=None)
+    # 送 rgb 幀後才納入 rgb（即使沒有 active stream，feed 也記 last_seen）
+    m.feed("cam_01", "rgb", b"\xff\xd8", capture_ts=None)
     keys2 = m.desired_recording_keys(["cam_01"])
-    assert ("cam_01", "thermal") in keys2
+    assert ("cam_01", "rgb") in keys2
+    assert ("cam_01", "thermal") not in keys2
+
+    # 送 thermal 幀後 thermal 也納入
+    m.feed("cam_01", "thermal", b"\xff\xd8", capture_ts=None)
+    keys3 = m.desired_recording_keys(["cam_01"])
+    assert ("cam_01", "thermal") in keys3
+
+
+def test_desired_recording_keys_excludes_stale_seen(manager, monkeypatch):
+    # 超過 _RECORDING_SEEN_WINDOW 沒送幀（斷線）→ 不再納入
+    import hls_manager
+    m, fake_proc = manager
+    m.feed("cam_01", "rgb", b"\xff\xd8", capture_ts=None)
+    # 把 last_seen 往回撥超過窗
+    m._last_seen[("cam_01", "rgb")] = time.time() - hls_manager._RECORDING_SEEN_WINDOW - 5
+    keys = m.desired_recording_keys(["cam_01"])
+    assert ("cam_01", "rgb") not in keys
 
 
 def test_has_stream_reflects_streams(manager):
