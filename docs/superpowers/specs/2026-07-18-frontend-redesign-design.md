@@ -98,7 +98,8 @@ VOD 回放）**原樣搬移、零行為變更**；版面、CSS、檔案結構全
 static/
   index.html          結構標記（~400 行）
   css/app.css         全部樣式
-  js/api.js           fetch/WS 封裝
+  js/state.js         共享狀態 S、共用 DOM 參照、微型 UI 工具（不 import 其他模組）
+  js/api.js           fetch 封裝（新程式碼用）
   js/player.js        HLS 播放、bbox overlay、transport（原邏輯原樣搬入）
   js/timeline.js      月曆、24小時格、儲存管理
   js/grid.js          新：grid 監看模式
