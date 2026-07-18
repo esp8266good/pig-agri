@@ -120,6 +120,11 @@
     <section class="left-col">
       <!-- Video card -->
       <div class="video-card">
+        <div id="vod-banner" hidden>
+          <svg class="icon"><use href="#i-play"/></svg>
+          <span id="vod-banner-text">回放中</span>
+          <button id="vod-banner-live-btn">回到直播</button>
+        </div>
         <div id="video-wrap">
           <video id="video" autoplay muted playsinline></video>
           <canvas id="overlay" aria-hidden="true"></canvas>

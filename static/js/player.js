@@ -57,6 +57,10 @@ export function loadVod(startTs) {
         hour: '2-digit', minute: '2-digit',
       });
       setStatus(`回放中 ${label}`, 'vod');
+      const hh = String(dt.getHours()).padStart(2, '0');
+      els.vodBannerText.textContent =
+        `回放中：${dt.getMonth() + 1}/${dt.getDate()} ${hh}:00–${hh}:59`;
+      els.vodBanner.hidden = false;
     });
 
     S.hls.on(Hls.Events.ERROR, (_, data) => {
@@ -71,6 +75,7 @@ export function loadVod(startTs) {
 }
 
 export function switchToLive() {
+  els.vodBanner.hidden = true;
   if (S.isLive) return;
   S.isLive = true;
   els.liveBtn.style.display = 'none';
@@ -678,3 +683,4 @@ document.querySelectorAll('.type-btn').forEach(btn => {
 });
 els.liveBtn.addEventListener('click', switchToLive);
 els.liveBtnT.addEventListener('click', onLiveBtnClick);
+els.vodBannerLiveBtn.addEventListener('click', switchToLive);

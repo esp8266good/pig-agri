@@ -84,6 +84,7 @@ els.camSelect.addEventListener('change', () => {
   if (!S.isLive) {
     S.isLive = true;
     els.liveBtn.style.display = 'none';
+    els.vodBanner.hidden = true;
     detachVodListeners();
     clearTimeout(S.vodDebounceTimer);
     clearTimeout(S.trackingFetchTimer);

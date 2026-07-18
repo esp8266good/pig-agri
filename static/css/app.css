@@ -213,6 +213,16 @@
       box-shadow: var(--shadow-lg);
     }
 
+    #vod-banner { display: flex; align-items: center; gap: var(--space-2);
+      padding: var(--space-2) var(--space-4); background: var(--vod-dim);
+      color: var(--vod); border-bottom: 1px solid var(--vod-border);
+      font-size: var(--text-xs); font-weight: 500; }
+    #vod-banner[hidden] { display: none; }
+    #vod-banner button { margin-left: auto; padding: 2px 10px;
+      border: 1px solid var(--vod-border); border-radius: var(--radius-full);
+      color: var(--vod); background: none; cursor: pointer; }
+    #vod-banner button:hover { background: var(--vod); color: #140d02; }
+
     #video-wrap {
       position: relative;
       width: 100%;
@@ -737,8 +747,11 @@
       border-bottom: 1px solid var(--divider);
       color: var(--text);
     }
-    .anomaly-row td { background: var(--error-dim); }
+    .anomaly-row td { background: none; box-shadow: inset 3px 0 0 var(--error); }
     .anomaly-cell { color: var(--error); font-weight: 600; }
+    .activity-bar { height: 3px; border-radius: 2px; background: var(--accent);
+      opacity: 0.7; margin-top: 3px; max-width: 72px; }
+    .anomaly-row .activity-bar { background: var(--error); }
     .pig-empty-msg { color: var(--text-faint); font-style: italic; padding: var(--space-3); }
     /* 可點欄頭排序 */
     #pig-status-table th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
@@ -747,6 +760,12 @@
     /* 點列選取強調 */
     #pig-status-table tr.pig-row { cursor: pointer; }
     #pig-status-table tr.pig-row.selected td { background: var(--accent-dim); box-shadow: inset 2px 0 0 var(--accent); }
+    /* selected + anomaly 同時成立：兩個 inset box-shadow 疊加（accent 內層 2px 蓋在
+       error 外層 5px 之上，而非互相取代），維持雙重可辨識性而非其中一個訊號消失 */
+    #pig-status-table tr.pig-row.selected.anomaly-row td {
+      background: var(--accent-dim);
+      box-shadow: inset 2px 0 0 var(--accent), inset 5px 0 0 var(--error);
+    }
     /* 「只顯示選取」開關 */
     .solo-toggle { display: flex; align-items: center; gap: var(--space-2);
                    padding: var(--space-2) var(--space-3); font-size: var(--text-xs);

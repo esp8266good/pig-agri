@@ -48,6 +48,9 @@ export const els = {
   seekHandle:   document.getElementById('seek-handle'),
   liveBtnT:     document.getElementById('transport-live-btn'),
   liveLabelT:   document.getElementById('transport-live-label'),
+  vodBanner:    document.getElementById('vod-banner'),
+  vodBannerText:document.getElementById('vod-banner-text'),
+  vodBannerLiveBtn: document.getElementById('vod-banner-live-btn'),
 };
 
 // ── Status helpers ────────────────────────────────────────

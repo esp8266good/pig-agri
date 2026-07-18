@@ -176,6 +176,7 @@ export function renderPigStatus() {
     });
   }
   sortPigRows(rows);
+  const maxRate = Math.max(...rows.map(r => r.act ?? 0), 1e-9);
   for (const r of rows) {
     const actVal  = r.act  != null ? r.act.toFixed(1)  : '—';
     const tempVal = r.temp != null ? r.temp.toFixed(1) : '—';
@@ -193,6 +194,13 @@ export function renderPigStatus() {
       <td class="${r.tempAnomaly ? 'anomaly-cell' : ''}">
         ${r.tempAnomaly ? '🌡 ' : ''}${tempVal}
       </td>`;
+    if (r.act != null) {
+      const activityTd = row.children[1];
+      const bar = document.createElement('div');
+      bar.className = 'activity-bar';
+      bar.style.width = `${Math.max(4, Math.round(r.act / maxRate * 100))}%`;
+      activityTd.appendChild(bar);
+    }
     els.pigStatusBody.appendChild(row);
   }
 }
