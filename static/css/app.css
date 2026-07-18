@@ -54,11 +54,8 @@
       color: var(--text);
       background: var(--bg);
       min-height: 100dvh;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      padding: var(--space-6) var(--space-4);
-      gap: var(--space-4);
+      display: block;
+      padding: 0;
     }
     button { cursor: pointer; border: none; background: none; font: inherit; color: inherit; }
     select { font: inherit; }
@@ -70,13 +67,19 @@
 
     /* ── Header ─────────────────────────────────────────────── */
     header {
+      position: sticky;
+      top: 0;
+      z-index: 50;
       width: 100%;
-      max-width: 840px;
+      max-width: none;
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: var(--space-3);
       flex-wrap: wrap;
+      padding: var(--space-3) var(--space-4);
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
     }
     .logo {
       display: flex;
@@ -120,6 +123,27 @@
       transition: background var(--transition), color var(--transition);
     }
     .icon-btn:hover { background: var(--surface-3); color: var(--text); }
+
+    /* ── Layout shell（雙欄／單欄）───────────────────────────── */
+    .layout {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: var(--space-4);
+      padding: var(--space-4);
+      max-width: 1720px;
+      margin: 0 auto;
+    }
+    .video-card, #timeline-section, #bottom-panel { max-width: none; }
+    @media (min-width: 1200px) {
+      .layout { grid-template-columns: minmax(0, 1fr) 400px; align-items: start; }
+      .right-col { position: sticky; top: 72px;
+                   max-height: calc(100dvh - 88px); display: flex; }
+      .right-col #bottom-panel { display: flex; flex-direction: column; width: 100%; }
+      .right-col .tab-content.active { overflow-y: auto; flex: 1; }
+    }
+    @media (max-width: 1199px) {
+      #tab-bar { position: sticky; top: 60px; z-index: 40; }
+    }
     #bell-badge {
       position: absolute;
       top: 2px; right: 2px;
@@ -180,7 +204,6 @@
     /* ── Video card ─────────────────────────────────────────── */
     .video-card {
       width: 100%;
-      max-width: 840px;
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: var(--radius-lg);
@@ -348,7 +371,7 @@
 
     /* ── Responsive ─────────────────────────────────────────── */
     @media (max-width: 480px) {
-      body { padding: var(--space-4) var(--space-3); gap: var(--space-3); }
+      .layout { padding: var(--space-3); gap: var(--space-3); }
       .stats-row { display: none; }
     }
 
@@ -362,7 +385,6 @@
     /* ── Timeline ──────────────────────────────────────────── */
     #timeline-section {
       width: 100%;
-      max-width: 840px;
       display: flex;
       flex-direction: column;
       gap: var(--space-2);
@@ -611,7 +633,6 @@
     /* ── Bottom panel ──────────────────────────────────────── */
     #bottom-panel {
       width: 100%;
-      max-width: 840px;
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: var(--radius-lg);

@@ -116,212 +116,220 @@
     </div>
   </header>
 
-  <!-- Video card -->
-  <div class="video-card">
-    <div id="video-wrap">
-      <video id="video" autoplay muted playsinline></video>
-      <canvas id="overlay" aria-hidden="true"></canvas>
-      <pre id="bbox-hud" aria-hidden="true"></pre>
-      <div class="video-skeleton visible" id="skeleton" aria-hidden="true">
-        <div class="skeleton-pulse"></div>
-      </div>
-    </div>
-
-    <!-- Transport / scrubber -->
-    <div class="transport" id="transport">
-      <button class="transport-play" id="play-btn" aria-label="播放或暫停" title="播放 / 暫停">
-        <svg class="icon"><use id="play-icon-use" href="#i-pause"/></svg></button>
-      <span class="transport-time" id="time-cur" title="">LIVE</span>
-      <div class="transport-track" id="seek-track" role="slider" tabindex="0"
-           aria-label="播放進度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
-        <div class="transport-buffered" id="seek-buffered"></div>
-        <div class="transport-progress" id="seek-progress"></div>
-        <div class="transport-handle" id="seek-handle"></div>
-      </div>
-      <span class="transport-time" id="time-dur">LIVE</span>
-      <button class="transport-live-btn" id="transport-live-btn" data-state="at-edge">
-        <span class="transport-live-dot"></span><span id="transport-live-label">LIVE</span>
-      </button>
-    </div>
-
-    <!-- Footer bar -->
-    <div class="video-footer">
-      <div id="status" class="status-pill" aria-live="polite" aria-atomic="true">
-        <span class="status-dot"></span>
-        <span id="status-text">初始化中...</span>
-      </div>
-      <div class="stats-row">
-        <div class="stat-chip">
-          豬隻：<strong id="count-badge">—</strong>
+  <main class="layout">
+    <section class="left-col">
+      <!-- Video card -->
+      <div class="video-card">
+        <div id="video-wrap">
+          <video id="video" autoplay muted playsinline></video>
+          <canvas id="overlay" aria-hidden="true"></canvas>
+          <pre id="bbox-hud" aria-hidden="true"></pre>
+          <div class="video-skeleton visible" id="skeleton" aria-hidden="true">
+            <div class="skeleton-pulse"></div>
+          </div>
         </div>
-        <div class="stat-chip" id="latency-chip" style="display:none">
-          延遲：<strong id="latency-val">—</strong> ms
+
+        <!-- Transport / scrubber -->
+        <div class="transport" id="transport">
+          <button class="transport-play" id="play-btn" aria-label="播放或暫停" title="播放 / 暫停">
+            <svg class="icon"><use id="play-icon-use" href="#i-pause"/></svg></button>
+          <span class="transport-time" id="time-cur" title="">LIVE</span>
+          <div class="transport-track" id="seek-track" role="slider" tabindex="0"
+               aria-label="播放進度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <div class="transport-buffered" id="seek-buffered"></div>
+            <div class="transport-progress" id="seek-progress"></div>
+            <div class="transport-handle" id="seek-handle"></div>
+          </div>
+          <span class="transport-time" id="time-dur">LIVE</span>
+          <button class="transport-live-btn" id="transport-live-btn" data-state="at-edge">
+            <span class="transport-live-dot"></span><span id="transport-live-label">LIVE</span>
+          </button>
+        </div>
+
+        <!-- Footer bar -->
+        <div class="video-footer">
+          <div id="status" class="status-pill" aria-live="polite" aria-atomic="true">
+            <span class="status-dot"></span>
+            <span id="status-text">初始化中...</span>
+          </div>
+          <div class="stats-row">
+            <div class="stat-chip">
+              豬隻：<strong id="count-badge">—</strong>
+            </div>
+            <div class="stat-chip" id="latency-chip" style="display:none">
+              延遲：<strong id="latency-val">—</strong> ms
+            </div>
+          </div>
         </div>
       </div>
-    </div>
-  </div>
 
-  <!-- Timeline -->
-  <div id="timeline-section">
-    <div id="calendar">
-      <div id="calendar-header">
-        <button class="cal-nav-btn" id="prev-month-btn" aria-label="上一月">&#8249;</button>
-        <span id="calendar-label"></span>
-        <button class="cal-nav-btn" id="next-month-btn" aria-label="下一月">&#8250;</button>
+      <!-- Timeline -->
+      <div id="timeline-section">
+        <div id="calendar">
+          <div id="calendar-header">
+            <button class="cal-nav-btn" id="prev-month-btn" aria-label="上一月">&#8249;</button>
+            <span id="calendar-label"></span>
+            <button class="cal-nav-btn" id="next-month-btn" aria-label="下一月">&#8250;</button>
+          </div>
+          <div id="calendar-weekdays"><span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span></div>
+          <div id="calendar-grid"></div>
+        </div>
+        <div id="timeline-controls">
+          <button id="live-btn" style="display:none"><span class="status-dot"></span> Live</button>
+          <label class="select-toggle"><input type="checkbox" id="select-mode-toggle">選取</label>
+        </div>
+        <div id="timeline-bar" role="list" aria-label="所選日期的每小時時間軸"></div>
+        <div id="storage-action-bar" role="toolbar" aria-label="儲存管理操作">
+          <span id="storage-sel-count">已選 0 小時</span>
+          <button id="btn-retain">保留</button>
+          <button id="btn-bookmark">書籤</button>
+          <button id="btn-delete-rec">刪除</button>
+          <button id="btn-clear-sel">取消選取</button>
+        </div>
       </div>
-      <div id="calendar-weekdays"><span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span></div>
-      <div id="calendar-grid"></div>
-    </div>
-    <div id="timeline-controls">
-      <button id="live-btn" style="display:none"><span class="status-dot"></span> Live</button>
-      <label class="select-toggle"><input type="checkbox" id="select-mode-toggle">選取</label>
-    </div>
-    <div id="timeline-bar" role="list" aria-label="所選日期的每小時時間軸"></div>
-    <div id="storage-action-bar" role="toolbar" aria-label="儲存管理操作">
-      <span id="storage-sel-count">已選 0 小時</span>
-      <button id="btn-retain">保留</button>
-      <button id="btn-bookmark">書籤</button>
-      <button id="btn-delete-rec">刪除</button>
-      <button id="btn-clear-sel">取消選取</button>
-    </div>
-  </div>
+
+      <div id="grid-view" hidden></div><!-- Task 8 填入 -->
+    </section>
+
+    <aside class="right-col" aria-label="資料面板">
+      <!-- Bottom panel: 豬隻狀態 / 通知中心 / 書籤 -->
+      <div id="bottom-panel">
+        <div id="tab-bar">
+          <button class="tab-btn active" data-tab="pig-status">豬隻狀態</button>
+          <button class="tab-btn" data-tab="notifications">通知中心</button>
+          <button class="tab-btn" data-tab="bookmarks">書籤</button>
+        </div>
+
+        <div id="tab-pig-status" class="tab-content active">
+          <label class="solo-toggle">
+            <input type="checkbox" id="solo-checkbox"> 只顯示選取的豬
+          </label>
+          <table id="pig-status-table">
+            <thead>
+              <tr>
+                <th data-sort="id" class="sortable">豬隻<span class="sort-ind"></span></th>
+                <th data-sort="activity" class="sortable">活動量<span class="sort-ind"></span></th>
+                <th data-sort="temp" class="sortable">體溫<span class="sort-ind"></span></th>
+              </tr>
+            </thead>
+            <tbody id="pig-status-body"></tbody>
+          </table>
+        </div>
+
+        <div id="tab-notifications" class="tab-content">
+          <div class="notif-toolbar" style="display:flex;gap:var(--space-3);align-items:center;padding:var(--space-3) var(--space-4);border-bottom:1px solid var(--surface-3)">
+            <label style="display:flex;gap:6px;align-items:center;cursor:pointer;font-size:var(--text-xs);color:var(--text-muted)">
+              <input type="checkbox" id="show-read-toggle">
+              <span>顯示已讀</span>
+            </label>
+            <button id="clear-read-btn" class="mark-read-btn" style="margin-left:auto">清空已讀</button>
+          </div>
+          <ul id="alert-list"></ul>
+        </div>
+
+        <div id="tab-bookmarks" class="tab-content">
+          <ul id="bookmark-list" style="list-style:none;margin:0;padding:var(--space-3) var(--space-4)"></ul>
+        </div>
+      </div>
+    </aside>
+  </main>
 
   <!-- WS reconnect toast -->
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-  <!-- Bottom panel: 豬隻狀態 / 通知中心 -->
-  <div id="bottom-panel">
-    <div id="tab-bar">
-      <button class="tab-btn active" data-tab="pig-status">豬隻狀態</button>
-      <button class="tab-btn" data-tab="notifications">通知中心</button>
-      <button class="tab-btn" data-tab="settings">設定</button>
-      <button class="tab-btn" data-tab="bookmarks">書籤</button>
-    </div>
-
-    <div id="tab-pig-status" class="tab-content active">
-      <label class="solo-toggle">
-        <input type="checkbox" id="solo-checkbox"> 只顯示選取的豬
-      </label>
-      <table id="pig-status-table">
-        <thead>
-          <tr>
-            <th data-sort="id" class="sortable">豬隻<span class="sort-ind"></span></th>
-            <th data-sort="activity" class="sortable">活動量<span class="sort-ind"></span></th>
-            <th data-sort="temp" class="sortable">體溫<span class="sort-ind"></span></th>
-          </tr>
-        </thead>
-        <tbody id="pig-status-body"></tbody>
-      </table>
-    </div>
-
-    <div id="tab-notifications" class="tab-content">
-      <div class="notif-toolbar" style="display:flex;gap:var(--space-3);align-items:center;padding:var(--space-3) var(--space-4);border-bottom:1px solid var(--surface-3)">
-        <label style="display:flex;gap:6px;align-items:center;cursor:pointer;font-size:var(--text-xs);color:var(--text-muted)">
-          <input type="checkbox" id="show-read-toggle">
-          <span>顯示已讀</span>
-        </label>
-        <button id="clear-read-btn" class="mark-read-btn" style="margin-left:auto">清空已讀</button>
+  <!-- 設定欄位暫存區：Task 5 會把整個 .settings-form 移進設定 drawer，DOM/id 先原封保留 -->
+  <div id="settings-parking" hidden>
+    <div class="settings-form">
+      <div class="settings-field">
+        <label for="set-analysis-interval">分析間隔（分鐘）</label>
+        <select id="set-analysis-interval">
+          <option value="15">15 分鐘</option>
+          <option value="30">30 分鐘</option>
+          <option value="60">60 分鐘</option>
+        </select>
       </div>
-      <ul id="alert-list"></ul>
-    </div>
-
-    <div id="tab-settings" class="tab-content">
-      <div class="settings-form">
-        <div class="settings-field">
-          <label for="set-analysis-interval">分析間隔（分鐘）</label>
-          <select id="set-analysis-interval">
-            <option value="15">15 分鐘</option>
-            <option value="30">30 分鐘</option>
-            <option value="60">60 分鐘</option>
-          </select>
-        </div>
-        <div class="settings-field">
-          <label for="set-analysis-window">活動量評估視窗</label>
-          <select id="set-analysis-window">
-            <option value="15">15 分鐘</option>
-            <option value="30">30 分鐘</option>
-            <option value="60">1 小時</option>
-            <option value="120">2 小時</option>
-            <option value="180">3 小時</option>
-            <option value="240">4 小時</option>
-            <option value="300">5 小時</option>
-            <option value="360">6 小時</option>
-          </select>
-        </div>
-        <div class="settings-field">
-          <label for="set-temp-enabled">體溫異常偵測</label>
-          <select id="set-temp-enabled">
-            <option value="true">啟用</option>
-            <option value="false">停用（Thermal 鏡頭關閉時）</option>
-          </select>
-        </div>
-        <div class="settings-field">
-          <label for="set-anomaly-threshold">異常閾值（σ，≥ 1.0）</label>
-          <input type="number" id="set-anomaly-threshold" min="1.0" step="0.1">
-        </div>
-        <div class="settings-field">
-          <label for="set-hls-retention">影像保留天數（1–365）</label>
-          <input type="number" id="set-hls-retention" min="1" max="365" step="1">
-        </div>
-        <div class="settings-field">
-          <label for="set-recording_schedule_enabled">夜間不錄影</label>
-          <input type="checkbox" id="set-recording_schedule_enabled">
-        </div>
-        <div class="settings-field">
-          <label for="set-recording_off_start">不錄影起</label>
-          <input type="time" id="set-recording_off_start" value="17:00">
-        </div>
-        <div class="settings-field">
-          <label for="set-recording_off_end">不錄影迄</label>
-          <input type="time" id="set-recording_off_end" value="06:30">
-        </div>
-        <div class="settings-field">
-          <label for="set-storage_min_free_gb">最低可用空間 (GB)</label>
-          <input type="number" id="set-storage_min_free_gb" min="1" step="1">
-        </div>
-        <div class="settings-field">
-          <label for="set-storage_check_interval_seconds">監控間隔 (秒)</label>
-          <input type="number" id="set-storage_check_interval_seconds" min="5" step="5">
-        </div>
-        <div class="settings-field">
-          <label for="set-ntfy_enabled">ntfy 推播</label>
-          <input type="checkbox" id="set-ntfy_enabled">
-        </div>
-        <div class="settings-field">
-          <label for="set-ntfy_url">ntfy URL</label>
-          <input type="text" id="set-ntfy_url" placeholder="https://ntfy.../pig">
-        </div>
-        <div class="settings-field">
-          <label for="set-ntfy_revive_priority">串流重建推播優先級</label>
-          <select id="set-ntfy_revive_priority">
-            <option value="min">min（不推播）</option>
-            <option value="low">low</option>
-            <option value="default">default</option>
-            <option value="high">high</option>
-            <option value="urgent">urgent</option>
-          </select>
-        </div>
-        <div class="settings-field">
-          <label for="set-gpu_off_schedule_enabled">夜間停 GPU</label>
-          <input type="checkbox" id="set-gpu_off_schedule_enabled">
-        </div>
-        <div class="settings-field">
-          <label for="set-gpu_off_start">停 GPU 起</label>
-          <input type="time" id="set-gpu_off_start" value="22:00">
-        </div>
-        <div class="settings-field">
-          <label for="set-gpu_off_end">停 GPU 迄</label>
-          <input type="time" id="set-gpu_off_end" value="06:00">
-        </div>
-        <div class="settings-save-row">
-          <button id="save-settings-btn">儲存設定</button>
-          <span id="settings-status"></span>
-        </div>
+      <div class="settings-field">
+        <label for="set-analysis-window">活動量評估視窗</label>
+        <select id="set-analysis-window">
+          <option value="15">15 分鐘</option>
+          <option value="30">30 分鐘</option>
+          <option value="60">1 小時</option>
+          <option value="120">2 小時</option>
+          <option value="180">3 小時</option>
+          <option value="240">4 小時</option>
+          <option value="300">5 小時</option>
+          <option value="360">6 小時</option>
+        </select>
       </div>
-    </div>
-
-    <div id="tab-bookmarks" class="tab-content">
-      <ul id="bookmark-list" style="list-style:none;margin:0;padding:var(--space-3) var(--space-4)"></ul>
+      <div class="settings-field">
+        <label for="set-temp-enabled">體溫異常偵測</label>
+        <select id="set-temp-enabled">
+          <option value="true">啟用</option>
+          <option value="false">停用（Thermal 鏡頭關閉時）</option>
+        </select>
+      </div>
+      <div class="settings-field">
+        <label for="set-anomaly-threshold">異常閾值（σ，≥ 1.0）</label>
+        <input type="number" id="set-anomaly-threshold" min="1.0" step="0.1">
+      </div>
+      <div class="settings-field">
+        <label for="set-hls-retention">影像保留天數（1–365）</label>
+        <input type="number" id="set-hls-retention" min="1" max="365" step="1">
+      </div>
+      <div class="settings-field">
+        <label for="set-recording_schedule_enabled">夜間不錄影</label>
+        <input type="checkbox" id="set-recording_schedule_enabled">
+      </div>
+      <div class="settings-field">
+        <label for="set-recording_off_start">不錄影起</label>
+        <input type="time" id="set-recording_off_start" value="17:00">
+      </div>
+      <div class="settings-field">
+        <label for="set-recording_off_end">不錄影迄</label>
+        <input type="time" id="set-recording_off_end" value="06:30">
+      </div>
+      <div class="settings-field">
+        <label for="set-storage_min_free_gb">最低可用空間 (GB)</label>
+        <input type="number" id="set-storage_min_free_gb" min="1" step="1">
+      </div>
+      <div class="settings-field">
+        <label for="set-storage_check_interval_seconds">監控間隔 (秒)</label>
+        <input type="number" id="set-storage_check_interval_seconds" min="5" step="5">
+      </div>
+      <div class="settings-field">
+        <label for="set-ntfy_enabled">ntfy 推播</label>
+        <input type="checkbox" id="set-ntfy_enabled">
+      </div>
+      <div class="settings-field">
+        <label for="set-ntfy_url">ntfy URL</label>
+        <input type="text" id="set-ntfy_url" placeholder="https://ntfy.../pig">
+      </div>
+      <div class="settings-field">
+        <label for="set-ntfy_revive_priority">串流重建推播優先級</label>
+        <select id="set-ntfy_revive_priority">
+          <option value="min">min（不推播）</option>
+          <option value="low">low</option>
+          <option value="default">default</option>
+          <option value="high">high</option>
+          <option value="urgent">urgent</option>
+        </select>
+      </div>
+      <div class="settings-field">
+        <label for="set-gpu_off_schedule_enabled">夜間停 GPU</label>
+        <input type="checkbox" id="set-gpu_off_schedule_enabled">
+      </div>
+      <div class="settings-field">
+        <label for="set-gpu_off_start">停 GPU 起</label>
+        <input type="time" id="set-gpu_off_start" value="22:00">
+      </div>
+      <div class="settings-field">
+        <label for="set-gpu_off_end">停 GPU 迄</label>
+        <input type="time" id="set-gpu_off_end" value="06:00">
+      </div>
+      <div class="settings-save-row">
+        <button id="save-settings-btn">儲存設定</button>
+        <span id="settings-status"></span>
+      </div>
     </div>
   </div>
 
