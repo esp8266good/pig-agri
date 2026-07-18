@@ -137,6 +137,8 @@ function toggleHourSelection(slot, hourTs) {
 }
 
 function renderDayBar() {
+  clearTimeout(_longPressTimer);
+  _longPressTimer = null;
   els.timelineBar.innerHTML = '';
   if (!S.selectedDay) return;
   for (let h = 0; h < 24; h++) {
@@ -166,6 +168,7 @@ function renderDayBar() {
       slot.addEventListener('pointerdown', () => {
         _longPressTimer = setTimeout(() => {
           _longPressTimer = null;
+          if (!slot.isConnected) return; // DOM 已重建,此 slot 已是遊魂節點
           enterSelectMode();
           toggleHourSelection(slot, slotTs);
         }, 500);
@@ -185,6 +188,10 @@ function renderDayBar() {
         }
       });
       slot.addEventListener('pointerleave', () => {
+        clearTimeout(_longPressTimer);
+        _longPressTimer = null;
+      });
+      slot.addEventListener('pointercancel', () => {
         clearTimeout(_longPressTimer);
         _longPressTimer = null;
       });
