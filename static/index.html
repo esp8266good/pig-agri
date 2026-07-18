@@ -25,7 +25,7 @@
       </svg>
       <span class="logo-text">豬隻監測 Live</span>
     </div>
-    <button id="bell-btn" onclick="switchTab('notifications'); document.getElementById('bottom-panel').scrollIntoView({behavior:'smooth'})" aria-label="通知中心">
+    <button id="bell-btn" aria-label="通知中心">
       🔔 <span id="bell-badge" style="display:none">0</span>
     </button>
     <span id="storage-pill" class="storage-pill" title="儲存狀態" style="display:none">●</span>
@@ -39,9 +39,9 @@
     </div>
     <div class="type-toggle" role="group" aria-label="影像類型">
       <button class="type-btn active" id="btn-rgb" data-type="rgb"
-              onclick="setType('rgb')" aria-pressed="true">RGB</button>
+              aria-pressed="true">RGB</button>
       <button class="type-btn" id="btn-thermal" data-type="thermal"
-              onclick="setType('thermal')" aria-pressed="false">Thermal</button>
+              aria-pressed="false">Thermal</button>
     </div>
   </div>
 
@@ -67,8 +67,7 @@
         <div class="transport-handle" id="seek-handle"></div>
       </div>
       <span class="transport-time" id="time-dur">LIVE</span>
-      <button class="transport-live-btn" id="transport-live-btn" data-state="at-edge"
-              onclick="onLiveBtnClick()">
+      <button class="transport-live-btn" id="transport-live-btn" data-state="at-edge">
         <span class="transport-live-dot"></span><span id="transport-live-label">LIVE</span>
       </button>
     </div>
@@ -94,24 +93,24 @@
   <div id="timeline-section">
     <div id="calendar">
       <div id="calendar-header">
-        <button class="cal-nav-btn" id="prev-month-btn" onclick="prevMonth()" aria-label="上一月">&#8249;</button>
+        <button class="cal-nav-btn" id="prev-month-btn" aria-label="上一月">&#8249;</button>
         <span id="calendar-label"></span>
-        <button class="cal-nav-btn" id="next-month-btn" onclick="nextMonth()" aria-label="下一月">&#8250;</button>
+        <button class="cal-nav-btn" id="next-month-btn" aria-label="下一月">&#8250;</button>
       </div>
       <div id="calendar-weekdays"><span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span></div>
       <div id="calendar-grid"></div>
     </div>
     <div id="timeline-controls">
-      <button id="live-btn" onclick="switchToLive()" style="display:none">● Live</button>
+      <button id="live-btn" style="display:none">● Live</button>
       <label class="select-toggle"><input type="checkbox" id="select-mode-toggle">選取</label>
     </div>
     <div id="timeline-bar" role="list" aria-label="所選日期的每小時時間軸"></div>
     <div id="storage-action-bar" role="toolbar" aria-label="儲存管理操作">
       <span id="storage-sel-count">已選 0 小時</span>
-      <button id="btn-retain" onclick="onRetainClick()">保留</button>
-      <button id="btn-bookmark" onclick="onBookmarkClick()">書籤</button>
-      <button id="btn-delete-rec" onclick="onDeleteRecClick()">刪除</button>
-      <button id="btn-clear-sel" onclick="clearSelection()">取消選取</button>
+      <button id="btn-retain">保留</button>
+      <button id="btn-bookmark">書籤</button>
+      <button id="btn-delete-rec">刪除</button>
+      <button id="btn-clear-sel">取消選取</button>
     </div>
   </div>
 
@@ -121,14 +120,10 @@
   <!-- Bottom panel: 豬隻狀態 / 通知中心 -->
   <div id="bottom-panel">
     <div id="tab-bar">
-      <button class="tab-btn active" data-tab="pig-status"
-              onclick="switchTab('pig-status')">豬隻狀態</button>
-      <button class="tab-btn" data-tab="notifications"
-              onclick="switchTab('notifications')">通知中心</button>
-      <button class="tab-btn" data-tab="settings"
-              onclick="switchTab('settings')">設定</button>
-      <button class="tab-btn" data-tab="bookmarks"
-              onclick="switchTab('bookmarks'); loadBookmarks()">書籤</button>
+      <button class="tab-btn active" data-tab="pig-status">豬隻狀態</button>
+      <button class="tab-btn" data-tab="notifications">通知中心</button>
+      <button class="tab-btn" data-tab="settings">設定</button>
+      <button class="tab-btn" data-tab="bookmarks">書籤</button>
     </div>
 
     <div id="tab-pig-status" class="tab-content active">
@@ -153,7 +148,7 @@
           <input type="checkbox" id="show-read-toggle">
           <span>顯示已讀</span>
         </label>
-        <button id="clear-read-btn" class="mark-read-btn" style="margin-left:auto" onclick="onClearReadClick()">清空已讀</button>
+        <button id="clear-read-btn" class="mark-read-btn" style="margin-left:auto">清空已讀</button>
       </div>
       <ul id="alert-list"></ul>
     </div>
@@ -247,7 +242,7 @@
           <input type="time" id="set-gpu_off_end" value="06:00">
         </div>
         <div class="settings-save-row">
-          <button id="save-settings-btn" onclick="saveSettings()">儲存設定</button>
+          <button id="save-settings-btn">儲存設定</button>
           <span id="settings-status"></span>
         </div>
       </div>
@@ -259,7 +254,7 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
-  <script src="/static/js/app.js"></script>
+  <script type="module" src="/static/js/main.js"></script>
 
   <div id="bookmark-edit-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;align-items:center;justify-content:center">
     <div style="background:var(--surface-2);padding:var(--space-4);border-radius:12px;max-width:420px;width:90%">
@@ -277,8 +272,8 @@
         </label>
       </div>
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
-        <button onclick="closeBookmarkEditModal()">取消</button>
-        <button id="bookmark-edit-save-btn" onclick="saveBookmarkEdit()">儲存</button>
+        <button>取消</button>
+        <button id="bookmark-edit-save-btn">儲存</button>
       </div>
     </div>
   </div>
@@ -296,8 +291,8 @@
       </div>
       <p style="color:#ff6666;font-size:13px">此操作不可逆，將同時刪除影片與該時段的追蹤/告警紀錄。</p>
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
-        <button onclick="closeDeleteModal()">取消</button>
-        <button id="delete-confirm-btn" onclick="confirmDeleteRecordings()" style="background:#ff4444;color:#fff">刪除</button>
+        <button>取消</button>
+        <button id="delete-confirm-btn" style="background:#ff4444;color:#fff">刪除</button>
       </div>
     </div>
   </div>
