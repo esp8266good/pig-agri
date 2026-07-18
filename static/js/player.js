@@ -545,7 +545,9 @@ function getSeekRange() {
 
 function updateTransport() {
   if (!els.transportEl) return;
-  els.playBtn.textContent = els.video.paused ? '▶' : '⏸';
+  if (els.playIconUse) {
+    els.playIconUse.setAttribute('href', els.video.paused ? '#i-play' : '#i-pause');
+  }
   const { start, end, cur } = getSeekRange();
   const span = Math.max(end - start, 0.001);
   const frac = S.transportDragging ? S.dragFrac : (cur - start) / span;

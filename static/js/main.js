@@ -130,4 +130,18 @@ document.querySelectorAll('#pig-status-table th.sortable').forEach(th => {
   }
 }
 
+// #settings-btn / #view-toggle-btn：暫時佔位，Task 5（設定抽屜）/ Task 8（多畫面）接手
+{
+  const settingsBtn = document.getElementById('settings-btn');
+  if (settingsBtn) {
+    settingsBtn.addEventListener('click', () => console.debug('settings drawer: Task 5'));
+  }
+}
+{
+  const viewToggleBtn = document.getElementById('view-toggle-btn');
+  if (viewToggleBtn) {
+    viewToggleBtn.addEventListener('click', () => console.debug('grid view: Task 8'));
+  }
+}
+
 init();

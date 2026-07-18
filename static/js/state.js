@@ -39,6 +39,7 @@ export const els = {
   alertListEl:  document.getElementById('alert-list'),
   transportEl:  document.getElementById('transport'),
   playBtn:      document.getElementById('play-btn'),
+  playIconUse:  document.getElementById('play-icon-use'),
   timeCurEl:    document.getElementById('time-cur'),
   timeDurEl:    document.getElementById('time-dur'),
   seekTrack:    document.getElementById('seek-track'),

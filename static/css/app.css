@@ -1,48 +1,49 @@
-    /* ── Design Tokens ─────────────────────────────────────── */
-    :root {
-      --font-body: 'DM Sans', 'Segoe UI', system-ui, sans-serif;
+:root {
+  --font-body: 'DM Sans', 'Noto Sans TC', 'Segoe UI', system-ui, sans-serif;
+  --text-xs:   clamp(0.75rem,  0.7rem  + 0.25vw, 0.875rem);
+  --text-sm:   clamp(0.875rem, 0.8rem  + 0.35vw, 1rem);
+  --text-base: clamp(1rem,     0.95rem + 0.25vw, 1.125rem);
+  --text-lg:   clamp(1.125rem, 1rem    + 0.75vw, 1.5rem);
+  --space-1: 0.25rem; --space-2: 0.5rem; --space-3: 0.75rem;
+  --space-4: 1rem;    --space-6: 1.5rem; --space-8: 2rem;
+  --radius-sm: 0.375rem; --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;  --radius-full: 9999px;
+  --transition: 160ms cubic-bezier(0.16, 1, 0.3, 1);
 
-      --text-xs:   clamp(0.75rem,  0.7rem  + 0.25vw, 0.875rem);
-      --text-sm:   clamp(0.875rem, 0.8rem  + 0.35vw, 1rem);
-      --text-base: clamp(1rem,     0.95rem + 0.25vw, 1.125rem);
-      --text-lg:   clamp(1.125rem, 1rem    + 0.75vw, 1.5rem);
+  /* 深色階（帶冷綠底蘊） */
+  --bg:        #0b0e0d;
+  --surface:   #101412;
+  --surface-2: #161b19;
+  --surface-3: #1e2421;
+  --border:  rgba(255,255,255,0.08);
+  --divider: rgba(255,255,255,0.05);
+  --text:       #e6eae8;
+  --text-muted: #8b948f;
+  --text-faint: #4c554f;
 
-      --space-1: 0.25rem; --space-2: 0.5rem; --space-3: 0.75rem;
-      --space-4: 1rem;    --space-6: 1.5rem; --space-8: 2rem;
+  /* 語意色：base / dim（背景）/ border 三件套 */
+  --accent:        #2fc98a;
+  --accent-dim:    rgba(47,201,138,0.14);
+  --accent-border: rgba(47,201,138,0.3);
+  --accent-hover:  #27b57a;
+  --vod:        #e8a13c;
+  --vod-dim:    rgba(232,161,60,0.14);
+  --vod-border: rgba(232,161,60,0.3);
+  --error:        #e05252;
+  --error-dim:    rgba(224,82,82,0.14);
+  --error-border: rgba(224,82,82,0.3);
+  --thermal:        #ff8c42;
+  --thermal-dim:    rgba(255,140,66,0.14);
+  --thermal-border: rgba(255,140,66,0.3);
+  --info:        #4da3ff;
+  --info-dim:    rgba(77,163,255,0.14);
+  --info-border: rgba(77,163,255,0.3);
 
-      --radius-sm: 0.375rem; --radius-md: 0.5rem;
-      --radius-lg: 0.75rem;  --radius-full: 9999px;
-
-      --transition: 160ms cubic-bezier(0.16, 1, 0.3, 1);
-    }
-
-    /* ── Dark palette (monitor/CCTV dashboard 風格) ─────────── */
-    :root {
-      --bg:           #0d0d0f;
-      --surface:      #141416;
-      --surface-2:    #1a1a1d;
-      --surface-3:    #222226;
-      --border:       rgba(255,255,255,0.08);
-      --divider:      rgba(255,255,255,0.05);
-
-      --text:         #e8e8ea;
-      --text-muted:   #8a8a90;
-      --text-faint:   #4a4a52;
-
-      --accent:       #22bb77;   /* 綠色 — live 狀態 */
-      --accent-dim:   rgba(34,187,119,0.15);
-      --accent-hover: #1da868;
-
-      --thermal:      #ff8c42;   /* 熱成像橘 */
-      --thermal-dim:  rgba(255,140,66,0.15);
-
-      --error:        #e05252;
-      --error-dim:    rgba(224,82,82,0.15);
-      --warning:      #e0a030;
-
-      --shadow-md: 0 4px 16px rgba(0,0,0,0.4);
-      --shadow-lg: 0 12px 40px rgba(0,0,0,0.6);
-    }
+  --shadow-md: 0 4px 16px rgba(0,0,0,0.4);
+  --shadow-lg: 0 12px 40px rgba(0,0,0,0.6);
+}
+.icon { width: 18px; height: 18px; stroke: currentColor; stroke-width: 1.6;
+        fill: none; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
 
     /* ── Reset ──────────────────────────────────────────────── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -73,7 +74,9 @@
       max-width: 840px;
       display: flex;
       align-items: center;
+      justify-content: space-between;
       gap: var(--space-3);
+      flex-wrap: wrap;
     }
     .logo {
       display: flex;
@@ -91,29 +94,47 @@
       letter-spacing: -0.01em;
       color: var(--text);
     }
-
-    /* ── Controls ───────────────────────────────────────────── */
-    .controls {
-      width: 100%;
-      max-width: 840px;
+    .header-controls {
       display: flex;
       align-items: center;
+      justify-content: center;
       gap: var(--space-3);
       flex-wrap: wrap;
+      flex: 1 1 auto;
     }
-    .control-group {
+    .header-status {
       display: flex;
       align-items: center;
       gap: var(--space-2);
+      flex-shrink: 0;
     }
-    .control-label {
-      font-size: var(--text-xs);
+    .icon-btn {
+      position: relative;
+      width: 36px; height: 36px;
+      flex-shrink: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: var(--radius-full);
       color: var(--text-muted);
-      font-weight: 500;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-      white-space: nowrap;
+      transition: background var(--transition), color var(--transition);
     }
+    .icon-btn:hover { background: var(--surface-3); color: var(--text); }
+    #bell-badge {
+      position: absolute;
+      top: 2px; right: 2px;
+      background: var(--error);
+      color: #fff;
+      font-size: 0.62rem;
+      font-weight: 700;
+      line-height: 1.3;
+      padding: 1px 4px;
+      border-radius: var(--radius-full);
+      min-width: 15px;
+      text-align: center;
+    }
+
+    /* ── Controls ───────────────────────────────────────────── */
     .cam-select {
       background: var(--surface-3);
       color: var(--text);
@@ -268,6 +289,7 @@
       border-color: rgba(224,82,82,0.25);
     }
     .status-dot {
+      display: inline-block;
       width: 6px; height: 6px;
       border-radius: 50%;
       background: currentColor;
@@ -378,6 +400,9 @@
     .cal-day.day-selected { background: var(--accent); color: #000; font-weight: 600; }
     #timeline-controls { display: flex; align-items: center; gap: var(--space-2); }
     #live-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
       padding: var(--space-1) var(--space-3);
       background: var(--accent);
       border-radius: var(--radius-full);
@@ -436,7 +461,7 @@
     .slot-marker.protected-marker { color: #fff; }
     .slot-action-menu {
       position: absolute;
-      background: var(--surface-1);
+      background: var(--surface-2);
       border: 1px solid var(--surface-3);
       border-radius: 6px;
       padding: 4px;
@@ -464,9 +489,9 @@
     #storage-action-bar button { padding: 4px 10px; border-radius: 6px; cursor: pointer; }
     .select-toggle { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; font-size: 13px; cursor: pointer; }
     .status-pill.vod {
-      color: var(--warning);
-      background: rgba(224,160,48,0.15);
-      border-color: rgba(224,160,48,0.3);
+      color: var(--vod);
+      background: var(--vod-dim);
+      border-color: var(--vod-border);
     }
 
     /* ── Transport / scrubber bar ───────────────────────────── */
@@ -532,7 +557,7 @@
       pointer-events: none;
       transition: background var(--transition);
     }
-    .transport.is-vod .transport-progress { background: var(--warning); }
+    .transport.is-vod .transport-progress { background: var(--vod); }
     .transport-handle {
       position: absolute;
       left: 0;
@@ -545,7 +570,7 @@
       pointer-events: none;
       transition: width 120ms, height 120ms, border-color var(--transition);
     }
-    .transport.is-vod .transport-handle { border-color: var(--warning); }
+    .transport.is-vod .transport-handle { border-color: var(--vod); }
     .transport-track:hover .transport-handle,
     .transport-track.dragging .transport-handle { width: 16px; height: 16px; }
     .transport-live-btn {
@@ -581,33 +606,6 @@
     @media (max-width: 480px) {
       .transport-time { min-width: 34px; font-size: 0.66rem; }
       .transport-live-btn { padding: var(--space-1) var(--space-2); font-size: 0.62rem; }
-    }
-
-    /* ── Bell badge ─────────────────────────────────────────── */
-    #bell-btn {
-      margin-left: auto;
-      padding: var(--space-2) var(--space-3);
-      background: var(--surface-2);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-full);
-      font-size: var(--text-sm);
-      color: var(--text-muted);
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      gap: var(--space-1);
-      transition: background var(--transition);
-    }
-    #bell-btn:hover { background: var(--surface-3); }
-    #bell-badge {
-      background: var(--error);
-      color: #fff;
-      font-size: 0.7rem;
-      font-weight: 700;
-      padding: 1px 5px;
-      border-radius: var(--radius-full);
-      min-width: 16px;
-      text-align: center;
     }
 
     /* ── Bottom panel ──────────────────────────────────────── */
@@ -741,6 +739,6 @@
     #save-settings-btn:hover { opacity: 0.85; }
     #settings-status { font-size: var(--text-xs); color: var(--text-muted); }
     .storage-pill { font-size: 14px; margin-left: 8px; cursor: default; }
-    .storage-pill.ok { color: #2ecc71; }
-    .storage-pill.degraded { color: #f39c12; }
-    .storage-pill.down { color: #e74c3c; }
+    .storage-pill.ok { color: var(--accent); }
+    .storage-pill.degraded { color: var(--vod); }
+    .storage-pill.down { color: var(--error); }
