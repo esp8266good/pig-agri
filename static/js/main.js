@@ -30,11 +30,50 @@ async function setViewMode(mode) {
   }
 }
 
+// 切換攝影機的完整狀態重置（原僅存在於 camSelect 的 change handler）。
+// bindGridPick 的點格切換也走這條路徑，行為與下拉選單切換攝影機等價，
+// 避免前一台攝影機的 anomaly/bbox/VOD 狀態殘留到新攝影機。
+// 只含「重置」不含「載入」：loadStream()/loadTimeline()/startLiveTimers()
+// 由呼叫端自行接續（bindGridPick 走 setViewMode('single') 內建的載入，
+// 避免重複載入）。
+function resetCameraState() {
+  stopLiveTimers();
+  S.anomalyMap = {};
+  S.vodAlerts  = [];
+  S.currentObjectIds.clear();
+  S.wsRetryCount = 0;
+  S.latestBoxes = [];
+  S.bboxHistory = [];
+  els.countBadge.textContent = '—';
+  if (!S.isLive) {
+    S.isLive = true;
+    els.liveBtn.style.display = 'none';
+    els.vodBanner.hidden = true;
+    detachVodListeners();
+    clearTimeout(S.vodDebounceTimer);
+    clearTimeout(S.trackingFetchTimer);
+    S.trackingCache.clear();
+    document.querySelectorAll('.timeline-slot.selected')
+      .forEach(s => s.classList.remove('selected'));
+  }
+  clearSelection();
+  if (typeof closeDeleteModal === 'function') closeDeleteModal();
+  if (typeof closeBookmarkEditModal === 'function') closeBookmarkEditModal();
+  if (typeof closeSlotActionMenu === 'function') closeSlotActionMenu();
+}
+
 bindGridPick(cam => {
   S.currentCamera = cam;
   els.camSelect.value = cam;
   try { localStorage.setItem('lastCamera', cam); } catch (_) {}
+  resetCameraState();
+  // setViewMode('single') 內部已呼叫 loadStream()/loadTimeline()/startLiveTimers()，
+  // 這裡不重複呼叫；離開 grid、還原單畫面 UI 都在其中完成。
   setViewMode('single');
+  // 與 camSelect change handler 對齊：立即刷新一次，不等 30s 輪詢。
+  refreshAnomalyMap();
+  refreshNotifications();
+  if (typeof loadBookmarks === 'function') loadBookmarks();
 });
 
 // ── Storage health pill ────────────────────────────────────
@@ -109,29 +148,7 @@ async function init() {
 els.camSelect.addEventListener('change', () => {
   S.currentCamera = els.camSelect.value;
   try { localStorage.setItem('lastCamera', S.currentCamera); } catch (_) {}
-  stopLiveTimers();
-  S.anomalyMap = {};
-  S.vodAlerts  = [];
-  S.currentObjectIds.clear();
-  S.wsRetryCount = 0;
-  S.latestBoxes = [];
-  S.bboxHistory = [];
-  els.countBadge.textContent = '—';
-  if (!S.isLive) {
-    S.isLive = true;
-    els.liveBtn.style.display = 'none';
-    els.vodBanner.hidden = true;
-    detachVodListeners();
-    clearTimeout(S.vodDebounceTimer);
-    clearTimeout(S.trackingFetchTimer);
-    S.trackingCache.clear();
-    document.querySelectorAll('.timeline-slot.selected')
-      .forEach(s => s.classList.remove('selected'));
-  }
-  clearSelection();
-  if (typeof closeDeleteModal === 'function') closeDeleteModal();
-  if (typeof closeBookmarkEditModal === 'function') closeBookmarkEditModal();
-  if (typeof closeSlotActionMenu === 'function') closeSlotActionMenu();
+  resetCameraState();
   loadStream();
   loadTimeline();
   startLiveTimers();

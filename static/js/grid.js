@@ -61,7 +61,10 @@ async function buildTile(root, cam) {
       _players.push({ hls: null, video });
     }
   } catch (_) {
-    tileOffline(tile);
+    // 攝影機斷線最常見的路徑就是這裡（GET /stream/{cam}/live 404 等）——
+    // 沿用 tileError()（同一份「無訊號＋重試鈕」邏輯），讓使用者不用離開
+    // grid 再進來才能重試，直接點格內按鈕重建該格播放器。
+    tileError(tile, cam);
   }
 }
 
