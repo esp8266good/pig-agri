@@ -861,3 +861,32 @@
     .storage-pill.ok { color: var(--accent); }
     .storage-pill.degraded { color: var(--vod); }
     .storage-pill.down { color: var(--error); }
+
+    /* Task 8: Grid 監看模式 */
+    #grid-view { display: grid; gap: var(--space-3);
+      grid-template-columns: repeat(var(--grid-cols, 2), 1fr); }
+    #grid-view[hidden] { display: none; }
+    .grid-tile { position: relative; background: var(--surface); overflow: hidden;
+      border: 1px solid var(--border); border-radius: var(--radius-lg);
+      aspect-ratio: 4/3; cursor: pointer;
+      transition: border-color var(--transition); }
+    .grid-tile:hover { border-color: var(--accent-border); }
+    .grid-tile video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+    .grid-tile.alerting { border-color: var(--error); box-shadow: 0 0 0 1px var(--error); }
+    .tile-info { position: absolute; left: 0; right: 0; bottom: 0;
+      display: flex; align-items: center; gap: var(--space-2);
+      padding: var(--space-1) var(--space-3);
+      background: linear-gradient(transparent, rgba(0,0,0,0.75));
+      font-size: var(--text-xs); }
+    .tile-name { font-weight: 600; }
+    .tile-count { color: var(--text-muted); }
+    .tile-live { margin-left: auto; color: var(--accent); display: inline-flex;
+      align-items: center; gap: 4px; font-weight: 600; letter-spacing: 0.05em; }
+    .grid-tile.offline .tile-live { color: var(--text-faint); }
+    .grid-tile.offline video { opacity: 0.2; }
+    .tile-alert { position: absolute; top: var(--space-2); right: var(--space-2);
+      color: var(--error); }
+    .tile-retry { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+      padding: var(--space-1) var(--space-4); background: var(--surface-3);
+      border: 1px solid var(--border); border-radius: var(--radius-full); }
+    @media (max-width: 700px) { #grid-view { grid-template-columns: 1fr !important; } }

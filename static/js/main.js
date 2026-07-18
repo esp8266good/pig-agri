@@ -3,6 +3,39 @@ import { S, els, setStatus, setSkeleton } from './state.js';
 import { loadStream, startLiveTimers, stopLiveTimers, detachVodListeners } from './player.js';
 import { loadTimeline, clearSelection, closeSlotActionMenu, closeDeleteModal, localDayStart } from './timeline.js';
 import { switchTab, onSortHeaderClick, refreshAnomalyMap, refreshNotifications, loadSettings, loadBookmarks, closeBookmarkEditModal, openSettingsDrawer, closeSettingsDrawer, initSettingsDrawer } from './panels.js';
+import { enterGrid, leaveGrid, bindGridPick } from './grid.js';
+
+let viewMode = 'single';
+
+async function setViewMode(mode) {
+  if (mode === viewMode) return;
+  viewMode = mode;
+  try { localStorage.setItem('viewMode', mode); } catch (_) {}
+  const singleEls = [document.querySelector('.video-card'),
+                     document.getElementById('timeline-section')];
+  const toggleIcon = document.querySelector('#view-toggle-btn use');
+  if (mode === 'grid') {
+    stopLiveTimers();
+    if (S.hls) { S.hls.destroy(); S.hls = null; }   // 單畫面播放器停掉省資源
+    singleEls.forEach(el => el.hidden = true);
+    toggleIcon.setAttribute('href', '#i-single');
+    await enterGrid();
+  } else {
+    leaveGrid();
+    singleEls.forEach(el => el.hidden = false);
+    toggleIcon.setAttribute('href', '#i-grid');
+    loadStream();
+    loadTimeline();
+    startLiveTimers();
+  }
+}
+
+bindGridPick(cam => {
+  S.currentCamera = cam;
+  els.camSelect.value = cam;
+  try { localStorage.setItem('lastCamera', cam); } catch (_) {}
+  setViewMode('single');
+});
 
 // ── Storage health pill ────────────────────────────────────
 async function pollStorageHealth() {
@@ -54,6 +87,9 @@ async function init() {
     loadSettings();
     pollStorageHealth();
     setInterval(pollStorageHealth, 20000);
+
+    const savedMode = (() => { try { return localStorage.getItem('viewMode'); } catch (_) { return null; } })();
+    if (savedMode === 'grid') setViewMode('grid');
   } catch (e) {
     setSkeleton(false);
     setStatus(`無法取得 camera 清單：${e.message}`, 'error');
@@ -130,11 +166,12 @@ document.querySelectorAll('#pig-status-table th.sortable').forEach(th => {
     settingsBtn.addEventListener('click', () => openSettingsDrawer());
   }
 }
-// #view-toggle-btn：暫時佔位，Task 8（多畫面）接手
+// #view-toggle-btn：單畫面 ⇄ Grid 多畫面監看
 {
   const viewToggleBtn = document.getElementById('view-toggle-btn');
   if (viewToggleBtn) {
-    viewToggleBtn.addEventListener('click', () => console.debug('grid view: Task 8'));
+    viewToggleBtn.addEventListener('click',
+      () => setViewMode(viewMode === 'grid' ? 'single' : 'grid'));
   }
 }
 
