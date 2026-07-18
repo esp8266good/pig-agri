@@ -111,14 +111,6 @@ document.querySelectorAll('#pig-status-table th.sortable').forEach(th => {
   const soloCb = document.getElementById('solo-checkbox');
   if (soloCb) soloCb.addEventListener('change', e => { S.soloMode = e.target.checked; });
 }
-{
-  const t = document.getElementById('select-mode-toggle');
-  if (t) t.addEventListener('change', e => {
-    S.selectMode = e.target.checked;
-    clearSelection();
-  });
-}
-
 // #bell-btn：切到通知分頁並捲動到底部面板
 {
   const bellBtn = document.getElementById('bell-btn');

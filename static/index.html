@@ -165,7 +165,15 @@
 
       <!-- Timeline -->
       <div id="timeline-section">
-        <div id="calendar">
+        <div id="timeline-controls">
+          <button id="date-btn" aria-haspopup="dialog" aria-expanded="false">
+            <svg class="icon"><use href="#i-calendar"/></svg>
+            <span id="date-btn-label">—</span>
+            <svg class="icon" style="width:14px;height:14px"><use href="#i-chev-r" transform="rotate(90 12 12)"/></svg>
+          </button>
+          <button id="live-btn" style="display:none"><span class="status-dot"></span> Live</button>
+        </div>
+        <div id="calendar" class="cal-popover" hidden>
           <div id="calendar-header">
             <button class="cal-nav-btn" id="prev-month-btn" aria-label="上一月">&#8249;</button>
             <span id="calendar-label"></span>
@@ -174,17 +182,13 @@
           <div id="calendar-weekdays"><span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span></div>
           <div id="calendar-grid"></div>
         </div>
-        <div id="timeline-controls">
-          <button id="live-btn" style="display:none"><span class="status-dot"></span> Live</button>
-          <label class="select-toggle"><input type="checkbox" id="select-mode-toggle">選取</label>
-        </div>
         <div id="timeline-bar" role="list" aria-label="所選日期的每小時時間軸"></div>
         <div id="storage-action-bar" role="toolbar" aria-label="儲存管理操作">
           <span id="storage-sel-count">已選 0 小時</span>
-          <button id="btn-retain">保留</button>
-          <button id="btn-bookmark">書籤</button>
-          <button id="btn-delete-rec">刪除</button>
-          <button id="btn-clear-sel">取消選取</button>
+          <button id="btn-retain"><svg class="icon"><use href="#i-lock"/></svg>保留</button>
+          <button id="btn-bookmark"><svg class="icon"><use href="#i-star"/></svg>書籤</button>
+          <button id="btn-delete-rec"><svg class="icon"><use href="#i-trash"/></svg>刪除</button>
+          <button id="btn-clear-sel"><svg class="icon"><use href="#i-x"/></svg>取消選取</button>
         </div>
       </div>
 

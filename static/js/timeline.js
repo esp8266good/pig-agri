@@ -60,6 +60,34 @@ function renderCalendar() {
   els.nextMonthBtn.disabled = new Date(y, m, 1) >= thisMonthFirst;
 }
 
+// ── 日期按鈕 popover ───────────────────────────────────────
+const dateBtnEl = document.getElementById('date-btn');
+const dateBtnLabelEl = document.getElementById('date-btn-label');
+const calendarPopoverEl = document.getElementById('calendar');
+
+function setCalendarOpen(open) {
+  calendarPopoverEl.hidden = !open;
+  dateBtnEl.setAttribute('aria-expanded', String(open));
+  if (open) {
+    setTimeout(() => document.addEventListener('click', _onCalendarOutside), 0);
+  } else {
+    document.removeEventListener('click', _onCalendarOutside);
+  }
+}
+function _onCalendarOutside(e) {
+  if (!calendarPopoverEl.contains(e.target) && !dateBtnEl.contains(e.target)) {
+    setCalendarOpen(false);
+  }
+}
+dateBtnEl.addEventListener('click', () => setCalendarOpen(calendarPopoverEl.hidden));
+
+function updateDateBtnLabel() {
+  if (!S.selectedDay) return;
+  const d = new Date(S.selectedDay * 1000);
+  dateBtnLabelEl.textContent =
+    `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function prevMonth() {
   clearSelection();
   if (typeof closeSlotActionMenu === 'function') closeSlotActionMenu();
@@ -81,6 +109,31 @@ export async function selectDay(dayTs) {
   await loadDaySegments();
   renderDayBar();
   renderCalendar();
+  updateDateBtnLabel();
+  setCalendarOpen(false);
+}
+
+let _longPressTimer = null;
+
+function enterSelectMode() {
+  S.selectMode = true;
+  els.timelineBar.classList.add('selecting');
+  updateActionBar();
+}
+function exitSelectMode() {
+  S.selectMode = false;
+  els.timelineBar.classList.remove('selecting');
+}
+function toggleHourSelection(slot, hourTs) {
+  if (S.selectedHours.has(hourTs)) {
+    S.selectedHours.delete(hourTs);
+    slot.classList.remove('slot-selected');
+  } else {
+    S.selectedHours.add(hourTs);
+    slot.classList.add('slot-selected');
+  }
+  if (S.selectedHours.size === 0) exitSelectMode();
+  updateActionBar();
 }
 
 function renderDayBar() {
@@ -93,6 +146,7 @@ function renderDayBar() {
     slot.className = 'timeline-slot' + (hasData ? ' has-data' : '');
     slot.setAttribute('role', 'listitem');
     slot.title = new Date(slotTs * 1000).toLocaleString('zh-TW');
+    slot.textContent = String(h).padStart(2, '0');
     const seg = S.savedSegmentsMap.get(slotTs);
     if (seg) {
       slot.classList.add(seg.label ? 'bookmarked' : 'protected');
@@ -100,6 +154,7 @@ function renderDayBar() {
       marker.className = 'slot-marker' + (seg.label ? '' : ' protected-marker');
       marker.textContent = seg.label ? '★' : '🔒';
       marker.title = seg.label ? `書籤:${seg.label}(點擊管理)` : '保留中(點擊管理)';
+      marker.addEventListener('pointerdown', (e) => e.stopPropagation());
       marker.onclick = (e) => {
         e.stopPropagation();
         openSlotActionMenu(marker, seg);
@@ -108,17 +163,30 @@ function renderDayBar() {
     }
     if (S.selectedHours.has(slotTs)) slot.classList.add('slot-selected');
     if (hasData) {
-      slot.addEventListener('click', () => {
+      slot.addEventListener('pointerdown', () => {
+        _longPressTimer = setTimeout(() => {
+          _longPressTimer = null;
+          enterSelectMode();
+          toggleHourSelection(slot, slotTs);
+        }, 500);
+      });
+      slot.addEventListener('pointerup', (e) => {
+        if (_longPressTimer === null) return; // 長按已觸發,此次不當 click
+        clearTimeout(_longPressTimer);
+        _longPressTimer = null;
+        if (e.shiftKey && !S.selectMode) enterSelectMode();
         if (S.selectMode) {
-          if (S.selectedHours.has(slotTs)) { S.selectedHours.delete(slotTs); slot.classList.remove('slot-selected'); }
-          else { S.selectedHours.add(slotTs); slot.classList.add('slot-selected'); }
-          updateActionBar();
+          toggleHourSelection(slot, slotTs);
         } else {
           document.querySelectorAll('.timeline-slot.selected')
             .forEach(s => s.classList.remove('selected'));
           slot.classList.add('selected');
           loadVod(slotTs);
         }
+      });
+      slot.addEventListener('pointerleave', () => {
+        clearTimeout(_longPressTimer);
+        _longPressTimer = null;
       });
     }
     els.timelineBar.appendChild(slot);
@@ -183,6 +251,7 @@ export async function loadTimeline() {
   if (S.selectedDay) {
     await loadDaySegments();
     renderDayBar();
+    updateDateBtnLabel();
   }
 }
 
@@ -197,6 +266,7 @@ export function clearSelection() {
   document.querySelectorAll('.timeline-slot.slot-selected')
     .forEach(s => s.classList.remove('slot-selected'));
   updateActionBar();
+  exitSelectMode();
 }
 
 async function loadDaySegments() {
