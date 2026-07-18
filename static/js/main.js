@@ -2,7 +2,7 @@
 import { S, els, setStatus, setSkeleton } from './state.js';
 import { loadStream, startLiveTimers, stopLiveTimers, detachVodListeners } from './player.js';
 import { loadTimeline, clearSelection, closeSlotActionMenu, closeDeleteModal, localDayStart } from './timeline.js';
-import { switchTab, onSortHeaderClick, refreshAnomalyMap, refreshNotifications, loadSettings, loadBookmarks, closeBookmarkEditModal } from './panels.js';
+import { switchTab, onSortHeaderClick, refreshAnomalyMap, refreshNotifications, loadSettings, loadBookmarks, closeBookmarkEditModal, openSettingsDrawer, closeSettingsDrawer, initSettingsDrawer } from './panels.js';
 
 // ── Storage health pill ────────────────────────────────────
 async function pollStorageHealth() {
@@ -130,13 +130,14 @@ document.querySelectorAll('#pig-status-table th.sortable').forEach(th => {
   }
 }
 
-// #settings-btn / #view-toggle-btn：暫時佔位，Task 5（設定抽屜）/ Task 8（多畫面）接手
+// #settings-btn：開啟設定 drawer
 {
   const settingsBtn = document.getElementById('settings-btn');
   if (settingsBtn) {
-    settingsBtn.addEventListener('click', () => console.debug('settings drawer: Task 5'));
+    settingsBtn.addEventListener('click', () => openSettingsDrawer());
   }
 }
+// #view-toggle-btn：暫時佔位，Task 8（多畫面）接手
 {
   const viewToggleBtn = document.getElementById('view-toggle-btn');
   if (viewToggleBtn) {
@@ -144,4 +145,12 @@ document.querySelectorAll('#pig-status-table th.sortable').forEach(th => {
   }
 }
 
+// Esc 鍵關閉設定 drawer（僅在 drawer 開啟時）
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  const drawer = document.getElementById('settings-drawer');
+  if (drawer && drawer.classList.contains('open')) closeSettingsDrawer();
+});
+
+initSettingsDrawer();
 init();

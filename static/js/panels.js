@@ -356,6 +356,7 @@ export async function loadSettings() {
     const _ge = document.getElementById('set-gpu_off_schedule_enabled');
     if (_ge) _ge.checked = String(data.gpu_off_schedule_enabled) === 'true';
   } catch (_) {}
+  syncDepFields();
 }
 
 export async function saveSettings() {
@@ -396,6 +397,74 @@ export async function saveSettings() {
   }
 }
 
+// ── Settings drawer ───────────────────────────────────────
+let _settingsDirty = false;
+
+export function openSettingsDrawer() {
+  const d = document.getElementById('settings-drawer');
+  const o = document.getElementById('settings-overlay');
+  d.hidden = false; o.hidden = false;
+  requestAnimationFrame(() => { d.classList.add('open'); o.classList.add('open'); });
+  loadSettings().then(() => { _settingsDirty = false; });
+}
+
+export function closeSettingsDrawer(force = false) {
+  if (_settingsDirty && !force &&
+      !confirm('有未儲存的設定變更，確定要關閉嗎？')) return;
+  const d = document.getElementById('settings-drawer');
+  const o = document.getElementById('settings-overlay');
+  d.classList.remove('open'); o.classList.remove('open');
+  setTimeout(() => { d.hidden = true; o.hidden = true; }, 240);
+  _settingsDirty = false;
+}
+
+// 連動停用：總開關 off → 附屬欄位 .disabled
+const DEP_FIELDS = {
+  'set-recording_schedule_enabled': ['set-recording_off_start', 'set-recording_off_end'],
+  'set-ntfy_enabled': ['set-ntfy_url', 'set-ntfy_revive_priority'],
+  'set-gpu_off_schedule_enabled': ['set-gpu_off_start', 'set-gpu_off_end'],
+  'set-temp-enabled': [],   // select，值為 'true'/'false'，無附屬欄位
+};
+function syncDepFields() {
+  for (const [master, deps] of Object.entries(DEP_FIELDS)) {
+    const m = document.getElementById(master);
+    const on = m.type === 'checkbox' ? m.checked : m.value === 'true';
+    deps.forEach(id => document.getElementById(id)
+      .closest('.settings-field').classList.toggle('disabled', !on));
+  }
+}
+// 即時驗證：σ ≥ 1.0、保留天數 1–365、最低空間 ≥1、監控間隔 ≥5
+function validateField(el) {
+  const min = parseFloat(el.min), max = parseFloat(el.max);
+  const v = parseFloat(el.value);
+  const bad = el.type === 'number' && el.value !== '' &&
+    (isNaN(v) || (isFinite(min) && v < min) || (isFinite(max) && v > max));
+  el.classList.toggle('invalid', bad);
+  return !bad;
+}
+export function initSettingsDrawer() {
+  const body = document.querySelector('#settings-drawer .drawer-body');
+  const onFieldEvent = e => {
+    _settingsDirty = true;
+    if (e.target.matches('input[type="number"]')) validateField(e.target);
+    syncDepFields();
+  };
+  // brief 只綁 input；select/checkbox 在部分瀏覽器只觸發 change，兩者都綁同一 handler 才能保證
+  // dirty 追蹤／連動停用／即時驗證一致觸發。
+  body.addEventListener('input', onFieldEvent);
+  body.addEventListener('change', onFieldEvent);
+  document.getElementById('settings-close-btn')
+    .addEventListener('click', () => closeSettingsDrawer());
+  document.getElementById('settings-overlay')
+    .addEventListener('click', () => closeSettingsDrawer());
+  document.getElementById('save-settings-btn').addEventListener('click', async () => {
+    const nums = [...body.querySelectorAll('input[type="number"]')];
+    if (!nums.every(validateField)) return;
+    await saveSettings();
+    _settingsDirty = false;
+  });
+}
+
 // 切攝影機 / RGB↔Thermal / Live↔VOD 時清掉選取與 solo（避免殘留別來源的高亮）。
 // sortKey/sortDir 為使用者偏好，不重置。
 export function clearPigSelection() {
@@ -412,7 +481,6 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     if (btn.dataset.tab === 'bookmarks') loadBookmarks();
   });
 });
-document.getElementById('save-settings-btn').addEventListener('click', saveSettings);
 document.getElementById('clear-read-btn').addEventListener('click', onClearReadClick);
 {
   const modal = document.getElementById('bookmark-edit-modal');
