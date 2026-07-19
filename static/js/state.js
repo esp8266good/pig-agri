@@ -49,7 +49,7 @@ export const els = {
   liveBtnT:     document.getElementById('transport-live-btn'),
   liveLabelT:   document.getElementById('transport-live-label'),
   vodBanner:    document.getElementById('vod-banner'),
-  vodBannerText:document.getElementById('vod-banner-text'),
+  vodBannerText: document.getElementById('vod-banner-text'),
   vodBannerLiveBtn: document.getElementById('vod-banner-live-btn'),
 };
 

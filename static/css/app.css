@@ -9,6 +9,9 @@
   --radius-sm: 0.375rem; --radius-md: 0.5rem;
   --radius-lg: 0.75rem;  --radius-full: 9999px;
   --transition: 160ms cubic-bezier(0.16, 1, 0.3, 1);
+  /* header 實際高度；main.js 用 ResizeObserver 即時覆寫（header 折兩行時 #tab-bar
+     sticky top 仍需正確避開遮擋），此為 JS 尚未量測前的 fallback */
+  --header-h: 60px;
 
   /* 深色階（帶冷綠底蘊） */
   --bg:        #0b0e0d;
@@ -25,6 +28,7 @@
   --accent:        #2fc98a;
   --accent-dim:    rgba(47,201,138,0.14);
   --accent-border: rgba(47,201,138,0.3);
+  --accent-glow:   rgba(47,201,138,0.22);
   --accent-hover:  #27b57a;
   --vod:        #e8a13c;
   --vod-dim:    rgba(232,161,60,0.14);
@@ -44,6 +48,7 @@
 }
 .icon { width: 18px; height: 18px; stroke: currentColor; stroke-width: 1.6;
         fill: none; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+.icon-sm { width: 14px; height: 14px; }
 
     /* ── Reset ──────────────────────────────────────────────── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -142,7 +147,10 @@
       .right-col .tab-content.active { overflow-y: auto; flex: 1; }
     }
     @media (max-width: 1199px) {
-      #tab-bar { position: sticky; top: 60px; z-index: 40; }
+      /* top 用 --header-h（main.js ResizeObserver 即時量測），而非寫死 60px：
+         窄螢幕 header-controls 會 flex-wrap 折兩行，固定值會讓 tab-bar 被多出的
+         一行 header 蓋住。 */
+      #tab-bar { position: sticky; top: var(--header-h, 60px); z-index: 40; }
       .timeline-slot { height: 44px; }
       .cal-day { padding: 13px 0; }   /* 月曆日期格觸控目標 ≥44px */
     }
@@ -150,7 +158,7 @@
       position: absolute;
       top: 2px; right: 2px;
       background: var(--error);
-      color: #fff;
+      color: #fff; /* 對比 --error 紅底的白字，非語意 token */
       font-size: 0.62rem;
       font-weight: 700;
       line-height: 1.3;
@@ -221,20 +229,20 @@
     #vod-banner button { margin-left: auto; padding: 2px 10px;
       border: 1px solid var(--vod-border); border-radius: var(--radius-full);
       color: var(--vod); background: none; cursor: pointer; }
-    #vod-banner button:hover { background: var(--vod); color: #140d02; }
+    #vod-banner button:hover { background: var(--vod); color: #140d02; } /* 刻意保留：hover 深色文字對比 --vod 底色 */
 
     #video-wrap {
       position: relative;
       width: 100%;
       aspect-ratio: 4/3;
-      background: #000;
+      background: #000; /* 刻意保留：影片 letterbox 黑底，非語意 token */
       overflow: hidden;
     }
     video {
       width: 100%; height: 100%;
       display: block;
       object-fit: contain;
-      background: #000;
+      background: #000; /* 同上 */
     }
     #overlay {
       position: absolute;
@@ -249,7 +257,7 @@
       margin: 0;
       padding: 8px 10px;
       font: 12px/1.34 ui-monospace, "DM Mono", Menlo, Consolas, monospace;
-      color: #39e6a6;
+      color: #39e6a6; /* 刻意保留：除錯 HUD 專用色，故意與 --accent 區隔以利辨識 */
       background: rgba(0, 0, 0, 0.72);
       border-radius: 4px;
       white-space: pre;
@@ -316,7 +324,7 @@
     .status-pill.live {
       color: var(--accent);
       background: var(--accent-dim);
-      border-color: rgba(34,187,119,0.25);
+      border-color: var(--accent-border);
     }
     .status-pill.error {
       color: var(--error);
@@ -440,7 +448,7 @@
       width: 4px; height: 4px; border-radius: 50%; background: var(--accent);
     }
     .cal-day:not(.empty):hover { background: var(--surface-3); }
-    .cal-day.day-selected { background: var(--accent); color: #000; font-weight: 600; }
+    .cal-day.day-selected { background: var(--accent); color: #000; font-weight: 600; } /* 刻意保留：選中格深色文字對比 accent 底色 */
     #timeline-controls { position: relative; display: flex; align-items: center; gap: var(--space-2); }
     #date-btn {
       display: inline-flex;
@@ -464,7 +472,7 @@
       background: var(--accent);
       border-radius: var(--radius-full);
       border: none;
-      color: #000;
+      color: #000; /* 刻意保留：Live 藥丸深色文字對比 accent 底色 */
       font-weight: 600;
       font-size: var(--text-xs);
       letter-spacing: 0.04em;
@@ -476,6 +484,12 @@
       height: auto;
       background: none;
       gap: 3px;
+    }
+    /* 多選進行中的視覺提示（timeline.js enterSelectMode/exitSelectMode 切換） */
+    #timeline-bar.selecting {
+      outline: 2px dashed var(--accent-border);
+      outline-offset: 4px;
+      border-radius: var(--radius-sm);
     }
     .timeline-slot {
       flex: 1;
@@ -498,7 +512,7 @@
       transition: background var(--transition), border-color var(--transition), color var(--transition);
     }
     .timeline-slot.has-data:hover { border-color: var(--accent-border); color: var(--text); }
-    .timeline-slot.selected { background: var(--accent); color: #04120c; font-weight: 600; }
+    .timeline-slot.selected { background: var(--accent); color: #04120c; font-weight: 600; } /* 刻意保留：選中格深色文字對比 accent 底色 */
     .timeline-slot.slot-selected { outline: 2px solid var(--accent); outline-offset: -2px; }
     /* timeline 標記改為真正可點 button(hit area ≥28×28),取代舊 ::after pseudo-element。
        slot 本體點擊播放;marker click stopPropagation 後開 popover(編輯/取消)。 */
@@ -517,13 +531,13 @@
       font-size: 14px;
       line-height: 1;
       padding: 4px;
-      color: #ffd24d;
+      color: #ffd24d; /* 刻意保留：書籤星號金色，獨立於主題語意色之外的裝飾色 */
       touch-action: manipulation;
       z-index: 2;
       filter: drop-shadow(0 1px 2px rgba(0,0,0,.6));
     }
     .slot-marker:hover { background: rgba(255,255,255,.10); border-radius: 6px; }
-    .slot-marker.protected-marker { color: #fff; }
+    .slot-marker.protected-marker { color: #fff; } /* 刻意保留：鎖頭圖示白色，對比深底 */
     .slot-action-menu {
       position: absolute;
       background: var(--surface-2);
@@ -654,7 +668,7 @@
       left: 0;
       width: 12px; height: 12px;
       border-radius: 50%;
-      background: #fff;
+      background: #fff; /* 刻意保留：拖曳把手白色，對比軌道深底 */
       border: 2px solid var(--accent);
       transform: translateX(-50%);
       box-shadow: 0 1px 5px rgba(0,0,0,0.55);
@@ -681,7 +695,7 @@
       background: var(--accent-dim);
       color: var(--accent);
       cursor: default;
-      box-shadow: 0 0 0 1px rgba(34,187,119,0.3), 0 0 14px rgba(34,187,119,0.22);
+      box-shadow: 0 0 0 1px var(--accent-border), 0 0 14px var(--accent-glow);
     }
     .transport-live-btn[data-state="at-edge"] .transport-live-dot {
       animation: pulse-dot 1.8s ease-in-out infinite;
@@ -692,7 +706,7 @@
       color: var(--text);
     }
     .transport-live-btn[data-state="behind"]:hover,
-    .transport-live-btn[data-state="vod"]:hover { background: var(--accent); color: #000; }
+    .transport-live-btn[data-state="vod"]:hover { background: var(--accent); color: #000; } /* 刻意保留：同 live-btn，深色文字對比 accent 底色 */
     .transport-live-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
     @media (max-width: 480px) {
       .transport-time { min-width: 34px; font-size: 0.66rem; }
@@ -725,6 +739,7 @@
     .tab-btn.active { color: var(--accent); background: var(--accent-dim); }
     .tab-content { display: none; }
     .tab-content.active { display: block; }
+    #bookmark-list { list-style: none; margin: 0; padding: var(--space-3) var(--space-4); }
 
     /* ── Pig status table ───────────────────────────────────── */
     #pig-status-table {
@@ -772,6 +787,22 @@
                    color: var(--text-muted); cursor: pointer; user-select: none; }
 
     /* ── Notifications ──────────────────────────────────────── */
+    .notif-toolbar {
+      display: flex;
+      gap: var(--space-3);
+      align-items: center;
+      padding: var(--space-3) var(--space-4);
+      border-bottom: 1px solid var(--surface-3);
+    }
+    .show-read-label {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      cursor: pointer;
+      font-size: var(--text-xs);
+      color: var(--text-muted);
+    }
+    #clear-read-btn { margin-left: auto; }
     #alert-list {
       list-style: none;
       max-height: 220px;
@@ -829,7 +860,8 @@
     #save-settings-btn {
       padding: var(--space-1) var(--space-4);
       background: var(--accent);
-      color: #fff;
+      color: #fff; /* 注意：其餘 accent 底色元件（live-btn/cal-day 選中/timeline-slot 選中）
+                       皆用 #000 深色文字對比；此處维持既有白字，非本次收尾範圍，留意後續若調整 accent 明度需一併檢視對比 */
       border-radius: var(--radius-sm);
       font-size: var(--text-xs);
       font-weight: 600;
@@ -871,7 +903,7 @@
       aspect-ratio: 4/3; cursor: pointer;
       transition: border-color var(--transition); }
     .grid-tile:hover { border-color: var(--accent-border); }
-    .grid-tile video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+    .grid-tile video { width: 100%; height: 100%; object-fit: contain; background: #000; } /* 同 video 黑底 */
     .grid-tile.alerting { border-color: var(--error); box-shadow: 0 0 0 1px var(--error); }
     .tile-info { position: absolute; left: 0; right: 0; bottom: 0;
       display: flex; align-items: center; gap: var(--space-2);
@@ -890,3 +922,50 @@
       padding: var(--space-1) var(--space-4); background: var(--surface-3);
       border: 1px solid var(--border); border-radius: var(--radius-full); }
     @media (max-width: 700px) { #grid-view { grid-template-columns: 1fr !important; } }
+
+    /* ── Modals（書籤編輯／刪除確認，共用殼）───────────────────
+       display:none/flex 由對應 JS（panels.js openBookmarkEditModal/closeBookmarkEditModal、
+       timeline.js onDeleteRecClick/closeDeleteModal）直接切 inline style，此處不設 display，
+       避免蓋掉 inline 值。 */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,.6);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-box {
+      background: var(--surface-2);
+      padding: var(--space-4);
+      border-radius: 12px;
+      max-width: 420px;
+      width: 90%;
+    }
+    .modal-box h3 { margin: 0 0 12px; }
+    .modal-box-delete h3 { margin-bottom: 8px; }
+    .modal-form { display: flex; flex-direction: column; gap: 10px; }
+    .modal-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+    .modal-field input[type="text"],
+    .modal-field textarea {
+      padding: 6px 8px;
+      background: var(--surface);
+      border: 1px solid var(--surface-3);
+      color: var(--text);
+      border-radius: 4px;
+      font: inherit;
+    }
+    .modal-field textarea { resize: vertical; }
+    .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+    .modal-warn-box {
+      background: var(--error-dim);
+      border: 1px solid var(--error);
+      border-radius: 8px;
+      padding: 8px;
+      margin: 8px 0;
+    }
+    .modal-warn-title { color: var(--error); }
+    .modal-warn-list { margin: 6px 0 0; padding-left: 18px; }
+    .modal-checkbox-row { display: flex; gap: 6px; margin-top: 8px; align-items: center; }
+    .modal-danger-text { color: var(--error); font-size: 13px; }
+    .btn-danger { background: var(--error); color: #fff; } /* 白字對比 --error 底色，非語意 token */

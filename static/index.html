@@ -174,7 +174,7 @@
           <button id="date-btn" aria-haspopup="dialog" aria-expanded="false">
             <svg class="icon"><use href="#i-calendar"/></svg>
             <span id="date-btn-label">—</span>
-            <svg class="icon" style="width:14px;height:14px"><use href="#i-chev-r" transform="rotate(90 12 12)"/></svg>
+            <svg class="icon icon-sm"><use href="#i-chev-r" transform="rotate(90 12 12)"/></svg>
           </button>
           <button id="live-btn" style="display:none"><span class="status-dot"></span> Live</button>
           <div id="calendar" class="cal-popover" hidden>
@@ -226,18 +226,18 @@
         </div>
 
         <div id="tab-notifications" class="tab-content">
-          <div class="notif-toolbar" style="display:flex;gap:var(--space-3);align-items:center;padding:var(--space-3) var(--space-4);border-bottom:1px solid var(--surface-3)">
-            <label style="display:flex;gap:6px;align-items:center;cursor:pointer;font-size:var(--text-xs);color:var(--text-muted)">
+          <div class="notif-toolbar">
+            <label class="show-read-label">
               <input type="checkbox" id="show-read-toggle">
               <span>顯示已讀</span>
             </label>
-            <button id="clear-read-btn" class="mark-read-btn" style="margin-left:auto">清空已讀</button>
+            <button id="clear-read-btn" class="mark-read-btn">清空已讀</button>
           </div>
           <ul id="alert-list"></ul>
         </div>
 
         <div id="tab-bookmarks" class="tab-content">
-          <ul id="bookmark-list" style="list-style:none;margin:0;padding:var(--space-3) var(--space-4)"></ul>
+          <ul id="bookmark-list"></ul>
         </div>
       </div>
     </aside>
@@ -373,43 +373,41 @@
   <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
   <script type="module" src="/static/js/main.js"></script>
 
-  <div id="bookmark-edit-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;align-items:center;justify-content:center">
-    <div style="background:var(--surface-2);padding:var(--space-4);border-radius:12px;max-width:420px;width:90%">
-      <h3 style="margin:0 0 12px">編輯書籤</h3>
-      <div style="display:flex;flex-direction:column;gap:10px">
-        <label style="display:flex;flex-direction:column;gap:4px;font-size:13px">
+  <div id="bookmark-edit-modal" class="modal-overlay" style="display:none">
+    <div class="modal-box">
+      <h3>編輯書籤</h3>
+      <div class="modal-form">
+        <label class="modal-field">
           <span>名稱</span>
-          <input id="bookmark-edit-label" type="text" maxlength="100"
-                 style="padding:6px 8px;background:var(--surface-1);border:1px solid var(--surface-3);color:var(--text);border-radius:4px;font:inherit">
+          <input id="bookmark-edit-label" type="text" maxlength="100">
         </label>
-        <label style="display:flex;flex-direction:column;gap:4px;font-size:13px">
+        <label class="modal-field">
           <span>備註(可留空)</span>
-          <textarea id="bookmark-edit-note" rows="3" maxlength="500"
-                    style="padding:6px 8px;background:var(--surface-1);border:1px solid var(--surface-3);color:var(--text);border-radius:4px;font:inherit;resize:vertical"></textarea>
+          <textarea id="bookmark-edit-note" rows="3" maxlength="500"></textarea>
         </label>
       </div>
-      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+      <div class="modal-actions">
         <button>取消</button>
         <button id="bookmark-edit-save-btn">儲存</button>
       </div>
     </div>
   </div>
 
-  <div id="delete-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;align-items:center;justify-content:center">
-    <div style="background:var(--surface-2);padding:var(--space-4);border-radius:12px;max-width:420px;width:90%">
-      <h3 style="margin:0 0 8px">確認刪除存檔</h3>
+  <div id="delete-modal" class="modal-overlay" style="display:none">
+    <div class="modal-box modal-box-delete">
+      <h3>確認刪除存檔</h3>
       <p id="delete-modal-summary"></p>
-      <div id="delete-modal-warn" style="display:none;background:rgba(255,68,68,.15);border:1px solid #ff4444;border-radius:8px;padding:8px;margin:8px 0">
-        <strong style="color:#ff6666">⚠ 下列時段已被保留/書籤：</strong>
-        <ul id="delete-modal-protected" style="margin:6px 0 0;padding-left:18px"></ul>
-        <label style="display:flex;gap:6px;margin-top:8px;align-items:center">
+      <div id="delete-modal-warn" class="modal-warn-box" style="display:none">
+        <strong class="modal-warn-title">⚠ 下列時段已被保留/書籤：</strong>
+        <ul id="delete-modal-protected" class="modal-warn-list"></ul>
+        <label class="modal-checkbox-row">
           <input type="checkbox" id="delete-confirm-check">我了解這些時段已被保留/書籤，仍要刪除
         </label>
       </div>
-      <p style="color:#ff6666;font-size:13px">此操作不可逆，將同時刪除影片與該時段的追蹤/告警紀錄。</p>
-      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+      <p class="modal-danger-text">此操作不可逆，將同時刪除影片與該時段的追蹤/告警紀錄。</p>
+      <div class="modal-actions">
         <button>取消</button>
-        <button id="delete-confirm-btn" style="background:#ff4444;color:#fff">刪除</button>
+        <button id="delete-confirm-btn" class="btn-danger">刪除</button>
       </div>
     </div>
   </div>

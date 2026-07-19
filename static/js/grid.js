@@ -30,7 +30,7 @@ export function leaveGrid() {
   root.hidden = true;
 }
 
-async function buildTile(root, cam) {
+async function buildTile(root, cam, beforeNode = null) {
   const tile = document.createElement('div');
   tile.className = 'grid-tile';
   tile.dataset.cam = cam;
@@ -38,13 +38,13 @@ async function buildTile(root, cam) {
     <video muted playsinline></video>
     <div class="tile-info">
       <span class="tile-name"></span>
-      <span class="tile-count" title="追蹤中豬隻數"></span>
+      <span class="tile-count" title="分析中豬隻數"></span>
       <span class="tile-live"><span class="status-dot"></span>LIVE</span>
     </div>
     <span class="tile-alert" hidden><svg class="icon"><use href="#i-alert"/></svg></span>`;
   tile.querySelector('.tile-name').textContent = cam;
   tile.addEventListener('click', () => _onPickCamera && _onPickCamera(cam));
-  root.appendChild(tile);
+  root.insertBefore(tile, beforeNode);   // beforeNode=null 時等同 appendChild，保持重試後原位置
   try {
     const live = await getJSON(`/stream/${cam}/live?type=rgb`);
     const video = tile.querySelector('video');
@@ -73,7 +73,18 @@ function tileOffline(tile) {
   tile.querySelector('.tile-live').innerHTML = '無訊號';
 }
 
+// fatal 的 hls 實例即時 destroy 並自 _players 移除，不留到 leaveGrid/retry 才清。
+function destroyTilePlayer(tile) {
+  const video = tile.querySelector('video');
+  const idx = _players.findIndex(p => p.video === video);
+  if (idx !== -1) {
+    try { _players[idx].hls?.destroy(); } catch (_) {}
+    _players.splice(idx, 1);
+  }
+}
+
 function tileError(tile, cam) {
+  destroyTilePlayer(tile);
   tileOffline(tile);
   if (tile.querySelector('.tile-retry')) return;
   const btn = document.createElement('button');
@@ -90,12 +101,11 @@ function tileError(tile, cam) {
 }
 
 async function rebuildTilePlayer(tile, cam) {
-  const video = tile.querySelector('video');
-  const old = _players.find(p => p.video === video);
-  if (old) { try { old.hls?.destroy(); } catch (_) {} _players = _players.filter(p => p !== old); }
+  destroyTilePlayer(tile);
   const root = document.getElementById('grid-view');
+  const nextSibling = tile.nextSibling;   // 記錄原位置，重建後插回原處而非跳到尾端
   tile.remove();
-  await buildTile(root, cam);
+  await buildTile(root, cam, nextSibling);
 }
 
 async function refreshTileBadges() {

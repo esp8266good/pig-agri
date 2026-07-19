@@ -199,5 +199,18 @@ document.addEventListener('keydown', e => {
   if (drawer && drawer.classList.contains('open')) closeSettingsDrawer();
 });
 
+// ── header 高度同步（供 #tab-bar sticky top 用）───────────────
+// 窄螢幕 header-controls 會 flex-wrap 折兩行，讓 #tab-bar 用即時量測的
+// --header-h 取代寫死 60px，才不會被折成兩行的 header 蓋住。
+{
+  const headerEl = document.querySelector('header');
+  if (headerEl && 'ResizeObserver' in window) {
+    const syncHeaderHeight = () =>
+      document.documentElement.style.setProperty('--header-h', `${headerEl.offsetHeight}px`);
+    new ResizeObserver(syncHeaderHeight).observe(headerEl);
+    syncHeaderHeight();
+  }
+}
+
 initSettingsDrawer();
 init();

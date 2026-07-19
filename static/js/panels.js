@@ -205,7 +205,7 @@ export function renderPigStatus() {
   }
 }
 
-export function renderNotifications(alerts) {
+function renderNotifications(alerts) {
   if (!els.alertListEl) return;
   els.alertListEl.innerHTML = '';
   if (!alerts.length) {
@@ -396,12 +396,15 @@ export async function saveSettings() {
     if (resp.ok) {
       statusEl.textContent = '✓ 已儲存';
       setTimeout(() => { statusEl.textContent = ''; }, 3000);
+      return true;
     } else {
       const err = await resp.json();
       statusEl.textContent = `✗ ${err.detail || '儲存失敗'}`;
+      return false;
     }
   } catch (e) {
     statusEl.textContent = `✗ 網路錯誤`;
+    return false;
   }
 }
 
@@ -468,8 +471,8 @@ export function initSettingsDrawer() {
   document.getElementById('save-settings-btn').addEventListener('click', async () => {
     const nums = [...body.querySelectorAll('input[type="number"]')];
     if (!nums.every(validateField)) return;
-    await saveSettings();
-    _settingsDirty = false;
+    const ok = await saveSettings();
+    if (ok) _settingsDirty = false;   // 失敗時保留 dirty，關 drawer 仍會提示未儲存
   });
 }
 

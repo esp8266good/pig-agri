@@ -269,6 +269,8 @@ function updateActionBar() {
 }
 
 export function clearSelection() {
+  clearTimeout(_longPressTimer);   // 清掉 selectDay await 期間過期計時器的殘餘 race
+  _longPressTimer = null;
   S.selectedHours.clear();
   document.querySelectorAll('.timeline-slot.slot-selected')
     .forEach(s => s.classList.remove('slot-selected'));
