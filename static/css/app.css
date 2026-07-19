@@ -447,8 +447,8 @@
       box-shadow: var(--shadow-lg);
       border: 1px solid var(--border);
     }
-    #calendar-header { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-1); }
-    #calendar-label { flex: 1; text-align: center; font-size: var(--text-sm); color: var(--text); }
+    #calendar-header, .cal-header { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-1); }
+    #calendar-label, #grid-cal-label { flex: 1; text-align: center; font-size: var(--text-sm); color: var(--text); }
     .cal-nav-btn {
       padding: var(--space-1) var(--space-2);
       background: var(--surface-3);
@@ -459,8 +459,8 @@
     }
     .cal-nav-btn:hover:not(:disabled) { background: var(--surface-2); }
     .cal-nav-btn:disabled { opacity: 0.35; cursor: not-allowed; }
-    #calendar-weekdays, #calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
-    #calendar-weekdays span { text-align: center; font-size: 11px; color: var(--text-muted); padding: 2px 0; }
+    #calendar-weekdays, .cal-weekdays, #calendar-grid, .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+    #calendar-weekdays span, .cal-weekdays span { text-align: center; font-size: 11px; color: var(--text-muted); padding: 2px 0; }
     .cal-day {
       text-align: center; font-size: 12px; padding: 6px 0; border-radius: 4px;
       color: var(--text-muted); cursor: pointer; position: relative;
@@ -976,6 +976,35 @@
       padding: var(--space-6); color: var(--text-muted); }
     .grid-error-retry { padding: var(--space-1) var(--space-4); background: var(--surface-3);
       border: 1px solid var(--border); border-radius: var(--radius-full); color: inherit; }
+
+    /* grid 時段列：沿用 timeline-slot 視覺，但唯讀（無保留/書籤/多選標記） */
+    #grid-timeline { display: flex; flex-direction: column; gap: var(--space-2); margin-top: var(--space-3); }
+    #grid-timeline[hidden] { display: none; }
+    #grid-timeline-controls { position: relative; display: flex; align-items: center; gap: var(--space-2); }
+    #grid-date-btn { display: inline-flex; align-items: center; gap: var(--space-2);
+      padding: var(--space-1) var(--space-3); background: var(--surface-2);
+      border: 1px solid var(--border); border-radius: var(--radius-full); }
+    #grid-timeline-bar { display: grid; grid-template-columns: repeat(24, 1fr); gap: 2px; }
+    .grid-slot { height: 32px; display: flex; align-items: center; justify-content: center;
+      font-size: var(--text-xs); color: var(--text-faint); background: var(--surface-2);
+      border-radius: var(--radius-sm); }
+    .grid-slot.has-data { color: var(--text-muted); cursor: pointer; }
+    .grid-slot.has-data:hover { background: var(--surface-3); color: var(--text); }
+    .grid-slot.playing { background: var(--vod-dim); color: var(--vod);
+      border: 1px solid var(--vod-border); font-weight: 600; }
+    #grid-playback-banner { display: flex; align-items: center; gap: var(--space-2);
+      margin-bottom: var(--space-2); padding: var(--space-2) var(--space-4);
+      background: var(--vod-dim); color: var(--vod);
+      border: 1px solid var(--vod-border); border-radius: var(--radius-lg);
+      font-size: var(--text-xs); font-weight: 500; }
+    #grid-playback-banner[hidden] { display: none; }
+    #grid-live-btn { margin-left: auto; padding: 2px 10px;
+      border: 1px solid var(--vod-border); border-radius: var(--radius-full);
+      color: var(--vod); background: none; cursor: pointer; }
+    #grid-live-btn:hover { background: var(--vod); color: #140d02; } /* 同 vod-banner hover */
+    .grid-tile .tile-vod { margin-left: auto; color: var(--vod); font-weight: 600;
+      letter-spacing: 0.05em; }
+    @media (max-width: 700px) { .grid-slot { height: 40px; } }
 
     /* ── Modals（書籤編輯／刪除確認，共用殼）───────────────────
        display:none/flex 由對應 JS（panels.js openBookmarkEditModal/closeBookmarkEditModal、

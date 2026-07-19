@@ -207,7 +207,31 @@
         </div>
       </div>
 
-      <div id="grid-view" hidden></div><!-- Task 8 填入 -->
+      <div id="grid-playback-banner" hidden>
+        <svg class="icon"><use href="#i-play"/></svg>
+        <span id="grid-playback-text"></span>
+        <button id="grid-live-btn">回到 LIVE</button>
+      </div>
+      <div id="grid-view" hidden></div>
+      <div id="grid-timeline" hidden>
+        <div id="grid-timeline-controls">
+          <button id="grid-date-btn" aria-haspopup="dialog" aria-expanded="false">
+            <svg class="icon"><use href="#i-calendar"/></svg>
+            <span id="grid-date-btn-label">—</span>
+            <svg class="icon icon-sm"><use href="#i-chev-r" transform="rotate(90 12 12)"/></svg>
+          </button>
+          <div id="grid-calendar" class="cal-popover" hidden>
+            <div class="cal-header">
+              <button class="cal-nav-btn" id="grid-prev-month" aria-label="上一月">&#8249;</button>
+              <span id="grid-cal-label"></span>
+              <button class="cal-nav-btn" id="grid-next-month" aria-label="下一月">&#8250;</button>
+            </div>
+            <div class="cal-weekdays"><span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span></div>
+            <div id="grid-cal-grid" class="cal-grid"></div>
+          </div>
+        </div>
+        <div id="grid-timeline-bar" role="list" aria-label="Grid 回放時段（所有攝影機聯集）"></div>
+      </div>
     </section>
 
     <aside class="right-col" aria-label="資料面板">
