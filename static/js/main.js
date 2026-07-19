@@ -5,11 +5,9 @@ import { loadTimeline, clearSelection, closeSlotActionMenu, closeDeleteModal, lo
 import { switchTab, onSortHeaderClick, refreshAnomalyMap, refreshNotifications, loadSettings, loadBookmarks, closeBookmarkEditModal, openSettingsDrawer, closeSettingsDrawer, initSettingsDrawer } from './panels.js';
 import { enterGrid, leaveGrid, bindGridPick } from './grid.js';
 
-let viewMode = 'single';
-
 async function setViewMode(mode) {
-  if (mode === viewMode) return;
-  viewMode = mode;
+  if (mode === S.viewMode) return;
+  S.viewMode = mode;
   try { localStorage.setItem('viewMode', mode); } catch (_) {}
   const singleEls = [document.querySelector('.video-card'),
                      document.getElementById('timeline-section')];
@@ -79,6 +77,12 @@ bindGridPick(cam => {
   refreshAnomalyMap();
   refreshNotifications();
   if (typeof loadBookmarks === 'function') loadBookmarks();
+});
+
+// grid 模式下切 RGB/Thermal：重建所有 tile（enterGrid 內建 _gridGen 守衛與
+// /cameras 重抓——順便刷新 active_types）。
+document.addEventListener('pigagri:grid-type-change', () => {
+  if (S.viewMode === 'grid') enterGrid();
 });
 
 // ── Storage health pill ────────────────────────────────────
@@ -194,7 +198,7 @@ document.querySelectorAll('#pig-status-table th.sortable').forEach(th => {
   const viewToggleBtn = document.getElementById('view-toggle-btn');
   if (viewToggleBtn) {
     viewToggleBtn.addEventListener('click',
-      () => setViewMode(viewMode === 'grid' ? 'single' : 'grid'));
+      () => setViewMode(S.viewMode === 'grid' ? 'single' : 'grid'));
   }
 }
 

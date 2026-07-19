@@ -2,6 +2,7 @@
 // 資訊列：名稱＋追蹤數＋LIVE 狀態；有異常告警 → 紅框＋角標。
 // 離開時銷毀全部播放器。點格 → main.js 切回單畫面選該攝影機。
 import { getJSON } from './api.js';
+import { S, hasActiveType } from './state.js';
 
 let _players = [];        // [{hls, video}]
 let _anomalyTimer = null;
@@ -13,12 +14,22 @@ export function bindGridPick(fn) { _onPickCamera = fn; }
 
 export async function enterGrid() {
   const gen = ++_gridGen;
+  // 自清舊狀態：type-switch 時 enterGrid() 會在已滿的 grid 上重跑（不經
+  // leaveGrid()），root.innerHTML='' 只拔 DOM、不會自動 destroy hls 實例／
+  // 清掉舊的 anomaly interval——沿用 leaveGrid() 同一套 teardown 才不會每切
+  // 一次型別就多漏一批背景播放器與重複輪詢。首次進場／錯誤畫面重試時
+  // _players 本來就是空的，這段是 no-op。
+  clearInterval(_anomalyTimer); _anomalyTimer = null;
+  for (const p of _players) { try { p.hls?.destroy(); } catch (_) {} }
+  _players = [];
   const root = document.getElementById('grid-view');
   root.innerHTML = '';
   root.hidden = false;
   let cameras;
   try {
-    ({ cameras } = await getJSON('/cameras'));
+    const data = await getJSON('/cameras');
+    cameras = data.cameras;
+    S.cameraActiveTypes = data.active_types || {};
   } catch (e) {
     if (gen !== _gridGen) return;   // 已被 leaveGrid/另一次 enterGrid 取代，不再顯示過期的錯誤畫面
     renderGridError(root);
@@ -77,8 +88,10 @@ async function buildTile(root, cam, beforeNode = null, gen = _gridGen) {
   tile.querySelector('.tile-name').textContent = cam;
   tile.addEventListener('click', () => _onPickCamera && _onPickCamera(cam));
   root.insertBefore(tile, beforeNode);   // beforeNode=null 時等同 appendChild，保持重試後原位置
+  // 該型別無來源（如 thermal 攝影機沒裝）：預期狀態，無訊號佔位、不建播放器、無重試鈕。
+  if (!hasActiveType(cam, S.currentType)) { tileNoSignal(tile); return; }
   try {
-    const live = await getJSON(`/stream/${cam}/live?type=rgb`);
+    const live = await getJSON(`/stream/${cam}/live?type=${S.currentType}`);
     if (gen !== _gridGen) return;   // 已離開/重進 grid，tile 早被 leaveGrid() 拔掉，不再建播放器
     const video = tile.querySelector('video');
     if (window.Hls && Hls.isSupported()) {
@@ -105,6 +118,13 @@ async function buildTile(root, cam, beforeNode = null, gen = _gridGen) {
 function tileOffline(tile) {
   tile.classList.add('offline');
   tile.querySelector('.tile-live').innerHTML = '無訊號';
+}
+
+// 「無訊號」＝預期狀態（無來源/該時段無錄影）：不給重試鈕，與 tileError（異常）區分。
+function tileNoSignal(tile) {
+  destroyTilePlayer(tile);
+  tileOffline(tile);
+  tile.classList.add('nosignal');
 }
 
 // fatal 的 hls 實例即時 destroy 並自 _players 移除，不留到 leaveGrid/retry 才清。

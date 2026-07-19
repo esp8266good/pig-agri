@@ -961,6 +961,8 @@
       align-items: center; gap: 4px; font-weight: 600; letter-spacing: 0.05em; }
     .grid-tile.offline .tile-live { color: var(--text-faint); }
     .grid-tile.offline video { opacity: 0.2; }
+    .grid-tile.nosignal { cursor: default; }
+    .grid-tile.nosignal .tile-live { color: var(--text-faint); }
     .tile-alert { position: absolute; top: var(--space-2); right: var(--space-2);
       color: var(--error); }
     .tile-retry { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);

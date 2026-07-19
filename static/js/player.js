@@ -208,6 +208,12 @@ export function setType(type) {
   btnThermal.classList.toggle('active', type === 'thermal');
   btnRgb.setAttribute('aria-pressed', type === 'rgb');
   btnThermal.setAttribute('aria-pressed', type === 'thermal');
+  if (S.viewMode === 'grid') {
+    // grid 模式：單畫面播放器已銷毀，不 loadStream/switchToLive；
+    // 由 main.js 監聽此事件重建所有 tile（player 不得 import grid）。
+    document.dispatchEvent(new CustomEvent('pigagri:grid-type-change'));
+    return;
+  }
   if (!S.isLive) {
     switchToLive();
   } else {
