@@ -59,6 +59,8 @@ export const els = {
   vodBanner:    document.getElementById('vod-banner'),
   vodBannerText: document.getElementById('vod-banner-text'),
   vodBannerLiveBtn: document.getElementById('vod-banner-live-btn'),
+  noSignal:     document.getElementById('no-signal'),
+  noSignalText: document.getElementById('no-signal-text'),
 };
 
 // ── Status helpers ────────────────────────────────────────

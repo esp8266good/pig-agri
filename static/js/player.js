@@ -1,6 +1,13 @@
 // static/js/player.js — HLS 播放（live / VOD）、WS 追蹤連線、canvas bbox 疊圖、transport scrubber。
-import { S, els, MAX_WS_RETRY, WS_RETRY_BASE_MS, setStatus, showToast, setSkeleton, fmtClock } from './state.js';
+import { S, els, MAX_WS_RETRY, WS_RETRY_BASE_MS, setStatus, showToast, setSkeleton, fmtClock, hasActiveType } from './state.js';
 import { clearPigSelection, renderPigStatus, updateVodAnomalyMap, refreshAnomalyMap, refreshNotifications } from './panels.js';
+
+function showNoSignal(msg) {
+  els.noSignalText.textContent = msg;
+  els.noSignal.hidden = false;
+  setSkeleton(false);
+}
+function hideNoSignal() { els.noSignal.hidden = true; }
 
 // ── VOD mode ──────────────────────────────────────────────
 export function loadVod(startTs) {
@@ -38,40 +45,55 @@ export function loadVod(startTs) {
   detachVodListeners();
   if (S.hls) { S.hls.destroy(); S.hls = null; }
   els.video.src = '';
+  hideNoSignal();
   setSkeleton(true);
   setStatus('載入回放...', '');
 
   const vodUrl = `/stream/${S.currentCamera}/vod?start=${startTs}&end=${startTs + 3600}&type=${S.currentType}`;
 
-  if (Hls.isSupported()) {
-    S.hls = new Hls({ lowLatencyMode: false, backBufferLength: 0 });
-    S.hls.loadSource(vodUrl);
-    S.hls.attachMedia(els.video);
-
-    S.hls.on(Hls.Events.MANIFEST_PARSED, () => {
-      els.video.play().catch(() => {});
-      setSkeleton(false);
-      const dt = new Date(startTs * 1000);
-      const label = dt.toLocaleString('zh-TW', {
-        year: 'numeric', month: '2-digit', day: '2-digit',
-        hour: '2-digit', minute: '2-digit',
-      });
-      setStatus(`回放中 ${label}`, 'vod');
-      const hh = String(dt.getHours()).padStart(2, '0');
-      els.vodBannerText.textContent =
-        `回放中：${dt.getMonth() + 1}/${dt.getDate()} ${hh}:00–${hh}:59`;
-      els.vodBanner.hidden = false;
-    });
-
-    S.hls.on(Hls.Events.ERROR, (_, data) => {
-      if (data.fatal) {
-        setSkeleton(false);
-        setStatus(`回放錯誤：${data.details}`, 'error');
+  (async () => {
+    try {
+      const probe = await fetch(vodUrl);
+      // 競態守衛：探測期間使用者已回 live 或切了別的時段 → 放棄，
+      // 不得在新狀態上覆蓋 S.hls / 佔位。
+      if (S.isLive || S.vodStartTs !== startTs) return;
+      if (probe.status === 404) {
+        showNoSignal('無訊號（此時段無錄影）');
+        setStatus('該時段無錄影', '');
+        return;
       }
-    });
+    } catch (_) { /* 探測失敗交給 hls.js 原錯誤路徑 */ }
+    if (S.isLive || S.vodStartTs !== startTs) return;
+    if (Hls.isSupported()) {
+      S.hls = new Hls({ lowLatencyMode: false, backBufferLength: 0 });
+      S.hls.loadSource(vodUrl);
+      S.hls.attachMedia(els.video);
 
-    attachVodListeners();
-  }
+      S.hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        els.video.play().catch(() => {});
+        setSkeleton(false);
+        const dt = new Date(startTs * 1000);
+        const label = dt.toLocaleString('zh-TW', {
+          year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit',
+        });
+        setStatus(`回放中 ${label}`, 'vod');
+        const hh = String(dt.getHours()).padStart(2, '0');
+        els.vodBannerText.textContent =
+          `回放中：${dt.getMonth() + 1}/${dt.getDate()} ${hh}:00–${hh}:59`;
+        els.vodBanner.hidden = false;
+      });
+
+      S.hls.on(Hls.Events.ERROR, (_, data) => {
+        if (data.fatal) {
+          setSkeleton(false);
+          setStatus(`回放錯誤：${data.details}`, 'error');
+        }
+      });
+
+      attachVodListeners();
+    }
+  })();
 }
 
 // VOD → live 的狀態正規化（旗標／banner／listener／timer／cache），
@@ -462,6 +484,14 @@ export async function loadStream() {
   // 清理舊的 HLS instance
   if (S.hls) { S.hls.destroy(); S.hls = null; }
   els.video.src = '';
+  hideNoSignal();
+  // thermal 無來源：後端 /cameras active_types 判定（fail-open）。不建 HLS、不報錯誤 toast。
+  if (S.currentType === 'thermal' && !hasActiveType(S.currentCamera, 'thermal')) {
+    showNoSignal('無訊號（此攝影機無熱成像來源）');
+    setStatus('Thermal 無訊號', '');
+    connectWS(S.currentCamera);   // WS 仍照常（bbox 資料與畫面型別無關）
+    return;
+  }
   setSkeleton(true);
   setStatus('正在連線...');
   connectWS(S.currentCamera);
