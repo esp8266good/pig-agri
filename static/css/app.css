@@ -854,6 +854,9 @@
     }
     .alert-item:hover { background: var(--surface-2); }
     .alert-item.unread { border-left: 3px solid var(--error); }
+    /* <1200px #bottom-panel 不再 overflow:hidden（3c sticky 修正），
+       最後一則通知的全寬背景改自帶下圓角，避免頂出面板圓角露方角 */
+    .alert-item:last-child { border-radius: 0 0 var(--radius-lg) var(--radius-lg); }
     .alert-info { display: flex; align-items: center; gap: var(--space-3); flex: 1; flex-wrap: wrap; }
     .alert-cam  { font-weight: 600; color: var(--text); font-size: var(--text-xs); }
     .alert-metric { color: var(--error); font-size: var(--text-xs); }
