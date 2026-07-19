@@ -27,7 +27,7 @@ export async function enterGrid() {
   if (gen !== _gridGen) return;     // 等待 /cameras 期間已離開 grid（Finding 4），放棄 append tiles
   root.style.setProperty('--grid-cols',
     cameras.length <= 2 ? 2 : cameras.length <= 4 ? 2 : 3);
-  for (const cam of cameras) buildTile(root, cam);
+  for (const cam of cameras) buildTile(root, cam, null, gen);
   _anomalyTimer = setInterval(refreshTileBadges, 30000);
   refreshTileBadges();
 }
@@ -57,7 +57,12 @@ function renderGridError(root) {
   root.appendChild(box);
 }
 
-async function buildTile(root, cam, beforeNode = null) {
+// gen：呼叫端當下的 _gridGen（Finding 4）。root.insertBefore 之後、_players.push
+// 之前都還有一個 await（GET /stream/{cam}/live），若這段期間 leaveGrid() 已經
+// 遞增 _gridGen（tile 被拔掉、_players 被清空），resume 後必須直接 abort、
+// 不能再建 hls／push 進 _players——否則會殘留背景播放器與輪詢（單純檢查
+// enterGrid() 外層那次 await 不夠，buildTile 自己這次 await 才是真正會漏的窗口）。
+async function buildTile(root, cam, beforeNode = null, gen = _gridGen) {
   const tile = document.createElement('div');
   tile.className = 'grid-tile';
   tile.dataset.cam = cam;
@@ -74,6 +79,7 @@ async function buildTile(root, cam, beforeNode = null) {
   root.insertBefore(tile, beforeNode);   // beforeNode=null 時等同 appendChild，保持重試後原位置
   try {
     const live = await getJSON(`/stream/${cam}/live?type=rgb`);
+    if (gen !== _gridGen) return;   // 已離開/重進 grid，tile 早被 leaveGrid() 拔掉，不再建播放器
     const video = tile.querySelector('video');
     if (window.Hls && Hls.isSupported()) {
       const hls = new Hls({ lowLatencyMode: false, liveSyncDurationCount: 3,
@@ -88,6 +94,7 @@ async function buildTile(root, cam, beforeNode = null) {
       _players.push({ hls: null, video });
     }
   } catch (_) {
+    if (gen !== _gridGen) return;   // 過期：不在已拔掉的 tile 上顯示「無訊號」佔位
     // 攝影機斷線最常見的路徑就是這裡（GET /stream/{cam}/live 404 等）——
     // 沿用 tileError()（同一份「無訊號＋重試鈕」邏輯），讓使用者不用離開
     // grid 再進來才能重試，直接點格內按鈕重建該格播放器。
@@ -132,7 +139,7 @@ async function rebuildTilePlayer(tile, cam) {
   const root = document.getElementById('grid-view');
   const nextSibling = tile.nextSibling;   // 記錄原位置，重建後插回原處而非跳到尾端
   tile.remove();
-  await buildTile(root, cam, nextSibling);
+  await buildTile(root, cam, nextSibling, _gridGen);
 }
 
 async function refreshTileBadges() {
