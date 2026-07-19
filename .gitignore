@@ -36,3 +36,4 @@ env.bak/
 venv.bak/
 .pytest_cache/
 /data/
+.sync-exclude.lst
