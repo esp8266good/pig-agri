@@ -6,14 +6,25 @@ import { getJSON } from './api.js';
 let _players = [];        // [{hls, video}]
 let _anomalyTimer = null;
 let _onPickCamera = null; // main.js 注入的 callback
+let _gridGen = 0;         // generation token（Finding 4）：leaveGrid() 遞增使進行中的
+                           // enterGrid() await 結束後偵測到過期、直接放棄不建 tiles
 
 export function bindGridPick(fn) { _onPickCamera = fn; }
 
 export async function enterGrid() {
+  const gen = ++_gridGen;
   const root = document.getElementById('grid-view');
   root.innerHTML = '';
   root.hidden = false;
-  const { cameras } = await getJSON('/cameras');
+  let cameras;
+  try {
+    ({ cameras } = await getJSON('/cameras'));
+  } catch (e) {
+    if (gen !== _gridGen) return;   // 已被 leaveGrid/另一次 enterGrid 取代，不再顯示過期的錯誤畫面
+    renderGridError(root);
+    return;
+  }
+  if (gen !== _gridGen) return;     // 等待 /cameras 期間已離開 grid（Finding 4），放棄 append tiles
   root.style.setProperty('--grid-cols',
     cameras.length <= 2 ? 2 : cameras.length <= 4 ? 2 : 3);
   for (const cam of cameras) buildTile(root, cam);
@@ -22,12 +33,28 @@ export async function enterGrid() {
 }
 
 export function leaveGrid() {
+  _gridGen++;   // 讓進行中的 enterGrid() resume 後 abort（見上）
   clearInterval(_anomalyTimer); _anomalyTimer = null;
   for (const p of _players) { try { p.hls?.destroy(); } catch (_) {} }
   _players = [];
   const root = document.getElementById('grid-view');
   root.innerHTML = '';
   root.hidden = true;
+}
+
+// Finding 2：/cameras 失敗時顯示錯誤佔位＋重試鈕，不留空白 grid／unhandled rejection。
+function renderGridError(root) {
+  root.innerHTML = '';
+  const box = document.createElement('div');
+  box.className = 'grid-error';
+  const msg = document.createElement('p');
+  msg.textContent = '無法取得攝影機清單';
+  const btn = document.createElement('button');
+  btn.className = 'grid-error-retry';
+  btn.textContent = '重試';
+  btn.addEventListener('click', () => enterGrid());
+  box.append(msg, btn);
+  root.appendChild(box);
 }
 
 async function buildTile(root, cam, beforeNode = null) {

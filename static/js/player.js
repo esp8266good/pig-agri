@@ -74,9 +74,14 @@ export function loadVod(startTs) {
   }
 }
 
-export function switchToLive() {
+// VOD → live 的狀態正規化（旗標／banner／listener／timer／cache），
+// 不含連線建立（loadStream）與計時器啟動（startLiveTimers）。
+// switchToLive() 與 setViewMode('grid')（main.js，見 Finding 1）共用，
+// 避免「進 grid 卻殘留半個 VOD 狀態」複製一份邏輯出去維護。
+// 回傳是否真的做了 teardown（已是 live 時回 false，呼叫端可據此判斷是否早退）。
+export function exitVodState() {
   els.vodBanner.hidden = true;
-  if (S.isLive) return;
+  if (S.isLive) return false;
   S.isLive = true;
   els.liveBtn.style.display = 'none';
   detachVodListeners();
@@ -94,6 +99,11 @@ export function switchToLive() {
   document.querySelectorAll('.timeline-slot.selected')
     .forEach(s => s.classList.remove('selected'));
   S.wsRetryCount = 0;
+  return true;
+}
+
+export function switchToLive() {
+  if (!exitVodState()) return;   // 已是 live：僅隱藏 banner（exitVodState 內已處理），不重連
   loadStream();
   startLiveTimers();
   refreshAnomalyMap();

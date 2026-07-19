@@ -923,6 +923,13 @@
       border: 1px solid var(--border); border-radius: var(--radius-full); }
     @media (max-width: 700px) { #grid-view { grid-template-columns: 1fr !important; } }
 
+    /* Finding 2（whole-branch review）：/cameras 失敗的 grid 錯誤佔位 */
+    .grid-error { grid-column: 1 / -1; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: var(--space-3);
+      padding: var(--space-6); color: var(--text-muted); }
+    .grid-error-retry { padding: var(--space-1) var(--space-4); background: var(--surface-3);
+      border: 1px solid var(--border); border-radius: var(--radius-full); color: inherit; }
+
     /* ── Modals（書籤編輯／刪除確認，共用殼）───────────────────
        display:none/flex 由對應 JS（panels.js openBookmarkEditModal/closeBookmarkEditModal、
        timeline.js onDeleteRecClick/closeDeleteModal）直接切 inline style，此處不設 display，

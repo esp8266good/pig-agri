@@ -222,23 +222,34 @@ function renderNotifications(alerts) {
     const metricLabel = alert.metric === 'activity' ? '活動量偏低' : '體溫異常';
     const li = document.createElement('li');
     li.className = 'alert-item' + (alert.is_read ? '' : ' unread');
-    li.innerHTML = `
-      <div class="alert-info">
-        <span class="alert-cam">${alert.camera_id} #${alert.object_id}</span>
-        <span class="alert-metric">${metricLabel}</span>
-        <span class="alert-time">${dt}</span>
-        <span class="alert-sigma">偏差 ${sigma}σ</span>
-      </div>
-      <button class="mark-read-btn"
-              ${alert.is_read ? 'disabled' : ''}>
-        ${alert.is_read ? '已讀' : '標記已讀'}
-      </button>
-      <button class="mark-read-btn">
-        刪除
-      </button>`;
-    // innerHTML 產生的按鈕不能用 onclick="..." 字串（module 作用域下全域查不到函式名），
-    // 改為建立後 querySelector + addEventListener 綁定。
-    const [markReadBtn, deleteBtn] = li.querySelectorAll('.mark-read-btn');
+    // Finding 3（whole-branch review）：alert.camera_id 來自後端/DB，非硬編字面值，
+    // 用 textContent 建節點而非 innerHTML 字串內插，避免注入風險（防禦性強化，行為不變）。
+    const infoDiv = document.createElement('div');
+    infoDiv.className = 'alert-info';
+    const camSpan = document.createElement('span');
+    camSpan.className = 'alert-cam';
+    camSpan.textContent = `${alert.camera_id} #${alert.object_id}`;
+    const metricSpan = document.createElement('span');
+    metricSpan.className = 'alert-metric';
+    metricSpan.textContent = metricLabel;
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'alert-time';
+    timeSpan.textContent = dt;
+    const sigmaSpan = document.createElement('span');
+    sigmaSpan.className = 'alert-sigma';
+    sigmaSpan.textContent = `偏差 ${sigma}σ`;
+    infoDiv.append(camSpan, metricSpan, timeSpan, sigmaSpan);
+
+    const markReadBtn = document.createElement('button');
+    markReadBtn.className = 'mark-read-btn';
+    markReadBtn.disabled = !!alert.is_read;
+    markReadBtn.textContent = alert.is_read ? '已讀' : '標記已讀';
+
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'mark-read-btn';
+    deleteBtn.textContent = '刪除';
+
+    li.append(infoDiv, markReadBtn, deleteBtn);
     markReadBtn.addEventListener('click', () => markAlertRead(alert.id, markReadBtn));
     deleteBtn.addEventListener('click', () => onDeleteAlertClick(alert.id, deleteBtn));
     li.addEventListener('click', e => {

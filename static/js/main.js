@@ -1,6 +1,6 @@
 // static/js/main.js — 應用程式進入點：init()、頂層事件綁定、儲存健康小燈輪詢。
 import { S, els, setStatus, setSkeleton } from './state.js';
-import { loadStream, startLiveTimers, stopLiveTimers, detachVodListeners } from './player.js';
+import { loadStream, startLiveTimers, stopLiveTimers, detachVodListeners, exitVodState } from './player.js';
 import { loadTimeline, clearSelection, closeSlotActionMenu, closeDeleteModal, localDayStart } from './timeline.js';
 import { switchTab, onSortHeaderClick, refreshAnomalyMap, refreshNotifications, loadSettings, loadBookmarks, closeBookmarkEditModal, openSettingsDrawer, closeSettingsDrawer, initSettingsDrawer } from './panels.js';
 import { enterGrid, leaveGrid, bindGridPick } from './grid.js';
@@ -17,6 +17,11 @@ async function setViewMode(mode) {
   if (mode === 'grid') {
     stopLiveTimers();
     if (S.hls) { S.hls.destroy(); S.hls = null; }   // 單畫面播放器停掉省資源
+    // 正規化 VOD 狀態（Finding 1）：進 grid 前把殘留的 VOD 旗標/banner/listener
+    // 清乾淨，避免從 grid 返回單畫面時顯示殘留的 VOD transport/橫幅、或殘留
+    // listener 用過期 vodStartTs 打 /tracking 導錯 overlay。不含 loadStream/
+    // startLiveTimers——grid 本身有自己的計時器，不需要單畫面播放器連線。
+    exitVodState();
     singleEls.forEach(el => el.hidden = true);
     toggleIcon.setAttribute('href', '#i-single');
     await enterGrid();
