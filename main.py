@@ -247,7 +247,9 @@ async def health():
 
 @app.get("/cameras", tags=["system"])
 async def list_cameras():
-    return {"cameras": [s.label for s in app_settings.zmq_sources]}
+    cameras = [s.label for s in app_settings.zmq_sources]
+    return {"cameras": cameras,
+            "active_types": hls_manager.active_types_map(cameras)}
 
 
 app.include_router(stream.router)

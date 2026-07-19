@@ -703,6 +703,17 @@ class HLSManager:
                     keys.append((cam, stype))
         return keys
 
+    def active_types_map(self, cameras: list[str]) -> dict[str, list[str]]:
+        """每台攝影機近期（_RECORDING_SEEN_WINDOW 秒內）有送幀的串流型別。
+        供 /cameras 曝露給前端判斷 thermal 是否有來源（無來源 → 無訊號佔位）。"""
+        now = time.time()
+        return {
+            cam: [stype for stype in ("rgb", "thermal")
+                  if (seen := self._last_seen.get((cam, stype))) is not None
+                  and now - seen <= _RECORDING_SEEN_WINDOW]
+            for cam in cameras
+        }
+
 
 # ─── 初始化 ──────────────────────────────────────────────────────────────────
 # 從 settings 讀取 log 等級（預設 INFO）

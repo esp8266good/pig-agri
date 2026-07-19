@@ -12,10 +12,18 @@ export const S = {
   selectMode: false, selectedHours: new Set(), savedSegmentsMap: new Map(),
   transportDragging: false, dragFrac: 0, seekCommitTimer: null,
   dragSeekPending: false, trackingFetchTimer: null, trackingCache: new Map(),
+  cameraActiveTypes: {}, viewMode: 'single',
 };
 
 export const MAX_WS_RETRY = 5;
 export const WS_RETRY_BASE_MS = 2000;
+
+// /cameras 的 active_types 判斷：無該 cam 資料時 fail-open（回 true），
+// 資訊缺失不得誤封鎖實際正常的串流。
+export function hasActiveType(cam, type) {
+  const t = S.cameraActiveTypes[cam];
+  return !Array.isArray(t) || t.includes(type);
+}
 
 // ── DOM refs ──────────────────────────────────────────────
 export const els = {

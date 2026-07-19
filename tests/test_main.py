@@ -101,6 +101,20 @@ def test_cameras_returns_list(client):
     assert len(data["cameras"]) > 0
 
 
+def test_cameras_includes_active_types(client):
+    import time
+    import hls_manager as hm
+    with patch.dict(hm.hls_manager._last_seen,
+                    {("cam_01", "rgb"): time.time(),
+                     ("cam_01", "thermal"): time.time() - 9999},
+                    clear=True):
+        resp = client.get("/cameras")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["cameras"] == ["cam_01"]          # 原形狀不變
+    assert data["active_types"] == {"cam_01": ["rgb"]}   # thermal 已過期不算活躍
+
+
 def test_alerts_active_returns_empty_cache(client):
     resp = client.get("/alerts/active")
     assert resp.status_code == 200

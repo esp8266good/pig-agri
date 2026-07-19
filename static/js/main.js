@@ -107,7 +107,8 @@ async function init() {
   try {
     const res = await fetch('/cameras');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const { cameras } = await res.json();
+    const { cameras, active_types } = await res.json();
+    S.cameraActiveTypes = active_types || {};
     if (cameras.length === 0) throw new Error('no cameras');
 
     cameras.forEach(cam => {
