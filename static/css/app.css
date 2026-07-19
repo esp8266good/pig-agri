@@ -149,6 +149,11 @@
       .right-col #bottom-panel { min-height: 0; }
       .right-col #bottom-panel { display: flex; flex-direction: column; width: 100%; }
       .right-col .tab-content.active { overflow-y: auto; flex: 1; }
+      /* 3c：>=1200px #tab-bar 不是 sticky 子元素（整個 .right-col 才是 sticky
+         對象，見上方），overflow: hidden 在此不會框住任何 sticky 定位，安全地
+         照舊裁切 #bottom-panel 圓角（避免最後一列 .selected/.anomaly-row 底色
+         方角戳出圓角外）。 */
+      #bottom-panel { overflow: hidden; }
     }
     @media (max-width: 1199px) {
       /* top 用 --header-h（main.js ResizeObserver 即時量測），而非寫死 60px：
@@ -730,12 +735,30 @@
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: var(--radius-lg);
-      overflow: hidden;
+      /* 3c 重疊修正：原本這裡無條件 overflow: hidden 純為裁切圓角。但 <1200px 時
+         #tab-bar 是這個容器的子元素、且宣告 position: sticky——CSS 規範下
+         sticky 定位會被「最近的、overflow 非 visible 的祖先」框住捲動範圍；
+         #bottom-panel 本身在單欄版型不捲動（捲動的是整個頁面 body），於是
+         sticky 完全失效，#tab-bar 退化成隨頁面正常捲動，捲動過程中從
+         z-index 較低（40）處被 z-index 較高（50）的 sticky header 蓋住——
+         這就是使用者回報的重疊，任何 <1200px 寬度捲過 tab-bar 都會重現。
+         修法：<1200px 不設 overflow:hidden（sticky 才能生效，改由 #tab-bar
+         自己補頂部圓角做視覺銜接）；>=1200px 沒有這個 sticky 子元素（.right-col
+         整層才是 sticky 對象），overflow: hidden 照舊裁切圓角不受影響，見下方
+         @media (min-width: 1200px) 區塊。
+         已知既有限制（非本次修正引入，headless 實測兩者皆有）：Chrome 對
+         border-collapse: collapse 的 <table> 不會被祖先的 overflow:hidden+
+         border-radius 正確裁圓角（純 <div> 測試會裁，<table> 不會裁——
+         Chromium 對 collapsed table 的繪製路徑繞過了祖先圓角裁切），
+         #pig-status-table 捲到底、剛好選取/異常列貼齊底邊時方角會露出圓角
+         範圍外；stash 回原始碼（無本次任何改動）重測同樣重現，證實與這次
+         sticky 修正無關、修正前就存在，不在本任務範圍內處理。 */
     }
     #tab-bar {
       display: flex;
       border-bottom: 1px solid var(--divider);
       background: var(--surface-2);
+      border-radius: var(--radius-lg) var(--radius-lg) 0 0;
     }
     .tab-btn {
       padding: var(--space-2) var(--space-4);
