@@ -40,6 +40,13 @@ class FrameData:
     frame_id: int
 
 
+# 連續多少幀 frame_id 沒前進才判定為「真停滯」並餵空偵測讓 tracker age out。
+# 只停滯一兩幀（10Hz loop 偶爾超前略慢於 10fps 的相機、frame_id 未及更新）屬正常，
+# 直接跳過 tracker 不擾動健康軌跡的 hit_streak／frame_count；真正的送幀停滯會連續累積
+# 遠超此值，仍能正常 age out。
+STALE_TICKS_BEFORE_AGING: int = 5
+
+
 class InferencePipeline:
     LOOP_INTERVAL: float = 0.1
 
@@ -49,6 +56,8 @@ class InferencePipeline:
         # 同一張凍結幀，若不比對就會每 100ms 重跑 detect→track→write，把單一幀灌進 DB
         # 上百萬列、汙染活動量計算（根因見 docs/handoff-tracking-gap-2026-07-20.md）。
         self._last_processed_fid: dict[str, int] = {}
+        # 每支 camera 連續停滯（frame_id 未前進）的幀數，用來區分「偶爾超前」與「真停滯」。
+        self._stale_streak: dict[str, int] = {}
         self._lock = threading.Lock()
         self._detector = None
         self._reid = None
@@ -139,10 +148,15 @@ class InferencePipeline:
                           if self._last_processed_fid.get(c) != fd.frame_id]
             stale_cams = [c for c in snapshot if c not in fresh_cams]
 
-            # 停滯 camera：仍餵一次空偵測讓 tracker 內部殘留 track 正常 age out，
-            # 避免送幀恢復時舊 track 殘留跳位；但不寫 DB、不重播 WS。
+            # 停滯 camera：連續停滯達 STALE_TICKS_BEFORE_AGING 幀才餵空偵測讓 tracker
+            # 內部殘留 track 正常 age out（避免送幀恢復時舊 track 殘留跳位）；但不重跑
+            # detector／不寫 DB／不重播 WS。連續幀數未達門檻（僅偶爾超前）則完全跳過
+            # tracker，不擾動健康軌跡的 hit_streak／frame_count。
             stale_futures = []
             for cam in stale_cams:
+                self._stale_streak[cam] = self._stale_streak.get(cam, 0) + 1
+                if self._stale_streak[cam] < STALE_TICKS_BEFORE_AGING:
+                    continue
                 fd = snapshot[cam]
                 h, w = fd.rgb_np.shape[:2]
                 stale_futures.append(self._executor.submit(
@@ -151,85 +165,88 @@ class InferencePipeline:
                     np.zeros((0, 2048), dtype=np.float32),
                 ))
 
-            if not fresh_cams:
-                # 等停滯 tracker 更新完再返回，維持「每 camera 同時至多一個 update」不變式
-                for f in stale_futures:
-                    f.result()
-                return
+            try:
+                if not fresh_cams:
+                    return
 
-            cameras = fresh_cams
-            frames = [snapshot[c] for c in cameras]
-            batch_imgs = [f.rgb_np for f in frames]
+                cameras = fresh_cams
+                frames = [snapshot[c] for c in cameras]
+                batch_imgs = [f.rgb_np for f in frames]
 
-            all_dets = self._detector.infer(batch_imgs)
-            for c, fd in zip(cameras, frames):
-                self._last_processed_fid[c] = fd.frame_id
+                all_dets = self._detector.infer(batch_imgs)
+                for c, fd in zip(cameras, frames):
+                    self._last_processed_fid[c] = fd.frame_id
+                    self._stale_streak[c] = 0
 
-            # ReID: GPU sequential
-            all_id_feats: list[np.ndarray] = []
-            for frame_data, dets in zip(frames, all_dets):
-                if dets is None or len(dets) == 0:
-                    all_id_feats.append(np.zeros((0, 2048), dtype=np.float32))
-                else:
+                # ReID: GPU sequential
+                all_id_feats: list[np.ndarray] = []
+                for frame_data, dets in zip(frames, all_dets):
+                    if dets is None or len(dets) == 0:
+                        all_id_feats.append(np.zeros((0, 2048), dtype=np.float32))
+                    else:
+                        h, w = frame_data.rgb_np.shape[:2]
+                        scale = min(test_size[0] / h, test_size[1] / w)
+                        bbox_orig = (dets[:, :4] / scale).astype(np.float32)
+                        all_id_feats.append(self._reid.extract(frame_data.rgb_np, bbox_orig))
+
+                # Tracker: CPU parallel
+                futures = []
+                for cam, frame_data, dets, id_feats in zip(cameras, frames, all_dets, all_id_feats):
                     h, w = frame_data.rgb_np.shape[:2]
-                    scale = min(test_size[0] / h, test_size[1] / w)
-                    bbox_orig = (dets[:, :4] / scale).astype(np.float32)
-                    all_id_feats.append(self._reid.extract(frame_data.rgb_np, bbox_orig))
+                    fut = self._executor.submit(
+                        self._tracker_pool.update,
+                        cam, dets, (h, w), test_size, id_feats,
+                    )
+                    futures.append((cam, frame_data, fut))
 
-            # Tracker: CPU parallel
-            futures = []
-            for cam, frame_data, dets, id_feats in zip(cameras, frames, all_dets, all_id_feats):
-                h, w = frame_data.rgb_np.shape[:2]
-                fut = self._executor.submit(
-                    self._tracker_pool.update,
-                    cam, dets, (h, w), test_size, id_feats,
-                )
-                futures.append((cam, frame_data, fut))
-
-            for cam, frame_data, fut in futures:
-                online_targets = fut.result()
-                objects = []
-                for t in online_targets:
-                    x1, y1, x2, y2 = float(t[0]), float(t[1]), float(t[2]), float(t[3])
-                    obj_id = int(t[4])
-                    conf = float(t[5]) if len(t) > 5 else 0.0
-                    ti = _compute_thermal_intensity(frame_data.thermal_np, x1, y1, x2, y2)
-                    objects.append({
-                        "object_id": obj_id,
-                        "bbox": [x1, y1, x2 - x1, y2 - y1],
-                        "confidence": conf,
-                        # thermal_intensity is DB-only; not included in live WS payload
-                    })
-                    pool = database.get_pool()
-                    if pool is not None:
-                        asyncio.run_coroutine_threadsafe(
-                            write_tracking_log(
-                                pool,
-                                camera_id=cam,
-                                timestamp=frame_data.ts,
-                                frame_id=frame_data.frame_id,
-                                object_id=obj_id,
-                                bb_left=x1,
-                                bb_top=y1,
-                                bb_width=x2 - x1,
-                                bb_height=y2 - y1,
-                                confidence=conf,
-                                thermal_intensity=ti,
-                            ),
-                            self._event_loop,
-                        )
-                payload = {
-                    "frame_id": frame_data.frame_id,
-                    "timestamp": frame_data.ts,
-                    "objects": objects,
-                }
-                asyncio.run_coroutine_threadsafe(
-                    self._broadcast_fn(cam, payload), self._event_loop
-                )
-
-            # 等停滯 camera 的 age-out 更新完成，維持「每 camera 同時至多一個 update」不變式。
-            for f in stale_futures:
-                f.result()
+                for cam, frame_data, fut in futures:
+                    online_targets = fut.result()
+                    objects = []
+                    for t in online_targets:
+                        x1, y1, x2, y2 = float(t[0]), float(t[1]), float(t[2]), float(t[3])
+                        obj_id = int(t[4])
+                        conf = float(t[5]) if len(t) > 5 else 0.0
+                        ti = _compute_thermal_intensity(frame_data.thermal_np, x1, y1, x2, y2)
+                        objects.append({
+                            "object_id": obj_id,
+                            "bbox": [x1, y1, x2 - x1, y2 - y1],
+                            "confidence": conf,
+                            # thermal_intensity is DB-only; not included in live WS payload
+                        })
+                        pool = database.get_pool()
+                        if pool is not None:
+                            asyncio.run_coroutine_threadsafe(
+                                write_tracking_log(
+                                    pool,
+                                    camera_id=cam,
+                                    timestamp=frame_data.ts,
+                                    frame_id=frame_data.frame_id,
+                                    object_id=obj_id,
+                                    bb_left=x1,
+                                    bb_top=y1,
+                                    bb_width=x2 - x1,
+                                    bb_height=y2 - y1,
+                                    confidence=conf,
+                                    thermal_intensity=ti,
+                                ),
+                                self._event_loop,
+                            )
+                    payload = {
+                        "frame_id": frame_data.frame_id,
+                        "timestamp": frame_data.ts,
+                        "objects": objects,
+                    }
+                    asyncio.run_coroutine_threadsafe(
+                        self._broadcast_fn(cam, payload), self._event_loop
+                    )
+            finally:
+                # 無論 fresh 路徑成功或丟例外，都要 await 停滯 camera 的 age-out 更新，
+                # 維持 tracker_pool 明載的「每 camera 同時至多一個 update」不變式。
+                for f in stale_futures:
+                    try:
+                        f.result()
+                    except Exception:
+                        logger.exception("stale tracker age-out failed")
         except Exception:
             logger.exception("InferencePipeline._process_batch error, skipping frame")
 

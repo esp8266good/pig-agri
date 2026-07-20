@@ -30,6 +30,7 @@ def _make_pipeline():
     p._event_loop = None
     p._broadcast_fn = None
     p._last_processed_fid = {}
+    p._stale_streak = {}
     return p
 
 
@@ -151,9 +152,9 @@ def test_process_batch_skips_frozen_frame_reprocess():
     assert len(broadcast_calls) == 1
 
 
-def test_process_batch_ages_out_stale_camera_tracker():
-    """停滯 camera 仍需餵空偵測給 tracker，讓殘留 track 正常 age out，
-    避免送幀恢復時舊 track 殘留跳位（設計取捨見 handoff）。"""
+def test_process_batch_ignores_brief_stale_tick():
+    """偶爾一兩幀停滯（10Hz loop 超前略慢的相機）不得餵空偵測擾動 tracker——
+    只 fresh 那輪呼叫 tracker，benign stale tick 完全跳過。"""
     from inference.pipeline import FrameData
     p, _detector, mock_pool, _bc = _make_processing_pipeline()
 
@@ -161,14 +162,34 @@ def test_process_batch_ages_out_stale_camera_tracker():
     frozen = FrameData(rgb_np=rgb, thermal_np=None, ts=1.0, frame_id=1111387)
 
     p._process_batch({"cam_01": frozen})   # fresh：真實 dets
-    p._process_batch({"cam_01": frozen})   # stale：空 dets 續 age
+    p._process_batch({"cam_01": frozen})   # stale streak=1（未達門檻）→ 跳過 tracker
     p._event_loop.run_until_complete(asyncio.sleep(0.05))
     p._event_loop.close()
     p._executor.shutdown(wait=False)
 
-    # 兩輪都呼叫 tracker.update（第二輪用來 age out）
+    assert mock_pool.update.call_count == 1   # 只有 fresh 那輪
+
+
+def test_process_batch_ages_out_sustained_stale_camera():
+    """連續停滯達門檻後才餵空偵測給 tracker，讓殘留 track 正常 age out
+    （避免送幀恢復時舊 track 殘留跳位；設計取捨見 handoff）。"""
+    from inference.pipeline import FrameData, STALE_TICKS_BEFORE_AGING as TH
+    p, _detector, mock_pool, _bc = _make_processing_pipeline()
+
+    rgb = np.zeros((480, 640, 3), dtype=np.uint8)
+    frozen = FrameData(rgb_np=rgb, thermal_np=None, ts=1.0, frame_id=1111387)
+
+    p._process_batch({"cam_01": frozen})            # fresh：真實 dets
+    for _ in range(TH - 1):                         # streak 1..TH-1：未達門檻，跳過
+        p._process_batch({"cam_01": frozen})
+    assert mock_pool.update.call_count == 1         # 至此只有 fresh 那輪
+
+    p._process_batch({"cam_01": frozen})            # streak=TH：達門檻 → 餵空 age out
+    p._event_loop.run_until_complete(asyncio.sleep(0.05))
+    p._event_loop.close()
+    p._executor.shutdown(wait=False)
+
     assert mock_pool.update.call_count == 2
-    # 第二輪（stale）餵入的 dets 必須是空的（None 或長度 0）
     stale_dets = mock_pool.update.call_args_list[1].args[1]
     assert stale_dets is None or len(stale_dets) == 0
 
