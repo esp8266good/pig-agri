@@ -2,12 +2,18 @@
 import { S, els, MAX_WS_RETRY, WS_RETRY_BASE_MS, setStatus, showToast, setSkeleton, fmtClock, hasActiveType } from './state.js';
 import { clearPigSelection, renderPigStatus, updateVodAnomalyMap, refreshAnomalyMap, refreshNotifications } from './panels.js';
 
+// #no-signal 在 index.html 靜態帶 aria-hidden="true"（與初始 hidden 狀態配對）；
+// 顯示時若不同步翻成 false，畫面上出現的無訊號文案對輔助科技永遠不存在。
 function showNoSignal(msg) {
   els.noSignalText.textContent = msg;
   els.noSignal.hidden = false;
+  els.noSignal.setAttribute('aria-hidden', 'false');
   setSkeleton(false);
 }
-function hideNoSignal() { els.noSignal.hidden = true; }
+function hideNoSignal() {
+  els.noSignal.hidden = true;
+  els.noSignal.setAttribute('aria-hidden', 'true');
+}
 
 // ── VOD mode ──────────────────────────────────────────────
 export function loadVod(startTs) {
@@ -493,10 +499,28 @@ export async function loadStream() {
   hideNoSignal();
   // thermal 無來源：後端 /cameras active_types 判定（fail-open）。不建 HLS、不報錯誤 toast。
   if (S.currentType === 'thermal' && !hasActiveType(S.currentCamera, 'thermal')) {
-    showNoSignal('無訊號（此攝影機無熱成像來源）');
-    setStatus('Thermal 無訊號', '');
-    connectWS(S.currentCamera);   // WS 仍照常（bbox 資料與畫面型別無關）
-    return;
+    // S.cameraActiveTypes 只在 init()/enterGrid() 寫入，是一次 20s(ish) 前的快照。
+    // 若 thermal 串流剛好卡在重連/ffmpeg 自癒中的瞬間開頁，會整個 session 誤判
+    // 「硬體無熱成像來源」、切來切去也不會恢復。只在這條冷路徑（判定為無來源時）
+    // 多打一次 /cameras 刷新後重判——不影響一般切換（有來源時完全不多打請求）。
+    const camAtStart = S.currentCamera, typeAtStart = S.currentType;
+    try {
+      const res = await fetch('/cameras');
+      if (res.ok) {
+        const data = await res.json();
+        S.cameraActiveTypes = data.active_types || {};
+      }
+    } catch (_) { /* 刷新失敗：維持原快照，走下面既有判定 */ }
+    // 刷新期間使用者已切走攝影機/型別：放棄，交給新一輪 loadStream() 處理。
+    if (S.currentCamera !== camAtStart || S.currentType !== typeAtStart) return;
+    if (S.currentType === 'thermal' && !hasActiveType(S.currentCamera, 'thermal')) {
+      // 文案不斷言硬體事實（可能只是暫時無串流），避免刷新後仍誤判時誤導使用者。
+      showNoSignal('無訊號（目前無熱成像串流）');
+      setStatus('Thermal 無訊號', '');
+      connectWS(S.currentCamera);   // WS 仍照常（bbox 資料與畫面型別無關）
+      return;
+    }
+    // 刷新後判定實際有來源：不 return，往下走正常載入流程。
   }
   setSkeleton(true);
   setStatus('正在連線...');

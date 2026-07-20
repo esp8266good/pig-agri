@@ -1,6 +1,12 @@
 // static/js/grid.js — 多畫面純監看。每格：live RGB（靜音、無 bbox），
 // 資訊列：名稱＋追蹤數＋LIVE 狀態；有異常告警 → 紅框＋角標。
 // 離開時銷毀全部播放器。點格 → main.js 切回單畫面選該攝影機。
+//
+// `_gridHourTs` 跨 leaveGrid() 存活（session 內記住上次選的回放時段，
+// 下次進 grid 直接回到同一時段），與單畫面的 `S.isLive` 是兩套獨立的
+// 回放狀態，不要混著推論。
+// 時段對齊（_gridDay/_unionHours 的小時分桶）假設部署時區無 DST：一律用
+// 「本地午夜 + h×3600」換算 epoch，換日光節約會有 1 小時對齊誤差。
 import { getJSON } from './api.js';
 import { S, hasActiveType } from './state.js';
 
@@ -26,6 +32,14 @@ export function getGridPlaybackHour() { return _gridHourTs; }
 
 export function bindGridPick(fn) { _onPickCamera = fn; }
 
+// 共用 teardown：停 badge 輪詢、destroy 所有 hls 實例、清空 _players。
+// enterGrid/leaveGrid/setGridPlayback 三處重建 tile 前都要做同一套清理。
+function _teardownPlayers() {
+  clearInterval(_anomalyTimer); _anomalyTimer = null;
+  for (const p of _players) { try { p.hls?.destroy(); } catch (_) {} }
+  _players = [];
+}
+
 export async function enterGrid() {
   const gen = ++_gridGen;
   // 自清舊狀態：type-switch 時 enterGrid() 會在已滿的 grid 上重跑（不經
@@ -33,9 +47,7 @@ export async function enterGrid() {
   // 清掉舊的 anomaly interval——沿用 leaveGrid() 同一套 teardown 才不會每切
   // 一次型別就多漏一批背景播放器與重複輪詢。首次進場／錯誤畫面重試時
   // _players 本來就是空的，這段是 no-op。
-  clearInterval(_anomalyTimer); _anomalyTimer = null;
-  for (const p of _players) { try { p.hls?.destroy(); } catch (_) {} }
-  _players = [];
+  _teardownPlayers();
   const root = document.getElementById('grid-view');
   root.innerHTML = '';
   root.hidden = false;
@@ -70,9 +82,7 @@ export async function enterGrid() {
 
 export function leaveGrid() {
   _gridGen++;   // 讓進行中的 enterGrid() resume 後 abort（見上）
-  clearInterval(_anomalyTimer); _anomalyTimer = null;
-  for (const p of _players) { try { p.hls?.destroy(); } catch (_) {} }
-  _players = [];
+  _teardownPlayers();
   const root = document.getElementById('grid-view');
   root.innerHTML = '';
   root.hidden = true;
@@ -101,9 +111,7 @@ function setGridPlayback(hourTs) {
   if (hourTs === _gridHourTs) return;
   _gridHourTs = hourTs;
   const gen = ++_gridGen;   // 使進行中的 buildTile await 過期
-  clearInterval(_anomalyTimer); _anomalyTimer = null;
-  for (const p of _players) { try { p.hls?.destroy(); } catch (_) {} }
-  _players = [];
+  _teardownPlayers();
   const root = document.getElementById('grid-view');
   root.innerHTML = '';
   for (const cam of _cams) buildTile(root, cam, null, gen);
@@ -155,7 +163,11 @@ async function buildTile(root, cam, beforeNode = null, gen = _gridGen) {
   // active_types 是 live 概念（近期是否有送幀）；回放模式的訊號有無由該時段是否有
   // 錄影（VOD 404 探測）決定，不能沿用 live 的 active_types 判斷——否則目前離線／
   // 型別暫無來源的攝影機即使該小時確實有錄影，也會被這道守衛提早擋掉。
-  if (_gridHourTs === null && !hasActiveType(cam, S.currentType)) { tileNoSignal(tile); return; }
+  // 只在 thermal 型別套用這道「預期無來源」守衛（與單畫面 player.js:loadStream()
+  // 同一條規則對齊）：RGB 離線是異常（最常見的路徑就是下面 fetch 404），必須落到
+  // tileError() 才有重試鈕；hasActiveType() 對離線攝影機回傳 `[]`（陣列），fail-open
+  // 不生效，若不限定 thermal，離線 RGB 會被這裡提早攔截、永遠拿不到重試鈕。
+  if (_gridHourTs === null && S.currentType === 'thermal' && !hasActiveType(cam, S.currentType)) { tileNoSignal(tile); return; }
   try {
     let url;
     if (_gridHourTs !== null) {
@@ -258,7 +270,14 @@ async function loadGridCalendar(gen) {
   if (_gridMonth !== requestedMonth) return;   // 換月 race：非目前顯示月份的回應直接丟棄
   _unionHours = new Set(sets.flat());
   renderGridCalendar();
-  renderGridDayBar();
+  // M-1：只在 _gridDay 落在這次剛抓回的月份內才重繪日期列。換月按鈕只改
+  // _gridMonth、不改 _gridDay（要點日期格才會改），若這裡無條件呼叫
+  // renderGridDayBar()，會用「新月份的 _unionHours」去畫「舊月份那天」的
+  // 24 格，導致全變無錄影、目前播放中的 `.playing` 高亮消失（VOD 其實還在播）。
+  const gridDayInMonth = new Date(_gridDay * 1000);
+  if (gridDayInMonth.getFullYear() === y && gridDayInMonth.getMonth() === m) {
+    renderGridDayBar();
+  }
 }
 
 function gridDayHasData(dayTs) {
@@ -323,7 +342,9 @@ function updateGridDateLabel() {
 }
 
 async function refreshTileBadges() {
+  const gen = _gridGen;   // M-2：切走 grid（型別切換/離開/換時段）後別再打完剩餘 tile 的 /alerts/active
   for (const tile of document.querySelectorAll('.grid-tile:not(.offline)')) {
+    if (gen !== _gridGen) return;
     const cam = tile.dataset.cam;
     try {
       const data = await getJSON(`/alerts/active?camera_id=${cam}`);
@@ -351,15 +372,30 @@ function _onGridCalOutside(e) {
   const btn = document.getElementById('grid-date-btn');
   if (!pop.contains(e.target) && !btn.contains(e.target)) setGridCalOpen(false);
 }
-document.getElementById('grid-date-btn').addEventListener('click', () => {
-  setGridCalOpen(document.getElementById('grid-calendar').hidden);
-});
-document.getElementById('grid-prev-month').addEventListener('click', () => {
-  _gridMonth = new Date(_gridMonth.getFullYear(), _gridMonth.getMonth() - 1, 1);
-  loadGridCalendar(_gridGen);
-});
-document.getElementById('grid-next-month').addEventListener('click', () => {
-  _gridMonth = new Date(_gridMonth.getFullYear(), _gridMonth.getMonth() + 1, 1);
-  loadGridCalendar(_gridGen);
-});
-document.getElementById('grid-live-btn').addEventListener('click', () => setGridPlayback(null));
+// M-3：module 求值期直接綁定；若這些元素缺失（index.html 結構異動）
+// getElementById(...).addEventListener 會直接拋錯，整個 app（不只 grid）白屏。
+// 比照 main.js 既有 `if (el)` 防禦模式。
+{
+  const dateBtn = document.getElementById('grid-date-btn');
+  if (dateBtn) dateBtn.addEventListener('click', () => {
+    setGridCalOpen(document.getElementById('grid-calendar').hidden);
+  });
+}
+{
+  const prevBtn = document.getElementById('grid-prev-month');
+  if (prevBtn) prevBtn.addEventListener('click', () => {
+    _gridMonth = new Date(_gridMonth.getFullYear(), _gridMonth.getMonth() - 1, 1);
+    loadGridCalendar(_gridGen);
+  });
+}
+{
+  const nextBtn = document.getElementById('grid-next-month');
+  if (nextBtn) nextBtn.addEventListener('click', () => {
+    _gridMonth = new Date(_gridMonth.getFullYear(), _gridMonth.getMonth() + 1, 1);
+    loadGridCalendar(_gridGen);
+  });
+}
+{
+  const liveBtn = document.getElementById('grid-live-btn');
+  if (liveBtn) liveBtn.addEventListener('click', () => setGridPlayback(null));
+}
