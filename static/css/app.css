@@ -847,8 +847,15 @@
     #clear-read-btn { margin-left: auto; }
     #alert-list {
       list-style: none;
-      max-height: 220px;
-      overflow-y: auto;
+    }
+    @media (max-width: 1199px) {
+      /* <1200px：#bottom-panel 不是固定高度容器（3b 只在 >=1200px 生效），
+         單欄版面下捲動的是整個頁面。這裡沿用舊版「清單自帶上限＋內部捲動」
+         行為，避免長清單把整頁拉得過長。
+         >=1200px：.right-col .tab-content.active 已經是 flex:1+overflow-y:auto
+         的固定高度捲動容器（3b），#alert-list 不應再疊一層 220px 上限——
+         否則清單被卡在 220px、右欄剩餘空間全浪費（本次修正的問題）。 */
+      #alert-list { max-height: 220px; overflow-y: auto; }
     }
     .alert-item {
       display: flex;
