@@ -1,11 +1,11 @@
 // static/js/main.js — 應用程式進入點：init()、頂層事件綁定、儲存健康小燈輪詢。
 import { S, els, setStatus, setSkeleton } from './state.js';
-import { loadStream, startLiveTimers, stopLiveTimers, detachVodListeners, exitVodState } from './player.js';
+import { loadStream, loadVod, startLiveTimers, stopLiveTimers, detachVodListeners, exitVodState } from './player.js';
 import { loadTimeline, clearSelection, closeSlotActionMenu, closeDeleteModal, localDayStart } from './timeline.js';
 import { switchTab, onSortHeaderClick, refreshAnomalyMap, refreshNotifications, loadSettings, loadBookmarks, closeBookmarkEditModal, openSettingsDrawer, closeSettingsDrawer, initSettingsDrawer } from './panels.js';
-import { enterGrid, leaveGrid, bindGridPick } from './grid.js';
+import { enterGrid, leaveGrid, bindGridPick, getGridPlaybackHour } from './grid.js';
 
-async function setViewMode(mode) {
+async function setViewMode(mode, opts = {}) {
   if (mode === S.viewMode) return;
   S.viewMode = mode;
   try { localStorage.setItem('viewMode', mode); } catch (_) {}
@@ -27,9 +27,24 @@ async function setViewMode(mode) {
     leaveGrid();
     singleEls.forEach(el => el.hidden = false);
     toggleIcon.setAttribute('href', '#i-grid');
-    loadStream();
-    loadTimeline();
-    startLiveTimers();
+    if (opts.vodStartTs != null) {
+      // grid 回放中點格：帶時段直接進該攝影機 VOD，時間軸同步選中該日
+      const d = new Date(opts.vodStartTs * 1000);
+      S.currentMonth = new Date(d.getFullYear(), d.getMonth(), 1);
+      S.selectedDay = localDayStart(d);
+      await loadTimeline();
+      const slot = els.timelineBar.children[d.getHours()];
+      if (slot) {
+        document.querySelectorAll('.timeline-slot.selected')
+          .forEach(s => s.classList.remove('selected'));
+        slot.classList.add('selected');
+      }
+      loadVod(opts.vodStartTs);
+    } else {
+      loadStream();
+      loadTimeline();
+      startLiveTimers();
+    }
   }
 }
 
@@ -70,9 +85,11 @@ bindGridPick(cam => {
   els.camSelect.value = cam;
   try { localStorage.setItem('lastCamera', cam); } catch (_) {}
   resetCameraState();
-  // setViewMode('single') 內部已呼叫 loadStream()/loadTimeline()/startLiveTimers()，
-  // 這裡不重複呼叫；離開 grid、還原單畫面 UI 都在其中完成。
-  setViewMode('single');
+  // setViewMode('single') 內部已呼叫 loadStream()/loadTimeline()/startLiveTimers()
+  // （或帶 vodStartTs 時改呼叫 loadVod()/loadTimeline()），這裡不重複呼叫；
+  // 離開 grid、還原單畫面 UI 都在其中完成。
+  const hourTs = getGridPlaybackHour();
+  setViewMode('single', hourTs != null ? { vodStartTs: hourTs } : {});
   // 與 camSelect change handler 對齊：立即刷新一次，不等 30s 輪詢。
   refreshAnomalyMap();
   refreshNotifications();

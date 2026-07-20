@@ -241,7 +241,10 @@ async function rebuildTilePlayer(tile, cam) {
 }
 
 async function loadGridCalendar(gen) {
-  const y = _gridMonth.getFullYear(), m = _gridMonth.getMonth();
+  const requestedMonth = _gridMonth;   // 換月 race（Task 7 Minor）：記錄當下月份，
+                                        // Promise.all 期間若月份已再度切換，_gridGen
+                                        // 不變（不誤傷並行中的 tile build），改比對月份
+  const y = requestedMonth.getFullYear(), m = requestedMonth.getMonth();
   const monthStart = Math.floor(new Date(y, m, 1).getTime() / 1000);
   const monthEnd   = Math.floor(new Date(y, m + 1, 1).getTime() / 1000);
   const sets = await Promise.all(_cams.map(async cam => {
@@ -252,6 +255,7 @@ async function loadGridCalendar(gen) {
     } catch (_) { return []; }
   }));
   if (gen !== _gridGen) return;
+  if (_gridMonth !== requestedMonth) return;   // 換月 race：非目前顯示月份的回應直接丟棄
   _unionHours = new Set(sets.flat());
   renderGridCalendar();
   renderGridDayBar();
