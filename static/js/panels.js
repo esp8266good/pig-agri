@@ -154,9 +154,17 @@ function updateSortIndicators() {
   });
 }
 
+// 勾了 solo 卻還沒點選任何豬時（過濾會是 no-op、看起來像沒作用），顯示提示引導點選。
+export function updateSoloHint() {
+  const hint = document.getElementById('solo-hint');
+  if (!hint) return;
+  hint.hidden = !(S.soloMode && S.selectedObjectId == null);
+}
+
 function togglePigSelection(oid) {
   S.selectedObjectId = (S.selectedObjectId === oid) ? null : oid;
   renderPigStatus();   // 重繪反映 .selected；bbox 強調由 drawBoxes 每幀自然反映
+  updateSoloHint();
 }
 
 export function renderPigStatus() {
@@ -498,6 +506,7 @@ export function clearPigSelection() {
   S.soloMode = false;
   const cb = document.getElementById('solo-checkbox');
   if (cb) cb.checked = false;
+  updateSoloHint();
 }
 
 // ── onclick 綁定（原 index.html inline onclick，改用 addEventListener） ──

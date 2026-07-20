@@ -2,7 +2,7 @@
 import { S, els, setStatus, setSkeleton } from './state.js';
 import { loadStream, loadVod, startLiveTimers, stopLiveTimers, detachVodListeners, exitVodState } from './player.js';
 import { loadTimeline, clearSelection, closeSlotActionMenu, closeDeleteModal, localDayStart } from './timeline.js';
-import { switchTab, onSortHeaderClick, refreshAnomalyMap, refreshNotifications, loadSettings, loadBookmarks, closeBookmarkEditModal, openSettingsDrawer, closeSettingsDrawer, initSettingsDrawer } from './panels.js';
+import { switchTab, onSortHeaderClick, refreshAnomalyMap, refreshNotifications, loadSettings, loadBookmarks, closeBookmarkEditModal, openSettingsDrawer, closeSettingsDrawer, initSettingsDrawer, updateSoloHint } from './panels.js';
 import { enterGrid, leaveGrid, bindGridPick, getGridPlaybackHour } from './grid.js';
 
 async function setViewMode(mode, opts = {}) {
@@ -199,7 +199,7 @@ document.querySelectorAll('#pig-status-table th.sortable').forEach(th => {
 });
 {
   const soloCb = document.getElementById('solo-checkbox');
-  if (soloCb) soloCb.addEventListener('change', e => { S.soloMode = e.target.checked; });
+  if (soloCb) soloCb.addEventListener('change', e => { S.soloMode = e.target.checked; updateSoloHint(); });
 }
 // #bell-btn：切到通知分頁並捲動到底部面板
 {

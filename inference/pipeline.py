@@ -45,6 +45,10 @@ class InferencePipeline:
 
     def __init__(self) -> None:
         self._latest: dict[str, FrameData] = {}
+        # 每支 camera 上一輪「實際處理過」的 frame_id。ZMQ 送幀停滯時 _latest 會卡住
+        # 同一張凍結幀，若不比對就會每 100ms 重跑 detect→track→write，把單一幀灌進 DB
+        # 上百萬列、汙染活動量計算（根因見 docs/handoff-tracking-gap-2026-07-20.md）。
+        self._last_processed_fid: dict[str, int] = {}
         self._lock = threading.Lock()
         self._detector = None
         self._reid = None
@@ -126,12 +130,40 @@ class InferencePipeline:
         try:
             if not self._active:
                 return
-            cameras = list(snapshot.keys())
+            test_size = self._detector.test_size
+
+            # 凍結畫面防護：只處理 frame_id 相對上一輪有前進的 camera。frame_id 沒動 =
+            # 該 camera 的 ZMQ 送幀停滯、_latest 卡在舊幀，不可重跑 detector／重複寫 DB。
+            # frame_id 是 per-camera 單調遞增，跨 camera 會重複，故一律以 camera_id 分別比對。
+            fresh_cams = [c for c, fd in snapshot.items()
+                          if self._last_processed_fid.get(c) != fd.frame_id]
+            stale_cams = [c for c in snapshot if c not in fresh_cams]
+
+            # 停滯 camera：仍餵一次空偵測讓 tracker 內部殘留 track 正常 age out，
+            # 避免送幀恢復時舊 track 殘留跳位；但不寫 DB、不重播 WS。
+            stale_futures = []
+            for cam in stale_cams:
+                fd = snapshot[cam]
+                h, w = fd.rgb_np.shape[:2]
+                stale_futures.append(self._executor.submit(
+                    self._tracker_pool.update,
+                    cam, None, (h, w), test_size,
+                    np.zeros((0, 2048), dtype=np.float32),
+                ))
+
+            if not fresh_cams:
+                # 等停滯 tracker 更新完再返回，維持「每 camera 同時至多一個 update」不變式
+                for f in stale_futures:
+                    f.result()
+                return
+
+            cameras = fresh_cams
             frames = [snapshot[c] for c in cameras]
             batch_imgs = [f.rgb_np for f in frames]
 
             all_dets = self._detector.infer(batch_imgs)
-            test_size = self._detector.test_size
+            for c, fd in zip(cameras, frames):
+                self._last_processed_fid[c] = fd.frame_id
 
             # ReID: GPU sequential
             all_id_feats: list[np.ndarray] = []
@@ -194,6 +226,10 @@ class InferencePipeline:
                 asyncio.run_coroutine_threadsafe(
                     self._broadcast_fn(cam, payload), self._event_loop
                 )
+
+            # 等停滯 camera 的 age-out 更新完成，維持「每 camera 同時至多一個 update」不變式。
+            for f in stale_futures:
+                f.result()
         except Exception:
             logger.exception("InferencePipeline._process_batch error, skipping frame")
 
