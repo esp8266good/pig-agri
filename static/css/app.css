@@ -835,6 +835,14 @@
       align-items: center;
       padding: var(--space-3) var(--space-4);
       border-bottom: 1px solid var(--surface-3);
+      /* >=1200px：#alert-list 與本工具列同為 .tab-content.active（flex:1+overflow-y:auto）
+         的子節點，清單一長工具列就被捲走；sticky 讓它固定在捲動容器頂端。
+         （#bottom-panel 在 >=1200px 是 overflow:hidden，但 sticky 的框限對象是最近的
+         捲動祖先 .tab-content.active，不受影響。） */
+      position: sticky;
+      top: 0;
+      background: var(--surface);
+      z-index: 1;
     }
     .show-read-label {
       display: flex;

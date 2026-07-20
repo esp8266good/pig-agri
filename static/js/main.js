@@ -16,9 +16,13 @@ async function setViewMode(mode, opts = {}) {
     stopLiveTimers();
     if (S.hls) { S.hls.destroy(); S.hls = null; }   // 單畫面播放器停掉省資源
     // 單畫面 tracking WS 進 grid 不需要（grid tile 本身不疊 bbox）；離開 grid
-    // 必定重跑 loadStream()→connectWS() 重連，這裡關閉安全。一併清 retry
-    // timer，避免背景重連（斷線重試排程）在 grid 模式下悄悄補一條 WS 連線。
+    // 會走 loadStream()→connectWS()（一般返回）或 loadVod()（Task 7：grid 回放中
+    // 點格帶時段返回，見下方 vodStartTs 分支）補回連線或改用 REST /tracking，
+    // 這裡關閉安全。一併清 retry timer／歸零 retry count，避免背景重連（斷線
+    // 重試排程）在 grid 模式下悄悄補一條 WS 連線，也避免使用者帶著已耗盡大半
+    // 的重試額度離開再返回。
     clearTimeout(S.wsRetryTimer);
+    S.wsRetryCount = 0;
     S.wsGeneration++; S.ws?.close(); S.ws = null;
     // 正規化 VOD 狀態（Finding 1）：進 grid 前把殘留的 VOD 旗標/banner/listener
     // 清乾淨，避免從 grid 返回單畫面時顯示殘留的 VOD transport/橫幅、或殘留
