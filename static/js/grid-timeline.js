@@ -10,7 +10,7 @@
 //
 // 時段對齊（本檔 localDayStart/renderGridDayBar 的小時分桶）假設部署時區
 // 無 DST：一律用「本地午夜 + h×3600」換算 epoch，換日光節約會有 1 小時
-// 對齊誤差（與 grid.js 檔頭原註解同一份假設，拆檔後兩邊都保留一份）。
+// 對齊誤差（此提醒原本在 grid.js 檔頭，隨這段邏輯搬移至此）。
 import { getJSON } from './api.js';
 
 let _onPickHour = null;      // (hourTs) => void：使用者點時段格，grid.js 接手切換播放
@@ -29,7 +29,7 @@ export function initGridTimeline({ onPickHour, getPlayingHour, getCams, getGen }
   _getGen = getGen;
 }
 
-export function localDayStart(date) {
+function localDayStart(date) {
   const d = new Date(date); d.setHours(0, 0, 0, 0);
   return Math.floor(d.getTime() / 1000);
 }
