@@ -89,6 +89,10 @@ export async function refreshAnomalyMap() {
   if (!S.currentCamera) return;
   try {
     const data = await fetch(`/alerts/active?camera_id=${S.currentCamera}`).then(r => r.json());
+    // 競態守衛：grid 點格帶時段返回時，bindGridPick 不 await setViewMode 就接著呼叫本函式，
+    // 若 fetch 較晚 resolve、此時已進入 loadVod()（同步把 S.isLive 設 false），live cache
+    // 資料就不該覆寫 VOD 的 anomaly map（VOD 有自己的 updateVodAnomalyMap 機制）。
+    if (!S.isLive) return;
     const camCache = data.cache?.[S.currentCamera] ?? {};
     S.anomalyMap = {};
     for (const [oid, info] of Object.entries(camCache)) {
