@@ -5,10 +5,14 @@
 // `_gridHourTs` 跨 leaveGrid() 存活（session 內記住上次選的回放時段，
 // 下次進 grid 直接回到同一時段），與單畫面的 `S.isLive` 是兩套獨立的
 // 回放狀態，不要混著推論。
-// 時段對齊（_gridDay/_unionHours 的小時分桶）假設部署時區無 DST：一律用
-// 「本地午夜 + h×3600」換算 epoch，換日光節約會有 1 小時對齊誤差。
+//
+// 時段選擇器（日期列＋月曆 popover）拆在 grid-timeline.js：本檔透過
+// initGridTimeline() 注入 callback（onPickHour/getPlayingHour/getCams/getGen）
+// 供其讀取播放狀態，並呼叫其匯出的 refreshGridCalendar()/renderGridDayBar()/
+// setGridCalOpen() 觸發重繪；依賴方向 grid → grid-timeline，不建反向邊。
 import { getJSON } from './api.js';
 import { S, hasActiveType } from './state.js';
+import { initGridTimeline, refreshGridCalendar, renderGridDayBar, setGridCalOpen } from './grid-timeline.js';
 
 let _players = [];        // [{hls, video}]
 let _anomalyTimer = null;
@@ -19,14 +23,13 @@ let _gridGen = 0;         // generation token（Finding 4）：leaveGrid() 遞�
 // ── grid 時段回放（共用時間軸，所有攝影機聯集）──────────────
 let _cams = [];               // enterGrid 抓到的攝影機清單（rebuild 重用）
 let _gridHourTs = null;       // null = LIVE；否則為回放小時的 epoch ts
-let _gridDay = null;          // 選中日 00:00 epoch
-let _gridMonth = null;        // Date（該月 1 日）
-let _unionHours = new Set();  // 該月「任一攝影機有錄影」的小時 ts 聯集
 
-function localDayStart(date) {
-  const d = new Date(date); d.setHours(0, 0, 0, 0);
-  return Math.floor(d.getTime() / 1000);
-}
+initGridTimeline({
+  onPickHour: hourTs => setGridPlayback(hourTs),
+  getPlayingHour: () => _gridHourTs,
+  getCams: () => _cams,
+  getGen: () => _gridGen,
+});
 
 export function getGridPlaybackHour() { return _gridHourTs; }
 
@@ -63,11 +66,6 @@ export async function enterGrid() {
     return;
   }
   if (gen !== _gridGen) return;     // 等待 /cameras 期間已離開 grid（Finding 4），放棄 append tiles
-  if (_gridDay === null) {
-    const today = new Date();
-    _gridDay = localDayStart(today);
-    _gridMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-  }
   root.style.setProperty('--grid-cols',
     cameras.length <= 2 ? 2 : cameras.length <= 4 ? 2 : 3);
   for (const cam of cameras) buildTile(root, cam, null, gen);
@@ -77,7 +75,7 @@ export async function enterGrid() {
   }
   document.getElementById('grid-timeline').hidden = false;
   updateGridPlaybackUI();
-  loadGridCalendar(gen);   // 非同步：抓齊聯集後 renderGridDayBar()
+  refreshGridCalendar(gen);   // 非同步：抓齊聯集後 renderGridDayBar()
 }
 
 export function leaveGrid() {
@@ -252,95 +250,6 @@ async function rebuildTilePlayer(tile, cam) {
   await buildTile(root, cam, nextSibling, _gridGen);
 }
 
-async function loadGridCalendar(gen) {
-  const requestedMonth = _gridMonth;   // 換月 race（Task 7 Minor）：記錄當下月份，
-                                        // Promise.all 期間若月份已再度切換，_gridGen
-                                        // 不變（不誤傷並行中的 tile build），改比對月份
-  const y = requestedMonth.getFullYear(), m = requestedMonth.getMonth();
-  const monthStart = Math.floor(new Date(y, m, 1).getTime() / 1000);
-  const monthEnd   = Math.floor(new Date(y, m + 1, 1).getTime() / 1000);
-  const sets = await Promise.all(_cams.map(async cam => {
-    try {
-      const { hours } = await getJSON(
-        `/stream/${cam}/timeline?start_ts=${monthStart}&end_ts=${monthEnd}`);
-      return hours;
-    } catch (_) { return []; }
-  }));
-  if (gen !== _gridGen) return;
-  if (_gridMonth !== requestedMonth) return;   // 換月 race：非目前顯示月份的回應直接丟棄
-  _unionHours = new Set(sets.flat());
-  renderGridCalendar();
-  // M-1：只在 _gridDay 落在這次剛抓回的月份內才重繪日期列。換月按鈕只改
-  // _gridMonth、不改 _gridDay（要點日期格才會改），若這裡無條件呼叫
-  // renderGridDayBar()，會用「新月份的 _unionHours」去畫「舊月份那天」的
-  // 24 格，導致全變無錄影、目前播放中的 `.playing` 高亮消失（VOD 其實還在播）。
-  const gridDayInMonth = new Date(_gridDay * 1000);
-  if (gridDayInMonth.getFullYear() === y && gridDayInMonth.getMonth() === m) {
-    renderGridDayBar();
-  }
-}
-
-function gridDayHasData(dayTs) {
-  for (let h = 0; h < 24; h++) if (_unionHours.has(dayTs + h * 3600)) return true;
-  return false;
-}
-
-function renderGridCalendar() {
-  const y = _gridMonth.getFullYear(), m = _gridMonth.getMonth();
-  document.getElementById('grid-cal-label').textContent = `${y} 年 ${m + 1} 月`;
-  const grid = document.getElementById('grid-cal-grid');
-  grid.innerHTML = '';
-  const firstDow = new Date(y, m, 1).getDay();
-  const daysInMonth = new Date(y, m + 1, 0).getDate();
-  for (let i = 0; i < firstDow; i++) {
-    const e = document.createElement('div');
-    e.className = 'cal-day empty';
-    grid.appendChild(e);
-  }
-  for (let d = 1; d <= daysInMonth; d++) {
-    const dayTs = Math.floor(new Date(y, m, d).getTime() / 1000);
-    const cell = document.createElement('div');
-    cell.className = 'cal-day in-month';
-    cell.textContent = d;
-    if (gridDayHasData(dayTs)) cell.classList.add('has-rec');
-    if (dayTs === _gridDay) cell.classList.add('day-selected');
-    cell.addEventListener('click', () => {
-      _gridDay = dayTs;
-      renderGridCalendar(); renderGridDayBar(); updateGridDateLabel();
-      setGridCalOpen(false);
-    });
-    grid.appendChild(cell);
-  }
-  const thisMonthFirst = new Date();
-  thisMonthFirst.setDate(1); thisMonthFirst.setHours(0, 0, 0, 0);
-  document.getElementById('grid-next-month').disabled =
-    new Date(y, m, 1) >= thisMonthFirst;
-}
-
-function renderGridDayBar() {
-  const bar = document.getElementById('grid-timeline-bar');
-  bar.innerHTML = '';
-  for (let h = 0; h < 24; h++) {
-    const slotTs = _gridDay + h * 3600;
-    const hasData = _unionHours.has(slotTs);
-    const slot = document.createElement('div');
-    slot.className = 'grid-slot' + (hasData ? ' has-data' : '');
-    slot.setAttribute('role', 'listitem');
-    slot.textContent = String(h).padStart(2, '0');
-    slot.title = new Date(slotTs * 1000).toLocaleString('zh-TW');
-    if (slotTs === _gridHourTs) slot.classList.add('playing');
-    if (hasData) slot.addEventListener('click', () => setGridPlayback(slotTs));
-    bar.appendChild(slot);
-  }
-  updateGridDateLabel();
-}
-
-function updateGridDateLabel() {
-  const d = new Date(_gridDay * 1000);
-  document.getElementById('grid-date-btn-label').textContent =
-    `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
-}
-
 async function refreshTileBadges() {
   const gen = _gridGen;   // M-2：切走 grid（型別切換/離開/換時段）後別再打完剩餘 tile 的 /alerts/active
   for (const tile of document.querySelectorAll('.grid-tile:not(.offline)')) {
@@ -358,43 +267,6 @@ async function refreshTileBadges() {
   }
 }
 
-// ── grid 月曆 popover（一次性綁定；元素常駐 DOM，hidden 控制顯示）──────
-function setGridCalOpen(open) {
-  const pop = document.getElementById('grid-calendar');
-  const btn = document.getElementById('grid-date-btn');
-  pop.hidden = !open;
-  btn.setAttribute('aria-expanded', String(open));
-  if (open) setTimeout(() => document.addEventListener('click', _onGridCalOutside), 0);
-  else document.removeEventListener('click', _onGridCalOutside);
-}
-function _onGridCalOutside(e) {
-  const pop = document.getElementById('grid-calendar');
-  const btn = document.getElementById('grid-date-btn');
-  if (!pop.contains(e.target) && !btn.contains(e.target)) setGridCalOpen(false);
-}
-// M-3：module 求值期直接綁定；若這些元素缺失（index.html 結構異動）
-// getElementById(...).addEventListener 會直接拋錯，整個 app（不只 grid）白屏。
-// 比照 main.js 既有 `if (el)` 防禦模式。
-{
-  const dateBtn = document.getElementById('grid-date-btn');
-  if (dateBtn) dateBtn.addEventListener('click', () => {
-    setGridCalOpen(document.getElementById('grid-calendar').hidden);
-  });
-}
-{
-  const prevBtn = document.getElementById('grid-prev-month');
-  if (prevBtn) prevBtn.addEventListener('click', () => {
-    _gridMonth = new Date(_gridMonth.getFullYear(), _gridMonth.getMonth() - 1, 1);
-    loadGridCalendar(_gridGen);
-  });
-}
-{
-  const nextBtn = document.getElementById('grid-next-month');
-  if (nextBtn) nextBtn.addEventListener('click', () => {
-    _gridMonth = new Date(_gridMonth.getFullYear(), _gridMonth.getMonth() + 1, 1);
-    loadGridCalendar(_gridGen);
-  });
-}
 {
   const liveBtn = document.getElementById('grid-live-btn');
   if (liveBtn) liveBtn.addEventListener('click', () => setGridPlayback(null));
