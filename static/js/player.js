@@ -2,6 +2,12 @@
 import { S, els, MAX_WS_RETRY, WS_RETRY_BASE_MS, setStatus, showToast, setSkeleton, fmtClock, hasActiveType } from './state.js';
 import { clearPigSelection, renderPigStatus, updateVodAnomalyMap, refreshAnomalyMap, refreshNotifications } from './panels.js';
 
+// bbox 沿用窗（秒）：最接近的那筆是空的時，最多回頭沿用這麼舊的一批框。
+// 遠端相機約 1 fps、且有 4~30 秒的空洞，照字面畫會讓框一閃一閃。3 秒是
+// 「填得掉常見空洞」與「不要顯示豬早就走開的舊位置」之間的取捨——量到的
+// 空洞 p90 約 4 秒，所以短暫的洞補得起來，真正的長洞仍會誠實留白。
+const BBOX_HOLD_SECONDS = 3.0;
+
 // #no-signal 在 index.html 靜態帶 aria-hidden="true"（與初始 hidden 狀態配對）；
 // 顯示時若不同步翻成 false，畫面上出現的無訊號文案對輔助科技永遠不存在。
 function showNoSignal(msg) {
@@ -310,6 +316,7 @@ function drawBoxes() {
   // only if PDT is unavailable; that estimate misses the server-side
   // pipeline delay (buffer + encode + segmentation) and runs ~3-5s ahead.
   let displayBoxes = S.latestBoxes;
+  let isHeldFrame = false;   // 這批框是沿用舊觀測（畫的時候淡化）
   if (S.isLive && S.bboxHistory.length) {
     let targetTs = null;
     let dbgSrc = 'latest';
@@ -331,6 +338,26 @@ function drawBoxes() {
       }
       displayBoxes = best.boxes;
       chosenTs = best.ts;
+
+      // 遠端相機經慢速網路只送得出約 1 fps，且 tracker 常常整幀吐不出已確認
+      // 的軌跡（objects 為空陣列）。照字面畫的話畫面上的框就會一閃一閃。
+      // 最接近的那筆是空的時候，往回找 BBOX_HOLD_SECONDS 內最近一筆非空的
+      // 沿用，並在畫的時候淡化表示「這是延用的，不是這一刻的觀測」。
+      // 超過保留窗仍找不到就誠實地不畫——寧可空白也不要顯示很舊的位置。
+      if (!displayBoxes.length) {
+        let held = null;
+        let heldDist = Infinity;
+        for (const entry of S.bboxHistory) {
+          if (!entry.boxes.length) continue;
+          const d = Math.abs(entry.ts - targetTs);
+          if (d <= BBOX_HOLD_SECONDS && d < heldDist) { heldDist = d; held = entry; }
+        }
+        if (held) {
+          displayBoxes = held.boxes;
+          chosenTs = held.ts;
+          isHeldFrame = true;
+        }
+      }
     }
     if (window.__bboxDebug) {
       const now = Date.now() / 1000;
@@ -379,6 +406,8 @@ function drawBoxes() {
     const dimmed = S.selectedObjectId != null && !isSel;
     ctx.save();
     if (dimmed) ctx.globalAlpha = 0.25;
+    // 沿用的框畫淡一點；與 dimmed 疊加時取較小值，不會反而變亮。
+    if (isHeldFrame) ctx.globalAlpha = Math.min(ctx.globalAlpha, 0.5);
     if (isSel)  ctx.lineWidth = 4;
 
     ctx.strokeStyle = color;

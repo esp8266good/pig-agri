@@ -43,6 +43,7 @@ real-time and recorded video to a single-page web UI, with bboxes aligned to the
 - HLS live streaming + VOD playback with capture-time-aligned bounding boxes
 - Notification center, bookmarks, segment protection, calendar timeline
 - Storage resilience: write-failure protection, health monitoring, nightly ephemeral live
+- Optional username/password authentication (off by default, `.env`-driven)
 
 ## Tech stack
 
@@ -54,7 +55,7 @@ YOLOX detector · HybridSORT-ReID tracker · uv · pytest
 Actively developed, **pre-publication research** (this system is the basis of the author's
 thesis). The codebase is built spec-first: every feature has a design spec and an
 implementation plan under [`docs/superpowers/specs`](docs/superpowers/specs) and
-[`docs/superpowers/plans`](docs/superpowers/plans). The suite has **240+ tests**; CI runs
+[`docs/superpowers/plans`](docs/superpowers/plans). The suite has **370+ tests**; CI runs
 the external-dependency-free core subset on every push.
 
 ## Getting started
@@ -70,13 +71,42 @@ docker compose up -d
 cp .env.example .env   # then edit camera sources etc.
 
 # 4. Run the app
-uv run uvicorn main:app --host 0.0.0.0 --port 5005
+uv run uvicorn main:app --host 127.0.0.1 --port 5005
 ```
 
 The MOT tracker lives in the upstream **HybridSORT** project, which is an external
 dependency cloned into `ref/HybridSORT/` (kept out of version control). The small set of
 local modifications applied to it is documented in
 [`docs/hybridsort-local-patches.md`](docs/hybridsort-local-patches.md).
+
+## Security
+
+The deployed instance is reachable from the public internet behind a TLS-terminating
+reverse proxy, so the security posture is part of the design rather than an afterthought.
+
+**Authentication (optional, off by default).** Setting `AUTH_ENABLED=true` puts every API
+route and the tracking WebSocket behind a session cookie; only `/health`, `/auth/*` and the
+static assets stay public. Passwords are hashed with `hashlib.scrypt` and sessions are
+stateless HMAC-SHA256-signed cookies (`HttpOnly`, `SameSite=Lax`, `Secure`), so no extra
+dependency and no session table. Repeated failures lock a source IP out. Credentials and
+the enable flag are read **only** from the environment, never from the database-backed
+settings table — `PUT /settings` is one of the endpoints being protected, so a
+database-backed switch could be flipped off by an unauthenticated caller. Setup steps are
+in [`service-readme.md`](service-readme.md); `scripts/make_password_hash.py` generates the
+values.
+
+**Settings validation.** `PUT /settings` validates every value, not just the key name. Two
+concrete holes this closes: `ntfy_url` is fetched server-side, so an unvalidated value made
+the endpoint a server-side request forgery primitive — it now rejects non-HTTP(S) schemes
+and any loopback, private, link-local or reserved address. And `hls_retention_days=0` made
+the retention sweep treat every recording as expired and delete it within the hour, so
+numeric settings now carry bounds matching the UI's own input limits.
+
+**Other hardening.** PostgreSQL binds to loopback only (a published Docker port inserts
+iptables rules that bypass the host firewall). Application traffic is loopback-only too, so
+it cannot bypass the reverse proxy's TLS and rate limiting. Database access is fully
+parameterised, HLS file serving resolves and containment-checks every path, and the web UI
+builds DOM nodes with `textContent` rather than HTML interpolation.
 
 ## Repository layout
 
@@ -88,6 +118,7 @@ local modifications applied to it is documented in
 | `routers/` | FastAPI endpoints (stream, tracking, alerts, storage, settings) |
 | `storage_monitor.py`, `hls_retention.py` | Storage health + retention |
 | `static/index.html` | Single-page web UI |
+| `auth.py`, `auth_middleware.py` | Optional session-cookie authentication |
 | `tests/` | Test suite |
 | `docs/superpowers/` | Design specs + implementation plans |
 
