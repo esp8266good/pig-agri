@@ -1,28 +1,58 @@
 # pig-agri 開機自啟動與維運手冊
 
-本手冊使用 **systemd user service** 在開機後啟動一個名為 `pig-agri` 的 tmux session。Uvicorn 若非因正常停機流程而結束，監控腳本會透過 ntfy 發送通知，等待數秒後自動重啟服務。
+本手冊用 **systemd user service** 在開機後啟動一個叫 `pig-agri` 的 tmux session，
+裡面跑 Uvicorn。Uvicorn 若非正常停機而結束，監控腳本會發 ntfy 通知，等幾秒後自動重啟。
+
+第一次把系統裝到一台新機器上，先看 [`docs/deployment.md`](docs/deployment.md)——
+那份講的是「從零到服務跑起來」，這份接手講「跑起來之後怎麼維運」。
+
+## 開始之前：設定三個變數
+
+底下所有指令都用這三個變數，先在你的 shell 裡設好，整份手冊就能直接複製貼上：
+
+```bash
+export PIG_DIR="$HOME/pig-agri"        # 專案目錄（換成你 clone 的位置）
+export PIG_BIN="$HOME/bin"             # 監控腳本要放哪
+export PIG_HOST="127.0.0.1"            # Uvicorn 綁哪個位址，見下面「綁定位址」
+```
+
+> 這三個變數只在你目前這個 shell 有效。重開終端機要重設，或者寫進 `~/.bashrc`。
+
+### 綁定位址怎麼選
+
+| `PIG_HOST` | 什麼時候用 | 代價 |
+|---|---|---|
+| `127.0.0.1` | 反向代理跟服務在**同一台**（最安全，預設）| 其他機器連不到 |
+| `0.0.0.0` | 反向代理在**別台**機器上 | 整個網段都連得到，要嘛開登入、要嘛用防火牆只放行代理主機 |
+| 某個固定 IP | 想只曝露單一介面 | **開機時該介面還沒起來會 bind 失敗、陷入重啟迴圈**（Tailscale IP 特別容易中）|
+
+綁 `0.0.0.0` 又不開登入的話，等於把 dashboard 對整個網段無條件開放。
+登入的啟用步驟在後面「啟用帳號密碼登入」。
 
 ## 完成後的行為
 
 - 開機後自動建立 tmux session：`pig-agri`
-- 在 `/home/lazoark/OneDrive/Curriculum/pig-agri` 中執行：
+- 在 `$PIG_DIR` 中執行：
 
 ```bash
 uv run uvicorn main:app \
-  --reload \
   --log-level info \
   --port 5005 \
-  --host 0.0.0.0 \
+  --host "$PIG_HOST" \
+  --proxy-headers \
+  --forwarded-allow-ips=127.0.0.1 \
   --reload-exclude "tools/*"
 ```
 
-- Uvicorn 意外結束時，發布通知到：<https://ntfy.ed716.duckdns.org/pig>
-- 異常後等待 10 秒再重啟，避免快速失敗造成重啟風暴
-- 可使用 `tmux attach -t pig-agri` 查看即時運作狀況
-- 正常執行 `systemctl --user stop pig-agri-tmux.service` 時，不會誤發異常通知，也不會自動重啟 Uvicorn
+- Uvicorn 意外結束時發布通知到 ntfy，標題會帶主機名（例如
+  `[ed716-pig] pig-agri service alert`），這樣多台機器共用同一個 topic 也分得出來
+- 異常後等 10 秒再重啟，避免快速失敗造成重啟風暴
+- `tmux attach -t pig-agri` 看即時輸出
+- 正常執行 `systemctl --user stop pig-agri-tmux.service` 不會誤發異常通知，也不會自動重啟
 - tmux session 若被非預期刪除，systemd 會在 10 秒後重建
 
-> 注意：服務使用 `--host 0.0.0.0`，會監聽所有網路介面。請確認主機防火牆、路由器轉發及存取控制符合預期。
+> 沒有 `--reload`：這是正式服務，改 `.py` 要自己重啟才生效。改 `static/` 底下的
+> 檔案會直接生效，重新整理瀏覽器即可。
 
 ---
 
@@ -31,35 +61,31 @@ uv run uvicorn main:app \
 ### 1. 確認必要工具
 
 ```bash
-command -v tmux
-command -v curl
-command -v uv
+command -v tmux curl uv
+ls -ld "$PIG_DIR"
 ```
 
-若 `uv` 的路徑不是下列任一路徑，也沒有出現在 systemd 的 PATH 中，請稍後修改 service 的 `Environment=PATH=...`：
-
-- `/home/lazoark/.local/bin/uv`
-- `/home/lazoark/.cargo/bin/uv`
-- `/usr/local/bin/uv`
-- `/usr/bin/uv`
-
-同時確認專案目錄存在：
-
-```bash
-ls -ld /home/lazoark/OneDrive/Curriculum/pig-agri
-```
+`uv` 通常在 `~/.local/bin/uv`。如果不在，等一下建 service 的時候要把它的目錄
+加進 `Environment=PATH=...`——systemd user service 不會讀你的 `~/.bashrc`，
+`uv` 找不到就整個起不來。
 
 ### 2. 建立監控腳本
 
+腳本本體用「不展開變數」的 heredoc 寫出來（裡面的 `$` 都要留給 bash 自己用），
+再用 `sed` 把兩個佔位符換成你的實際值：
+
 ```bash
-mkdir -p /home/lazoark/bin
-cat > /home/lazoark/bin/pig-agri-tmux.sh <<'BASH'
+mkdir -p "$PIG_BIN"
+cat > "$PIG_BIN/pig-agri-tmux.sh" <<'BASH'
 #!/usr/bin/env bash
 set -uo pipefail
 
 SESSION_NAME="pig-agri"
-WORKING_DIRECTORY="/home/lazoark/OneDrive/Curriculum/pig-agri"
+WORKING_DIRECTORY="__PIG_DIR__"
 NTFY_URL="https://ntfy.ed716.duckdns.org/pig"
+# 標題帶主機名：多台機器可能共用同一個 ntfy topic，不標機器就分不出是誰在叫。
+# 放最前面是因為手機通知的標題從尾巴截斷。
+NTFY_HOSTNAME="$(hostname)"
 RESTART_DELAY_SECONDS=10
 STOP_MARKER="${XDG_RUNTIME_DIR:-/tmp}/pig-agri-tmux.stop"
 SCRIPT_PATH="$(readlink -f "$0")"
@@ -73,7 +99,7 @@ send_ntfy_notification() {
     --show-error \
     --retry 3 \
     --max-time 15 \
-    -H "Title: pig-agri service alert" \
+    -H "Title: [${NTFY_HOSTNAME}] pig-agri service alert" \
     -H "Priority: high" \
     -H "Tags: warning,arrows_counterclockwise" \
     --data-binary "$message" \
@@ -106,11 +132,14 @@ run_service_loop() {
   while [[ ! -e "$STOP_MARKER" ]]; do
     printf '\n[%s] 啟動 pig-agri Uvicorn 服務。\n' "$(date --iso-8601=seconds)"
 
+    # --proxy-headers + --forwarded-allow-ips 讓反向代理送的
+    # X-Forwarded-Proto/For 被正確採用；只信 127.0.0.1 這個來源。
     uv run uvicorn main:app \
-      --reload \
       --log-level info \
       --port 5005 \
-      --host 0.0.0.0 \
+      --host "__PIG_HOST__" \
+      --proxy-headers \
+      --forwarded-allow-ips=127.0.0.1 \
       --reload-exclude "tools/*"
 
     exit_code=$?
@@ -194,24 +223,29 @@ case "${1:-}" in
 esac
 BASH
 
-chmod 0755 /home/lazoark/bin/pig-agri-tmux.sh
+sed -i "s|__PIG_DIR__|$PIG_DIR|; s|__PIG_HOST__|$PIG_HOST|" "$PIG_BIN/pig-agri-tmux.sh"
+chmod 0755 "$PIG_BIN/pig-agri-tmux.sh"
+bash -n "$PIG_BIN/pig-agri-tmux.sh" && echo "語法正確"
+grep -nE 'WORKING_DIRECTORY|--host' "$PIG_BIN/pig-agri-tmux.sh"
 ```
+
+最後兩行是驗證：語法要過，而且兩個佔位符要真的被換掉（不能還看到 `__PIG_`）。
 
 ### 3. 建立 systemd user service
 
 ```bash
-mkdir -p /home/lazoark/.config/systemd/user
-cat > /home/lazoark/.config/systemd/user/pig-agri-tmux.service <<'SYSTEMD'
+mkdir -p ~/.config/systemd/user
+cat > ~/.config/systemd/user/pig-agri-tmux.service <<SYSTEMD
 [Unit]
 Description=pig-agri Uvicorn service inside tmux
-After=network-online.target
+After=network-online.target docker.service
 Wants=network-online.target
 
 [Service]
 Type=simple
-Environment=PATH=/home/lazoark/.local/bin:/home/lazoark/.cargo/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=/home/lazoark/bin/pig-agri-tmux.sh supervise
-ExecStop=/home/lazoark/bin/pig-agri-tmux.sh stop
+Environment=PATH=$HOME/.local/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=$PIG_BIN/pig-agri-tmux.sh supervise
+ExecStop=$PIG_BIN/pig-agri-tmux.sh stop
 Restart=on-failure
 RestartSec=10
 TimeoutStopSec=20
@@ -220,6 +254,13 @@ TimeoutStopSec=20
 WantedBy=default.target
 SYSTEMD
 ```
+
+> 這個 heredoc **沒有**加引號（`<<SYSTEMD` 而不是 `<<'SYSTEMD'`），因為
+> `$HOME` / `$PIG_BIN` 要在這裡就被展開成實際路徑——systemd unit 檔不認識 shell 變數。
+>
+> `After=...docker.service`：PostgreSQL 跑在 docker 裡，沒有這個的話開機時
+> Uvicorn 會比資料庫早起來、`ConnectionRefusedError` 之後退出。監控腳本 10 秒後
+> 會重試成功，但你會收到一則假的異常通知。
 
 ### 4. 載入、啟用並立即啟動
 
@@ -230,14 +271,17 @@ systemctl --user enable --now pig-agri-tmux.service
 
 ### 5. 允許未登入時也啟動 user service
 
-這一步通常只需執行一次，需要 sudo 權限：
+只要做一次，需要 sudo：
 
 ```bash
-sudo loginctl enable-linger lazoark
+sudo loginctl enable-linger "$USER"
+loginctl show-user "$USER" -p Linger --value    # 要印出 yes
 ```
 
-沒有 linger 時，user service 通常要等使用者登入後才會啟動，登出後也可能被停止。啟用 linger 後，系統可在開機時啟動該使用者的 systemd user manager。
+沒有 linger 的話，user service 要等你登入才啟動，登出可能就被停掉。
 
+> **裝完一定要真的重開機驗一次。** `enabled` 加 `Linger=yes` 看起來對，不代表
+> 開機後真的會起來。實測參考值：重開機後 6 秒服務就回來了。
 ---
 
 ## 日常管理
@@ -383,7 +427,7 @@ WebSocket 都要求有效的 session cookie。
 ### 1. 產生帳號密碼設定
 
 ```bash
-cd ~/OneDrive/Curriculum/pig-agri
+cd "$PIG_DIR"
 uv run python scripts/make_password_hash.py
 ```
 
@@ -437,14 +481,22 @@ systemctl --user restart pig-agri-tmux.service
 
 ---
 
-## `--reload` 模式注意事項
+## 改了程式碼什麼時候生效
 
-此服務按照指定指令保留 `--reload`，適合開發或教學環境。檔案內容改變時，Uvicorn 的 reloader 會重新載入應用程式。
+**這個服務沒有開 `--reload`。** 正式環境不該讓 Uvicorn 監看整個專案目錄自動重載——
+推論 pipeline 與 ffmpeg 子程序在重載時的狀態很難保證乾淨。
 
-- `--reload-exclude "tools/*"` 會排除 `tools` 目錄下符合該模式的檔案變化。
-- reloader 可能產生父程序與子程序，因此程序清單中可能看到不只一個相關程序。
-- 正常停止時，監控腳本會先傳送一次 `Ctrl+C`，最多等待 10 秒；若 tmux session 仍存在才會強制刪除 session。
-- 若是正式生產環境，通常應評估移除 `--reload`，避免不必要的檔案監控與自動載入。
+| 改了什麼 | 什麼時候生效 |
+|---|---|
+| `*.py` | 要 `systemctl --user restart pig-agri-tmux.service` |
+| `static/` 底下的 HTML / CSS / JS | 直接生效，重新整理瀏覽器即可（前端是零 build 的 ES modules）|
+| 前端設定頁改的值 | 即時。消費端每輪重讀 DB，不用重啟 |
+| `.env` | 要重啟 |
+
+指令裡還留著 `--reload-exclude "tools/*"`：沒有 `--reload` 時它不生效，
+留著是為了萬一有人臨時加上 `--reload` 除錯，`tools/` 的變動不會觸發重載。
+
+正常停止時，監控腳本會先送一次 `Ctrl+C`，最多等 10 秒；tmux session 還在才會強制刪除。
 
 ---
 
@@ -471,7 +523,7 @@ command -v uv
 把該路徑所在目錄加入：
 
 ```text
-/home/lazoark/.config/systemd/user/pig-agri-tmux.service
+~/.config/systemd/user/pig-agri-tmux.service
 ```
 
 中的 `Environment=PATH=...`，然後執行：
@@ -492,10 +544,10 @@ ss -lntp | grep ':5005'
 ### 專案目錄不存在
 
 ```bash
-ls -ld /home/lazoark/OneDrive/Curriculum/pig-agri
+ls -ld "$PIG_DIR"
 ```
 
-若實際目錄不同，修改 `/home/lazoark/bin/pig-agri-tmux.sh` 中的 `WORKING_DIRECTORY`，再執行：
+若實際目錄不同，修改 `~/bin/pig-agri-tmux.sh` 中的 `WORKING_DIRECTORY`，再執行：
 
 ```bash
 systemctl --user restart pig-agri-tmux.service
@@ -534,8 +586,8 @@ sudo ufw status verbose
 
 ```bash
 systemctl --user disable --now pig-agri-tmux.service
-rm -f /home/lazoark/.config/systemd/user/pig-agri-tmux.service
-rm -f /home/lazoark/bin/pig-agri-tmux.sh
+rm -f ~/.config/systemd/user/pig-agri-tmux.service
+rm -f ~/bin/pig-agri-tmux.sh
 systemctl --user daemon-reload
 systemctl --user reset-failed
 ```
@@ -543,7 +595,7 @@ systemctl --user reset-failed
 若這台主機不再需要任何未登入即啟動的 user service，也可以停用 linger：
 
 ```bash
-sudo loginctl disable-linger lazoark
+sudo loginctl disable-linger "$USER"
 ```
 
 不要在仍有其他 user service 依賴 linger 時執行最後一步。

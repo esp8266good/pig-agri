@@ -55,7 +55,7 @@ YOLOX detector · HybridSORT-ReID tracker · uv · pytest
 Actively developed, **pre-publication research** (this system is the basis of the author's
 thesis). The codebase is built spec-first: every feature has a design spec and an
 implementation plan under [`docs/superpowers/specs`](docs/superpowers/specs) and
-[`docs/superpowers/plans`](docs/superpowers/plans). The suite has **370+ tests**; CI runs
+[`docs/superpowers/plans`](docs/superpowers/plans). The suite has **380 tests**; CI runs
 the external-dependency-free core subset on every push.
 
 ## Getting started
@@ -68,16 +68,22 @@ uv sync --extra dev
 docker compose up -d
 
 # 3. Configure environment
-cp .env.example .env   # then edit camera sources etc.
+cp .env.example .env   # then edit camera sources, storage paths, worker threads
 
 # 4. Run the app
 uv run uvicorn main:app --host 127.0.0.1 --port 5005
 ```
 
 The MOT tracker lives in the upstream **HybridSORT** project, which is an external
-dependency cloned into `ref/HybridSORT/` (kept out of version control). The small set of
-local modifications applied to it is documented in
+dependency cloned into `ref/HybridSORT/` (kept out of version control) together with the
+~1.1 GB of model weights it needs. Nothing detects or tracks until those are in place. The
+small set of local modifications applied to it is documented in
 [`docs/hybridsort-local-patches.md`](docs/hybridsort-local-patches.md).
+
+Deploying to a real machine — GPU/storage sizing, system packages, camera network
+reachability, autostart, reverse proxy, and migrating data from an existing instance — is
+covered end to end in [`docs/deployment.md`](docs/deployment.md), with day-to-day
+operations in [`service-readme.md`](service-readme.md).
 
 ## Security
 
@@ -103,10 +109,17 @@ the retention sweep treat every recording as expired and delete it within the ho
 numeric settings now carry bounds matching the UI's own input limits.
 
 **Other hardening.** PostgreSQL binds to loopback only (a published Docker port inserts
-iptables rules that bypass the host firewall). Application traffic is loopback-only too, so
-it cannot bypass the reverse proxy's TLS and rate limiting. Database access is fully
-parameterised, HLS file serving resolves and containment-checks every path, and the web UI
-builds DOM nodes with `textContent` rather than HTML interpolation.
+iptables rules that bypass the host firewall). Database access is fully parameterised, HLS
+file serving resolves and containment-checks every path, and the web UI builds DOM nodes
+with `textContent` rather than HTML interpolation.
+
+**Where the app itself listens is a deployment decision, not a fixed property.** Binding to
+loopback is the default and the safest posture: nothing can reach the app without going
+through the reverse proxy's TLS and rate limiting. When the proxy runs on a *different*
+host the app has to listen on an external interface, and the loopback guarantee is gone —
+that deployment must pair the wider bind with either `AUTH_ENABLED=true` or a firewall rule
+restricting the port to the proxy host. The trade-offs are laid out in
+[`docs/deployment.md`](docs/deployment.md).
 
 ## Repository layout
 
@@ -117,10 +130,11 @@ builds DOM nodes with `textContent` rather than HTML interpolation.
 | `hls_manager.py`, `vod_generator.py` | Live + recorded video (HLS) |
 | `routers/` | FastAPI endpoints (stream, tracking, alerts, storage, settings) |
 | `storage_monitor.py`, `hls_retention.py` | Storage health + retention |
-| `static/index.html` | Single-page web UI |
+| `static/` | Single-page web UI (`index.html` + `css/` + `js/`, ES modules, zero build) |
 | `auth.py`, `auth_middleware.py` | Optional session-cookie authentication |
+| `scripts/` | Operational tooling (dedup, credential hashing, instance-to-instance migration) |
 | `tests/` | Test suite |
-| `docs/superpowers/` | Design specs + implementation plans |
+| `docs/` | Deployment guide, incident handoffs, design specs + implementation plans |
 
 ## Roadmap
 
