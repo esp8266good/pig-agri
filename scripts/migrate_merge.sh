@@ -309,6 +309,17 @@ cmd_db_all() {
   local days
   days=$(lval "SELECT DISTINCT to_char(to_timestamp(timestamp) AT TIME ZONE 'Asia/Taipei','YYYY-MM-DD')
                FROM tracking_logs ORDER BY 1")
+  # SINCE=YYYY-MM-DD 或 DAYS=N：只搬近期的。分階段遷移（先讓服務轉過去，
+  # 完整歷史等加了硬碟再補）的時候用。
+  local since="${SINCE:-}"
+  if [[ -z "$since" && -n "${DAYS:-}" ]]; then
+    since=$(date -d "$DAYS days ago" +%Y-%m-%d)
+  fi
+  if [[ -n "$since" ]]; then
+    say "只搬 $since（含）之後的。"
+    days=$(printf '%s\n' "$days" | awk -v s="$since" '$1 >= s')
+  fi
+  [[ -n "$days" ]] || { say "沒有符合條件的日期。"; return 0; }
   local total done_n=0
   total=$(printf '%s\n' "$days" | wc -l)
   say "共 $total 天要處理。中斷了重跑這個子命令即可，已搬過的會自動跳過。"
@@ -387,6 +398,16 @@ cmd_hls() {
     hls_missing_hours | grep "^${filter}/" > "$list"
   else
     hls_missing_hours > "$list"
+  fi
+  # SINCE=YYYY-MM-DD 或 DAYS=N：只搬近期的小時目錄。目錄名是 YYYY-MM-DD-HH，
+  # 直接拿字串比大小就是時間順序。
+  local since="${SINCE:-}"
+  if [[ -z "$since" && -n "${DAYS:-}" ]]; then
+    since=$(date -d "$DAYS days ago" +%Y-%m-%d)
+  fi
+  if [[ -n "$since" ]]; then
+    say "只搬 $since（含）之後的小時目錄。"
+    awk -F/ -v s="$since" '$NF >= s' "$list" > "$list.cut" && mv "$list.cut" "$list"
   fi
   # HOURS_LIMIT=N：這一輪只搬 N 個小時目錄。要一點一點搬、或者只想先試一小批
   # 的時候用。不設就是全部。
