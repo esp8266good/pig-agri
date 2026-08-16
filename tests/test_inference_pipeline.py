@@ -146,17 +146,37 @@ def test_process_batch_skips_frozen_frame_reprocess():
     assert len(broadcast_calls) == 1
 
 
-def test_process_batch_ignores_brief_stale_tick():
-    """偶爾一兩幀停滯（10Hz loop 超前略慢的相機）不得餵空偵測擾動 tracker——
-    只 fresh 那輪呼叫 tracker，benign stale tick 完全跳過。"""
-    from inference.pipeline import FrameData
+class _FakeClock:
+    """可控的 monotonic 時鐘。停滯門檻改用牆鐘後，測試不能再靠「呼叫幾次」
+    來推進狀態，得自己決定時間走多久。"""
+
+    def __init__(self, start: float = 1000.0) -> None:
+        self.now = start
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def test_process_batch_ignores_stale_ticks_within_threshold():
+    """慢速相機的常態就是停滯。門檻內的停滯 tick 一律完全跳過 tracker，
+    不得餵空偵測——空偵測會把 hit_streak 打回 0，min_hits(3) 永遠達不到，
+    該相機就整天吐不出任何已確認軌跡（cam_02 曾連續 23 小時零筆）。"""
+    from inference.pipeline import FrameData, STALE_SECONDS_BEFORE_AGING
+    clock = _FakeClock()
     p, _detector, mock_pool, _bc = _make_processing_pipeline()
+    p._clock = clock
 
     rgb = np.zeros((480, 640, 3), dtype=np.uint8)
     frozen = FrameData(rgb_np=rgb, thermal_np=None, ts=1.0, frame_id=1111387)
 
-    p._process_batch({"cam_01": frozen})   # fresh：真實 dets
-    p._process_batch({"cam_01": frozen})   # stale streak=1（未達門檻）→ 跳過 tracker
+    p._process_batch({"cam_01": frozen})            # fresh：真實 dets
+    # 模擬 3Hz 迴圈、相機 0.3fps：門檻內狂敲很多次停滯 tick
+    for _ in range(30):
+        clock.advance(STALE_SECONDS_BEFORE_AGING / 40)
+        p._process_batch({"cam_01": frozen})
     p._event_loop.run_until_complete(asyncio.sleep(0.05))
     p._event_loop.close()
     p._executor.shutdown(wait=False)
@@ -164,21 +184,21 @@ def test_process_batch_ignores_brief_stale_tick():
     assert mock_pool.update.call_count == 1   # 只有 fresh 那輪
 
 
-def test_process_batch_ages_out_sustained_stale_camera():
-    """連續停滯達門檻後才餵空偵測給 tracker，讓殘留 track 正常 age out
-    （避免送幀恢復時舊 track 殘留跳位；設計取捨見 handoff）。"""
-    from inference.pipeline import FrameData, STALE_TICKS_BEFORE_AGING as TH
+def test_process_batch_ages_out_after_sustained_stall():
+    """真的停滯超過門檻秒數後才餵空偵測，讓殘留 track 正常 age out。"""
+    from inference.pipeline import FrameData, STALE_SECONDS_BEFORE_AGING
+    clock = _FakeClock()
     p, _detector, mock_pool, _bc = _make_processing_pipeline()
+    p._clock = clock
 
     rgb = np.zeros((480, 640, 3), dtype=np.uint8)
     frozen = FrameData(rgb_np=rgb, thermal_np=None, ts=1.0, frame_id=1111387)
 
     p._process_batch({"cam_01": frozen})            # fresh：真實 dets
-    for _ in range(TH - 1):                         # streak 1..TH-1：未達門檻，跳過
-        p._process_batch({"cam_01": frozen})
-    assert mock_pool.update.call_count == 1         # 至此只有 fresh 那輪
+    assert mock_pool.update.call_count == 1
 
-    p._process_batch({"cam_01": frozen})            # streak=TH：達門檻 → 餵空 age out
+    clock.advance(STALE_SECONDS_BEFORE_AGING + 0.1)
+    p._process_batch({"cam_01": frozen})            # 超過門檻 → 餵空 age out
     p._event_loop.run_until_complete(asyncio.sleep(0.05))
     p._event_loop.close()
     p._executor.shutdown(wait=False)
@@ -186,6 +206,62 @@ def test_process_batch_ages_out_sustained_stale_camera():
     assert mock_pool.update.call_count == 2
     stale_dets = mock_pool.update.call_args_list[1].args[1]
     assert stale_dets is None or len(stale_dets) == 0
+
+
+def test_process_batch_rate_limits_age_out():
+    """進入 age-out 後不得以迴圈速率狂餵：兩次之間至少隔
+    STALE_AGE_OUT_INTERVAL 秒，否則又回到「空偵測淹掉真偵測」的老問題。"""
+    from inference.pipeline import (
+        FrameData, STALE_SECONDS_BEFORE_AGING, STALE_AGE_OUT_INTERVAL,
+    )
+    clock = _FakeClock()
+    p, _detector, mock_pool, _bc = _make_processing_pipeline()
+    p._clock = clock
+
+    rgb = np.zeros((480, 640, 3), dtype=np.uint8)
+    frozen = FrameData(rgb_np=rgb, thermal_np=None, ts=1.0, frame_id=1111387)
+
+    p._process_batch({"cam_01": frozen})
+    clock.advance(STALE_SECONDS_BEFORE_AGING + 0.1)
+
+    # 一秒內以 10Hz 連敲十次，只該有一次 age-out
+    for _ in range(10):
+        p._process_batch({"cam_01": frozen})
+        clock.advance(STALE_AGE_OUT_INTERVAL / 10)
+    p._event_loop.run_until_complete(asyncio.sleep(0.05))
+    p._event_loop.close()
+    p._executor.shutdown(wait=False)
+
+    # 1 次 fresh + 1 次 age-out（第一敲），其餘九敲被限速擋掉
+    assert mock_pool.update.call_count == 2
+
+
+def test_new_frame_resets_stall_timer():
+    """幀來得慢但持續（例如 4 秒一張）→ 每張新幀都把停滯計時歸零，
+    永遠不該進入 age-out。這正是遠端相機的常態。"""
+    from inference.pipeline import FrameData
+    clock = _FakeClock()
+    p, _detector, mock_pool, _bc = _make_processing_pipeline(n_cams=1)
+    p._clock = clock
+
+    rgb = np.zeros((480, 640, 3), dtype=np.uint8)
+    for i in range(6):
+        p._process_batch({"cam_01": FrameData(
+            rgb_np=rgb, thermal_np=None, ts=float(i), frame_id=1000 + i)})
+        # 每張新幀之間隔 4 秒，其間迴圈以 3Hz 空轉
+        for _ in range(12):
+            clock.advance(4.0 / 12)
+            p._process_batch({"cam_01": FrameData(
+                rgb_np=rgb, thermal_np=None, ts=float(i), frame_id=1000 + i)})
+    p._event_loop.run_until_complete(asyncio.sleep(0.05))
+    p._event_loop.close()
+    p._executor.shutdown(wait=False)
+
+    # 六張真幀 → 六次 tracker update，一次空偵測都不該有
+    assert mock_pool.update.call_count == 6
+    for call in mock_pool.update.call_args_list:
+        dets = call.args[1]
+        assert dets is not None and len(dets) > 0
 
 
 def test_process_batch_drains_all_futures_when_one_camera_raises():

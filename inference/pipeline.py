@@ -40,11 +40,22 @@ class FrameData:
     frame_id: int
 
 
-# 連續多少幀 frame_id 沒前進才判定為「真停滯」並餵空偵測讓 tracker age out。
-# 只停滯一兩幀（10Hz loop 偶爾超前略慢於 10fps 的相機、frame_id 未及更新）屬正常，
-# 直接跳過 tracker 不擾動健康軌跡的 hit_streak／frame_count；真正的送幀停滯會連續累積
-# 遠超此值，仍能正常 age out。
-STALE_TICKS_BEFORE_AGING: int = 5
+# 送幀停滯多久（秒）才開始餵空偵測讓 tracker age out。
+#
+# 這裡原本是「連續 5 個 tick」的計數式門檻，前提是相機約 10fps、停滯是例外。
+# 實測遠端相機經慢速網路只有 0.3~1 fps（幀間隔中位數 3.4 秒），而推論迴圈被
+# GPU 綁在約 3 Hz——於是每收到 1 張真幀就夾著約 7 個停滯 tick，其中 4 個以上
+# 會餵空偵測。tracker 的 min_hits=3 要求連續命中，每次空偵測都把 hit_streak
+# 打回 0，結果那支相機整天吐不出任何已確認軌跡（cam_02 曾連續 23 小時零筆）。
+#
+# 改用牆鐘門檻，並且要遠大於相機正常的送幀間隔，才不會把「正常的慢」誤判成
+# 「停滯」。tick 數會隨 GPU 負載浮動，牆鐘不會。
+STALE_SECONDS_BEFORE_AGING: float = 10.0
+
+# 進入 age-out 後，兩次餵空偵測的最小間隔（秒）。不限速的話會以迴圈速率狂餵，
+# 又回到原本那個問題。age-out 的用途是「相機真的斷了，讓殘留 track 慢慢消掉」，
+# 本來就不需要高頻。
+STALE_AGE_OUT_INTERVAL: float = 1.0
 
 
 class InferencePipeline:
@@ -58,13 +69,15 @@ class InferencePipeline:
         # 觀測用計數：每支 camera 這段期間有幾個 tick 拿到新幀 / 幾個 tick 是停滯。
         self._fresh_ticks: dict[str, int] = {}
         self._stale_ticks: dict[str, int] = {}
-        self._stats_since: float = time.monotonic()
+        self._stats_since: float = time.monotonic()  # start() 後由 _clock 接手
         # 每支 camera 上一輪「實際處理過」的 frame_id。ZMQ 送幀停滯時 _latest 會卡住
         # 同一張凍結幀，若不比對就會每 100ms 重跑 detect→track→write，把單一幀灌進 DB
         # 上百萬列、汙染活動量計算（根因見 docs/handoff-tracking-gap-2026-07-20.md）。
         self._last_processed_fid: dict[str, int] = {}
-        # 每支 camera 連續停滯（frame_id 未前進）的幀數，用來區分「偶爾超前」與「真停滯」。
-        self._stale_streak: dict[str, int] = {}
+        # 每支 camera 最後一次拿到新幀 / 最後一次餵空偵測的 monotonic 時刻，
+        # 用來區分「正常的慢」與「真的斷了」，並限制 age-out 的頻率。
+        self._last_fresh_mono: dict[str, float] = {}
+        self._last_ageout_mono: dict[str, float] = {}
         self._lock = threading.Lock()
         self._detector = None
         self._reid = None
@@ -75,6 +88,10 @@ class InferencePipeline:
         self._active = True
         self._event_loop: asyncio.AbstractEventLoop | None = None
         self._broadcast_fn: Callable | None = None
+        # 單調時鐘，抽成欄位是為了測試可以換掉。不可用 monkeypatch 直接改
+        # time.monotonic——那是全域的，asyncio 的排程器也在用，凍住會讓
+        # run_until_complete 永遠回不來。
+        self._clock: Callable[[], float] = time.monotonic
 
     def start(
         self,
@@ -140,7 +157,7 @@ class InferencePipeline:
         某支 camera 整天沒資料時，看不出是沒收到幀、被凍結防護跳過、還是
         推論被 _active 關掉。這三種的處置完全不同，用猜的會一直猜錯。
         """
-        now = time.monotonic()
+        now = self._clock()
         if now - self._stats_since < self.STATS_INTERVAL:
             return
         elapsed = now - self._stats_since
@@ -183,16 +200,23 @@ class InferencePipeline:
                           if self._last_processed_fid.get(c) != fd.frame_id]
             stale_cams = [c for c in snapshot if c not in fresh_cams]
 
-            # 停滯 camera：連續停滯達 STALE_TICKS_BEFORE_AGING 幀才餵空偵測讓 tracker
-            # 內部殘留 track 正常 age out（避免送幀恢復時舊 track 殘留跳位）；但不重跑
-            # detector／不寫 DB／不重播 WS。連續幀數未達門檻（僅偶爾超前）則完全跳過
-            # tracker，不擾動健康軌跡的 hit_streak／frame_count。
+            # 停滯 camera：停滯超過 STALE_SECONDS_BEFORE_AGING 秒才開始餵空偵測，
+            # 讓 tracker 內部殘留 track 正常 age out（避免送幀恢復時舊 track 殘留
+            # 跳位）；且兩次之間至少隔 STALE_AGE_OUT_INTERVAL 秒。未達門檻完全跳過
+            # tracker，不擾動健康軌跡的 hit_streak／frame_count——慢速相機的常態就是
+            # 停滯，餵空偵測會讓它永遠達不到 min_hits。
+            # 全程不重跑 detector／不寫 DB／不重播 WS。
+            now_m = self._clock()
             stale_futures = []
             for cam in stale_cams:
                 self._stale_ticks[cam] = self._stale_ticks.get(cam, 0) + 1
-                self._stale_streak[cam] = self._stale_streak.get(cam, 0) + 1
-                if self._stale_streak[cam] < STALE_TICKS_BEFORE_AGING:
+                # 沒有 last_fresh 紀錄（剛啟動就看到這支）→ 以現在起算，先不 age out
+                since_fresh = now_m - self._last_fresh_mono.get(cam, now_m)
+                if since_fresh < STALE_SECONDS_BEFORE_AGING:
                     continue
+                if now_m - self._last_ageout_mono.get(cam, 0.0) < STALE_AGE_OUT_INTERVAL:
+                    continue
+                self._last_ageout_mono[cam] = now_m
                 fd = snapshot[cam]
                 h, w = fd.rgb_np.shape[:2]
                 stale_futures.append(self._executor.submit(
@@ -212,7 +236,7 @@ class InferencePipeline:
                 all_dets = self._detector.infer(batch_imgs)
                 for c, fd in zip(cameras, frames):
                     self._last_processed_fid[c] = fd.frame_id
-                    self._stale_streak[c] = 0
+                    self._last_fresh_mono[c] = now_m
                     self._fresh_ticks[c] = self._fresh_ticks.get(c, 0) + 1
 
                 # ReID: GPU sequential
