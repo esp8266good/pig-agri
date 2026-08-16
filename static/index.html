@@ -11,6 +11,25 @@
 </head>
 <body>
 
+  <!-- 登入畫面。後端 AUTH_ENABLED=false（預設）時 auth.js 完全不會顯示它。 -->
+  <div id="login-overlay" class="login-overlay" hidden>
+    <form id="login-form" class="login-card" autocomplete="on">
+      <h2 class="login-title">豬隻疾病監測系統</h2>
+      <label class="login-field">
+        <span>帳號</span>
+        <input type="text" id="login-username" name="username"
+               autocomplete="username" required autofocus>
+      </label>
+      <label class="login-field">
+        <span>密碼</span>
+        <input type="password" id="login-password" name="password"
+               autocomplete="current-password" required>
+      </label>
+      <p id="login-error" class="login-error" role="alert"></p>
+      <button type="submit" id="login-submit" class="login-submit">登入</button>
+    </form>
+  </div>
+
   <!-- Icon sprite（stroke 風格，與 .icon class 相容） -->
   <svg style="display:none" aria-hidden="true">
     <symbol id="i-bell" viewBox="0 0 24 24">
@@ -118,6 +137,8 @@
         <svg class="icon"><use href="#i-bell"/></svg><span id="bell-badge" style="display:none">0</span></button>
       <button class="icon-btn" id="settings-btn" aria-label="設定">
         <svg class="icon"><use href="#i-gear"/></svg></button>
+      <!-- 只有 AUTH_ENABLED=true 時 auth.js 才會取消 hidden -->
+      <button class="icon-btn" id="logout-btn" aria-label="登出" hidden>登出</button>
       <span id="storage-pill" class="storage-pill" title="儲存狀態" style="display:none">●</span>
     </div>
   </header>

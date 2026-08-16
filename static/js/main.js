@@ -4,6 +4,7 @@ import { loadStream, loadVod, startLiveTimers, stopLiveTimers, detachVodListener
 import { loadTimeline, clearSelection, closeSlotActionMenu, closeDeleteModal, localDayStart } from './timeline.js';
 import { switchTab, onSortHeaderClick, refreshAnomalyMap, refreshNotifications, loadSettings, loadBookmarks, closeBookmarkEditModal, openSettingsDrawer, closeSettingsDrawer, initSettingsDrawer, updateSoloHint } from './panels.js';
 import { enterGrid, leaveGrid, bindGridPick, getGridPlaybackHour } from './grid.js';
+import { ensureAuth } from './auth.js';
 
 async function setViewMode(mode, opts = {}) {
   if (mode === S.viewMode) return;
@@ -134,6 +135,9 @@ async function pollStorageHealth() {
 
 // ── Init ──────────────────────────────────────────────────
 async function init() {
+  // 驗證關閉（預設）時 ensureAuth 立刻回，下面完全照舊；開啟且未登入時會
+  // 卡在登入畫面，登入成功才往下跑——避免每支 API 都吃 401 畫出一堆錯誤。
+  await ensureAuth();
   try {
     const res = await fetch('/cameras');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);

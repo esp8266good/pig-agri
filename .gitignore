@@ -37,3 +37,8 @@ venv.bak/
 .pytest_cache/
 /data/
 .sync-exclude.lst
+
+# 維運腳本的執行紀錄（腳本本身要追，跑出來的 log 不追）
+scripts/*.log
+# service-readme.md 的個人化副本
+service-readme_pig.md

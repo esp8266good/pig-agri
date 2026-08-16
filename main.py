@@ -17,8 +17,9 @@ from config import settings as app_settings
 from hls_manager import hls_manager
 from hls_retention import effective_retention_days, purge_expired_hls
 from db_writer import get_all_settings, get_protected_hours, write_health_alert
+from auth_middleware import AuthMiddleware
 from inference.pipeline import inference_pipeline
-from routers import alerts, notes, stream, storage, tracking
+from routers import alerts, auth, notes, stream, storage, tracking
 from routers import settings as settings_router
 from zmq_receiver import zmq_receiver
 
@@ -207,6 +208,7 @@ async def _recording_supervisor_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    auth.check_auth_config()
     await database.connect()
     scheduler = Scheduler(database.get_pool(), app_settings)
     await scheduler.start()
@@ -230,6 +232,12 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="豬隻疾病監測系統", lifespan=lifespan)
 
+# 存取驗證。app_settings.auth_enabled 為 False（預設）時完全直通，行為不變；
+# 開啟後除了 /health、/auth/*、/static/* 之外一律要求有效 session cookie，
+# WebSocket 也擋（純 ASGI middleware 的存在理由，見 auth_middleware.py）。
+app.add_middleware(AuthMiddleware, settings=app_settings,
+                   secret_getter=auth.get_secret)
+
 _static_dir = Path(__file__).parent / "static"
 _static_dir.mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
@@ -252,6 +260,7 @@ async def list_cameras():
             "active_types": hls_manager.active_types_map(cameras)}
 
 
+app.include_router(auth.router)
 app.include_router(stream.router)
 app.include_router(tracking.router)
 app.include_router(alerts.router)

@@ -831,6 +831,33 @@
     .solo-hint { color: var(--accent); font-size: var(--text-xs); }
     .solo-hint[hidden] { display: none; }
 
+    /* ── 登入畫面（AUTH_ENABLED=true 時才由 auth.js 顯示）────── */
+    .login-overlay { position: fixed; inset: 0; z-index: 1000;
+                     display: flex; align-items: center; justify-content: center;
+                     background: var(--bg); padding: var(--space-4); }
+    .login-overlay[hidden] { display: none; }
+    .login-card { width: min(360px, 100%); display: flex; flex-direction: column;
+                  gap: var(--space-4); padding: var(--space-8);
+                  background: var(--surface); border: 1px solid var(--border);
+                  border-radius: var(--radius-lg); box-shadow: var(--shadow-lg); }
+    .login-title { font-size: var(--text-lg); text-align: center;
+                   margin-bottom: var(--space-2); }
+    .login-field { display: flex; flex-direction: column; gap: var(--space-2);
+                   font-size: var(--text-xs); color: var(--text-muted); }
+    .login-field input { padding: var(--space-3); font-size: var(--text-sm);
+                         color: var(--text); background: var(--surface-2);
+                         border: 1px solid var(--border);
+                         border-radius: var(--radius-sm); }
+    .login-field input:focus { outline: none; border-color: var(--accent-border); }
+    /* 沒有錯誤時不佔位，避免表單在出錯瞬間跳一下 */
+    .login-error { min-height: 1.2em; font-size: var(--text-xs); color: var(--error); }
+    .login-submit { padding: var(--space-3); font-size: var(--text-sm);
+                    font-weight: 600; color: var(--bg); background: var(--accent);
+                    border: none; border-radius: var(--radius-sm); cursor: pointer;
+                    transition: background var(--transition); }
+    .login-submit:hover:not(:disabled) { background: var(--accent-hover); }
+    .login-submit:disabled { opacity: .6; cursor: default; }
+
     /* ── Notifications ──────────────────────────────────────── */
     .notif-toolbar {
       display: flex;

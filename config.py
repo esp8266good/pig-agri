@@ -93,6 +93,29 @@ class Settings(BaseSettings):
     gpu_off_start: str = "22:00"   # 本地時間 HH:MM
     gpu_off_end: str = "06:00"
 
+    # ── 存取驗證（預設關閉＝現行行為完全不變）──────────────────
+    # 這幾個只從 .env／環境變數讀，刻意「不」加進 routers/settings.py 的
+    # ALLOWED_KEYS：/settings 正是要被這道驗證保護的端點，若開關是 DB-backed，
+    # 未登入的人就能先打一發 PUT /settings 把鎖拆掉。細節見 auth.py 模組說明。
+    #
+    # 開啟步驟：
+    #   1. uv run python scripts/make_password_hash.py
+    #   2. 把輸出的三行貼進 .env（AUTH_ENABLED / AUTH_USERNAME / AUTH_PASSWORD_HASH）
+    #   3. 設 AUTH_SESSION_SECRET（同一支腳本會產生），重啟服務
+    # ⚠ 對公網開放時務必先有 TLS：cookie 走明文 HTTP 等於把帳密攤開送。
+    auth_enabled: bool = False
+    auth_username: str = ""
+    auth_password_hash: str = ""     # scrypt$n$r$p$<salt>$<key>，見 auth.hash_password
+    auth_session_secret: str = ""    # 簽 cookie 用；換掉＝強制所有人重新登入
+    auth_session_hours: int = 12
+    # 只在純 HTTP 的內網測試時才設 false；對公網一定要 true。
+    auth_cookie_secure: bool = True
+    auth_max_attempts: int = 10      # 同一 IP 連續登入失敗上限
+    auth_lockout_minutes: int = 15
+    # 反向代理後面才設 true，並確保代理會覆寫 X-Forwarded-For；直接對外時設 false，
+    # 否則攻擊者能自己偽造這個 header 讓每次嘗試都算在不同「IP」上、繞過節流。
+    auth_trust_forwarded_for: bool = False
+
     # ── Logging ────────────────────────────────────────────────
     ffmpeg_log_level: str = "error"
     log_level: str = "INFO"

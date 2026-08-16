@@ -374,6 +374,69 @@ tmux attach -t pig-agri
 
 ---
 
+## 啟用帳號密碼登入
+
+服務預設**不需要登入**（`AUTH_ENABLED` 預設 `false`），行為與沒有這個功能時一模一樣。
+以下步驟啟用；啟用後除了 `/health`、`/auth/*` 和 `/static/*` 之外，所有 API 與
+WebSocket 都要求有效的 session cookie。
+
+### 1. 產生帳號密碼設定
+
+```bash
+cd ~/OneDrive/Curriculum/pig-agri
+uv run python scripts/make_password_hash.py
+```
+
+會互動式詢問帳號與密碼（密碼不顯示、不進 shell history），印出四行可直接貼進
+`.env` 的設定。密碼至少 12 個字元。
+
+### 2. 貼進 `.env` 並重啟
+
+```
+AUTH_ENABLED=true
+AUTH_USERNAME=...
+AUTH_PASSWORD_HASH=scrypt$16384$8$1$...
+AUTH_SESSION_SECRET=...
+```
+
+```bash
+systemctl --user restart pig-agri-tmux.service
+```
+
+### 3. 先確認 TLS
+
+`AUTH_COOKIE_SECURE` 預設 `true`，代表 session cookie 只在 HTTPS 下送出。
+**服務目前是 `--host 0.0.0.0` 對公網開放，走明文 HTTP 登入等於把帳密攤在網路上。**
+啟用登入前請先在前面架好 TLS（反向代理或 Caddy/nginx + Let's Encrypt）。
+純內網測試時才暫時設 `AUTH_COOKIE_SECURE=false`——那條路徑啟動時會印 WARNING。
+
+若使用反向代理，額外把 `AUTH_TRUST_FORWARDED_FOR=true` 打開，登入節流才會看到
+真實來源 IP。**直接對外時務必保持 `false`**：任何人都能自己偽造 `X-Forwarded-For`，
+讓每次嘗試都算在不同「IP」上，把節流整個繞過去。
+
+### 相關設定
+
+| 設定 | 預設 | 說明 |
+|---|---|---|
+| `AUTH_ENABLED` | `false` | 總開關 |
+| `AUTH_SESSION_HOURS` | `12` | 登入後多久要重新登入 |
+| `AUTH_COOKIE_SECURE` | `true` | cookie 只走 HTTPS |
+| `AUTH_MAX_ATTEMPTS` | `10` | 同一 IP 連續失敗幾次就鎖 |
+| `AUTH_LOCKOUT_MINUTES` | `15` | 鎖多久 |
+| `AUTH_TRUST_FORWARDED_FOR` | `false` | 只有在反向代理後面才開 |
+
+### 常見操作
+
+- **改密碼**：重跑步驟 1、換掉 `.env` 的 `AUTH_PASSWORD_HASH`、重啟。
+- **強制所有人重新登入**：換掉 `AUTH_SESSION_SECRET`、重啟。
+- **關掉登入**：`AUTH_ENABLED=false`、重啟。
+
+> 這幾個設定刻意**只**從 `.env` 讀，不出現在網頁的設定抽屜裡。`PUT /settings` 正是
+> 要被這道驗證保護的端點，如果開關是資料庫存的，還沒登入的人就能先打一發
+> `PUT /settings` 把鎖拆掉。代價是改設定要重啟。
+
+---
+
 ## `--reload` 模式注意事項
 
 此服務按照指定指令保留 `--reload`，適合開發或教學環境。檔案內容改變時，Uvicorn 的 reloader 會重新載入應用程式。
