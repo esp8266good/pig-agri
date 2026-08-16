@@ -2,11 +2,19 @@
 import { S, els, MAX_WS_RETRY, WS_RETRY_BASE_MS, setStatus, showToast, setSkeleton, fmtClock, hasActiveType } from './state.js';
 import { clearPigSelection, renderPigStatus, updateVodAnomalyMap, refreshAnomalyMap, refreshNotifications } from './panels.js';
 
-// bbox 沿用窗（秒）：最接近的那筆是空的時，最多回頭沿用這麼舊的一批框。
-// 遠端相機約 1 fps、且有 4~30 秒的空洞，照字面畫會讓框一閃一閃。3 秒是
-// 「填得掉常見空洞」與「不要顯示豬早就走開的舊位置」之間的取捨——量到的
-// 空洞 p90 約 4 秒，所以短暫的洞補得起來，真正的長洞仍會誠實留白。
-const BBOX_HOLD_SECONDS = 3.0;
+// 允許採用「擷取時間略晚於畫面時間」的 bbox（PDT 內插與 WS 抵達的抖動）。
+const BBOX_MATCH_TOLERANCE = 0.5;
+
+// tracker 整幀吐不出已確認軌跡（objects 空陣列）時，最多回頭沿用這麼舊的
+// 一批框。實測遠端相機兩筆 bbox 之間的空洞 p90 是 4~11.5 秒，窗口小於它
+// 就會在大洞中途把框收掉——那正是「低頻閃爍」的來源。取 15 秒蓋掉 p90；
+// 期間畫面本來就是同一張凍結影像（見下方零階保持說明），豬並沒有移動，
+// 所以沿用不會讓框跑掉。超過就誠實留白。
+const BBOX_EMPTY_HOLD_SECONDS = 15.0;
+
+// 最後一次收到「非空」偵測的擷取時間，用來讓豬隻清單／計數在空訊息時沿用
+// 而不是跟著閃。切換攝影機／進 VOD 時和 bboxHistory 一起歸零。
+let _lastNonEmptyTs = 0;
 
 // #no-signal 在 index.html 靜態帶 aria-hidden="true"（與初始 hidden 狀態配對）；
 // 顯示時若不同步翻成 false，畫面上出現的無訊號文案對輔助科技永遠不存在。
@@ -28,6 +36,7 @@ export function loadVod(startTs) {
   S.vodStartTs = startTs;
   S.vodFetching = false;
   S.bboxHistory = [];
+  _lastNonEmptyTs = 0;
   els.liveBtn.style.display = '';
   S.latestBoxes = [];
   els.countBadge.textContent = '—';
@@ -129,6 +138,7 @@ export function exitVodState() {
   S.vodAlerts  = [];
   S.latestBoxes = [];
   S.bboxHistory = [];
+  _lastNonEmptyTs = 0;
   S.currentObjectIds.clear();
   document.querySelectorAll('.timeline-slot.selected')
     .forEach(s => s.classList.remove('selected'));
@@ -253,10 +263,8 @@ function connectWS(cameraId) {
     if (gen !== S.wsGeneration) return;  // stale connection, discard
     try {
       const data = JSON.parse(e.data);
-      S.latestBoxes = data.objects || [];
-      els.countBadge.textContent = S.latestBoxes.length;
-      S.currentObjectIds = new Set(S.latestBoxes.map(o => o.object_id));
-      renderPigStatus();
+      const objs = data.objects || [];
+      const ts = data.timestamp || Date.now() / 1000;
       if (data.timestamp) {
         const delay = Date.now() - data.timestamp * 1000;
         els.latencyChip.style.display = '';
@@ -264,9 +272,23 @@ function connectWS(cameraId) {
         // Buffer bbox with timestamp for HLS live latency alignment.
         // Keep enough history to cover the HLS back-buffer (~90s) so
         // scrubbing back in live mode still has matching boxes.
-        S.bboxHistory.push({ ts: data.timestamp, boxes: S.latestBoxes });
+        // 這裡一定要記錄「真實觀測」（含空的）：drawBoxes 靠「這筆是不是空的」
+        // 決定要不要沿用，先在這裡補過就分不出來了。
+        S.bboxHistory.push({ ts: data.timestamp, boxes: objs });
         if (S.bboxHistory.length > 1000) S.bboxHistory.shift();
       }
+      // 豬隻清單與計數：空訊息不清空，沿用最後一次非空的結果（理由同 bbox
+      // 沿用——低 fps 相機 tracker 常整幀吐不出已確認軌跡）。否則清單會在
+      // 「目前無偵測到豬隻」與正常之間反覆跳。
+      if (objs.length) {
+        S.latestBoxes = objs;
+        _lastNonEmptyTs = ts;
+      } else if (!_lastNonEmptyTs || ts - _lastNonEmptyTs > BBOX_EMPTY_HOLD_SECONDS) {
+        S.latestBoxes = [];
+      }
+      els.countBadge.textContent = S.latestBoxes.length;
+      S.currentObjectIds = new Set(S.latestBoxes.map(o => o.object_id));
+      renderPigStatus();
     } catch (_) {}
   };
 
@@ -330,27 +352,32 @@ function drawBoxes() {
       if (latency > 1) { targetTs = Date.now() / 1000 - latency; dbgSrc = 'latency'; }
     }
     if (targetTs != null) {
-      let best = S.bboxHistory[S.bboxHistory.length - 1];
-      let bestDist = Infinity;
+      // 零階保持，不是最近鄰。畫面上顯示的是「擷取時間 <= targetTs 的最後
+      // 一張真實幀」：HLS writer 沒有新幀時會重送同一張影像並沿用它原本的
+      // capture_ts（hls_manager._writer_tick），所以相機只送 1 fps 時同一張
+      // 畫面會在螢幕上停留整整一秒。那一秒裡豬完全沒動，該幀的 bbox 一直是
+      // 正確答案。用最近鄰的話會提前跳到「下一筆」——而下一筆若是空的，框
+      // 就在畫面根本沒變的情況下憑空消失。
+      let cur = null;
       for (const entry of S.bboxHistory) {
-        const d = Math.abs(entry.ts - targetTs);
-        if (d < bestDist) { bestDist = d; best = entry; }
+        if (entry.ts > targetTs + BBOX_MATCH_TOLERANCE) continue;
+        if (!cur || entry.ts > cur.ts) cur = entry;
       }
-      displayBoxes = best.boxes;
-      chosenTs = best.ts;
+      // targetTs 比整段歷史都舊（剛切攝影機／剛連上）→ 用最舊的一筆墊著。
+      if (!cur) cur = S.bboxHistory[0];
+      displayBoxes = cur.boxes;
+      chosenTs = cur.ts;
 
-      // 遠端相機經慢速網路只送得出約 1 fps，且 tracker 常常整幀吐不出已確認
-      // 的軌跡（objects 為空陣列）。照字面畫的話畫面上的框就會一閃一閃。
-      // 最接近的那筆是空的時候，往回找 BBOX_HOLD_SECONDS 內最近一筆非空的
-      // 沿用，並在畫的時候淡化表示「這是延用的，不是這一刻的觀測」。
-      // 超過保留窗仍找不到就誠實地不畫——寧可空白也不要顯示很舊的位置。
+      // 該幀 tracker 沒吐出任何已確認軌跡（低 fps 下 min_hits 難達成，見
+      // docs 的追蹤缺口交接）。往回找最近一筆非空的沿用並淡化——這一段是
+      // 推測而非觀測，跟上面的零階保持性質不同，所以要在視覺上區分開。
       if (!displayBoxes.length) {
         let held = null;
-        let heldDist = Infinity;
         for (const entry of S.bboxHistory) {
           if (!entry.boxes.length) continue;
-          const d = Math.abs(entry.ts - targetTs);
-          if (d <= BBOX_HOLD_SECONDS && d < heldDist) { heldDist = d; held = entry; }
+          if (entry.ts > cur.ts) continue;
+          if (cur.ts - entry.ts > BBOX_EMPTY_HOLD_SECONDS) continue;
+          if (!held || entry.ts > held.ts) held = entry;
         }
         if (held) {
           displayBoxes = held.boxes;
