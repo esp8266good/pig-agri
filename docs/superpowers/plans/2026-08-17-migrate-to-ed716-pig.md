@@ -63,6 +63,68 @@
 `/static/index.html` 是刻意公開的（登入頁本身就是前端 app 的一部分，
 `auth_middleware.py` 的註解有寫）；所有資料端點未登入都是 401。
 
+14. ✅ 重開機驗過了：01:22 重開，服務 01:22:06 自己回來，postgres 靠
+    `restart: unless-stopped` 也回來了。
+15. ✅ ntfy 通知標題掛上主機名（`[ed716-pig] …`）。掛在 `ntfy_notifier.notify`
+    這個唯一出口，`~/bin/pig-agri-tmux.sh` 的 Title header 兩台機器也都改了。
+16. ✅ 舊機的 `tracking_logs_old`（126M 列、22GB 備份表）已 DROP，空間回收 22GB。
+    **注意**：不能直接 `DROP ... CASCADE`——`tracking_logs_id_seq` 的擁有者還掛在
+    舊表上，但它同時是現役 `tracking_logs.id` 的 default 來源，CASCADE 會把
+    sequence 一起刪掉、現役表從此插不進資料。要先
+    `ALTER SEQUENCE tracking_logs_id_seq OWNED BY tracking_logs.id;` 再 DROP。
+17. ✅ 融合腳本 `scripts/migrate_merge.sh` 寫好並實測過（見下）。
+
+## 資料融合：`scripts/migrate_merge.sh`
+
+在舊機上跑，把舊機的資料融合進新機。每個子命令都能重複執行，中斷了重跑會接續。
+
+| 子命令 | 做什麼 |
+|---|---|
+| `status` | 只看不動：兩邊範圍、有沒有時間重疊、設定差異、影像空間夠不夠 |
+| `prep` | 新機建暫存表、去重索引，並**拍下「新機自己的資料從哪裡開始」的快照** |
+| `db-day <日期>` / `db-all` | 搬 `tracking_logs`，逐日、可中斷 |
+| `small` | `health_alerts` / `pig_notes` / `saved_segments` |
+| `hls` | 影像，一個小時目錄一個單位 |
+| `verify` | 逐日比對兩邊筆數 |
+| `finish` | 收尾：丟暫存表、對齊 sequence |
+
+實測結果（2026-08-17）：搬 2026-05-05 與 05-06 兩天共 438 萬列，各約 27 秒
+（照這個速度全部 1.09 億列約 25 分鐘）。小表 47279 筆 `health_alerts` 與 9 筆
+`saved_segments` 已搬完，重跑不會重複。影像用 4 個小時目錄實測 staging→落地
+都正常，測完已清掉（影像照你說的先不搬）。
+
+### 設計上踩到、也修掉的三個坑
+
+**1. 重疊檢查會被自己剛搬進去的資料擋住。**
+一開始拿「新機目前最早的一筆」當基準，搬完第一天之後，第二天就被自己寫的資料
+判定為重疊。改成 `prep` 時把邊界拍成快照存在 `migrate_own_boundary` 表，之後
+一律跟快照比。**所以 `prep` 一定要在第一次 `db-day` 之前跑**；如果新機的
+`tracking_logs` 還是空的（或你確定裡面全是搬進來的），用 `BOUNDARY=now prep`。
+
+**2. rsync 中斷會留下「看起來存在」的半個小時目錄。**
+那個小時之後會被永久跳過、缺片而且沒人會發現。改成先落到 `.incoming`，整包
+傳完才 `mv` 進正式位置。正式位置永遠只有完整的小時目錄。
+
+**3. 一個 `hls` 指令就能把新機的碟塞爆。**
+378G 進 414G 只剩 36G，低於 `storage_min_free_gb=100`，錄影會當場切到 ephemeral
+並開始發告警。加了空間煞車：預估搬完會低於門檻就擋下來，要嘛 `HOURS_LIMIT=N`
+分批、要嘛加硬碟改 `REMOTE_HLS`、要嘛 `FORCE=1`。
+
+### 為什麼 `object_id` 是這整件事最危險的地方
+
+兩台機器的 `object_id` 是各自獨立的號碼空間——舊機的 3 號豬跟新機的 3 號豬沒有
+任何關係。同一台相機、同一段時間如果兩邊都有資料，融合之後
+`analysis/scheduler.py` 會把兩隻不同的豬的 bbox 中心點串成同一條軌跡，活動量
+直接算成垃圾，而且看起來完全正常。所以預設只搬「早於新機邊界」的範圍，越界
+就擋，要硬跑得自己加 `ALLOW_OVERLAP=1`。
+
+`tracking_logs.id` 不搬（舊機已經跑到一億八千多萬），一律由新機重新配號，
+去重靠自然鍵 `(camera_id, frame_id, object_id, timestamp)`——跟
+`dedup_tracking_logs.sql` 同一把鍵。
+
+`user_settings` 預設不搬：兩台的 ntfy topic（pig / swine）、保留天數、錄影排程
+本來就該不一樣。`status` 會把差異列出來讓你自己判斷。
+
 ## 還沒做的：需要 sudo（`chen` 有 sudo 但要密碼，我沒有）
 
 遠端這四樣都不在：
