@@ -39,6 +39,30 @@
    systemd unit 放在 `~/lobby/pig-agri-deploy/pig-agri-tmux.service`，**故意不裝進
    `~/.config/systemd/user/`**，避免現在就被啟動。切換當天再 `cp` + `enable --now`。
 
+10. ✅ Tailscale 已加入 tailnet，`ed716-pig` = `100.104.167.102`；兩台相機
+    （`100.77.97.67`、`100.67.51.73`）的 5555 都通。
+11. ✅ postgres 走 `docker compose` 起來，`init.sql` 建好 5 張表。
+12. ✅ **服務已經在遠端跑起來，開機自啟動也裝好了**（`~/.config/systemd/user/
+    pig-agri-tmux.service`，`enabled` + `active`，`Linger=yes`）。四路 ZMQ 都在
+    收，`fresh=91(1.5/s)`、`drop_stale=0`；HLS 走 ephemeral（凌晨 1 點在
+    17:00–06:30 的休息時段內，正確行為）。
+13. ✅ 登入已開啟（`AUTH_ENABLED=true`，帳號 `pig`）。`POST /auth/login` 回 200，
+    帶 cookie 打 `/cameras` 拿到四台相機；不帶 cookie 一律 401。
+
+### 這台跟舊機不一樣的地方（別照抄舊設定）
+
+| 設定 | 值 | 為什麼 |
+|---|---|---|
+| `--host` | `0.0.0.0`（舊機是 `127.0.0.1`） | 這台前面還沒有 Traefik，要讓 LAN 與 tailnet 都連得到。只綁 tailscale IP 的話開機時 `tailscale0` 還沒起來會 bind 失敗 |
+| `AUTH_ENABLED` | `true` | 直接對 LAN 開就一定要有登入。舊機靠 Traefik 擋在前面 |
+| `AUTH_COOKIE_SECURE` | `false` | 還沒有 TLS。**接上 Traefik 後要改回 `true`** |
+| `AUTH_TRUST_FORWARDED_FOR` | `false` | 前面沒有 proxy，信 `X-Forwarded-For` 等於讓人偽造來源 IP 繞過登入節流 |
+| `HLS_BASE_DIR` | `/home/chen/lobby/pig-agri-data/hls` | 這台沒有 1TB HDD，錄影從零開始。之後加硬碟再換路徑或掛 symlink |
+| `MOT_WORKER_THREADS` | `8`（舊機 12） | 這台只有 12 核，留 headroom 給 ffmpeg |
+
+`/static/index.html` 是刻意公開的（登入頁本身就是前端 app 的一部分，
+`auth_middleware.py` 的註解有寫）；所有資料端點未登入都是 401。
+
 ## 還沒做的：需要 sudo（`chen` 有 sudo 但要密碼，我沒有）
 
 遠端這四樣都不在：
