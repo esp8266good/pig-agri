@@ -125,6 +125,55 @@
 `user_settings` 預設不搬：兩台的 ntfy topic（pig / swine）、保留天數、錄影排程
 本來就該不一樣。`status` 會把差異列出來讓你自己判斷。
 
+## 第一階段遷移完成（2026-08-17 03:20）
+
+服務已經跑在 ed716-pig 上，Traefik 指向 `http://192.168.50.48:5005`，
+舊機的 `pig-agri-tmux.service` 已 stop + disable。
+
+| 驗收項 | 結果 |
+|---|---|
+| 全套測試（兩台） | 380 passed / 0 failed |
+| 開機自啟動 | `enabled` + `active`，`Linger=yes`，實際重開機驗過（6 秒回來）|
+| DB 近 21 天 | 15 天有資料，逐日筆數零差異，per-camera 分布也一致 |
+| 影像近 21 天 | 359 個小時目錄，**每個的檔案數與總位元組數都完全一致** |
+| 回放 | VOD playlist 生得出來、PDT 正確、`.ts` segment 抓得到（1.28MB / 200）|
+| 前端端點 | 8 個端點不帶 cookie 全部 200（登入已依要求關閉）|
+| 設定 | 17 項全部對齊舊機 |
+| ntfy | 標題帶主機名 `[ed716-pig] …` |
+
+新機資料現況：`tracking_logs` 5282 萬列（05-05 ~ 08-16，含先前測試搬的兩天），
+`health_alerts` 47283 筆，`saved_segments` 9 筆，影像 208G，剩 193G。
+
+### 還沒搬的（等加硬碟）
+
+DB 還有 43 天、影像還有 571 個小時目錄（約 170G）。補的時候直接跑
+`db-all` 與 `hls`（不帶 `DAYS`）。
+
+⚠ **`migrate_own_boundary` 與 `stage_tracking_migrate` 兩張表不能清掉**
+（也就是先別跑 `finish`），補歷史還要用。邊界快照目前訂在
+2026-08-16 17:36 UTC，早於這個時間的資料都還能搬。
+
+⚠ **`hls_retention_days=40`**：目前搬的影像最舊只有 21 天，安全。但之後補
+完整歷史時，5~7 月的影像一落地就會被 `purge_expired_hls` 判定過期刪掉。
+補歷史之前要先把這個值調大。
+
+### 已知的、不影響運作但要知道的
+
+**`ephemeral_state` 會一直是 `degraded`。** `storage_min_free_gb` 對齊成 100，
+但 ephemeral 是 `/dev/shm` 這個 tmpfs——新機 RAM 31G，tmpfs 只有 16G，
+永遠到不了 100G 的門檻。行為上完全沒差：`eph_writable = state != "down"`，
+`degraded` 仍然可寫，`target_mode` 照樣是 `ephemeral`，不會丟幀；低空間告警
+只看錄影碟（`new_record`），不看 ephemeral，所以也不會發通知。舊機同樣是這個
+狀況（tmpfs 32G < 100G 門檻），所以這是對齊之後忠實重現舊機行為，不是新問題。
+代價是這個指示燈永遠紅著，真的 ephemeral 出事時會被淹掉。要修的話得讓兩顆碟
+用不同門檻，那是程式改動。
+
+**`recording_free_gb` 比 `df` 的 avail 多約 39G**：監控讀的是含 root 保留區塊的
+free，`df` 顯示的是 avail。以 100G 門檻來說差距無所謂，但別拿兩個數字對帳。
+
+**2026-08-08 ~ 08-10 沒有資料**，08-15/08-16 也只有平常的十分之一。這是舊機上
+就有的既有缺口（cam_02 硬體問題），不是搬漏——`verify` 逐日比對兩邊完全相符。
+
 ## 還沒做的：需要 sudo（`chen` 有 sudo 但要密碼，我沒有）
 
 遠端這四樣都不在：
