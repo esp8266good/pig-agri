@@ -9,7 +9,10 @@ services:
       - pg_data:/var/lib/postgresql/data
       - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql
     ports:
-      - "15432:5432"
+      # 綁 127.0.0.1：不加 host IP 的話 Docker 會插 iptables 規則直接對外開放
+      # 5432，繞過主機防火牆（UFW 擋不住），等於把 DB 攤在整個網段上。
+      # app 與 scripts/dedup_*.sh 都在本機，改成 loopback 不影響兩者。
+      - "127.0.0.1:15432:5432"
     restart: unless-stopped
 
 volumes:

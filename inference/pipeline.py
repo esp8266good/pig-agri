@@ -199,46 +199,54 @@ class InferencePipeline:
                     )
                     futures.append((cam, frame_data, fut))
 
+                # 每支 camera 各自 try：任一支丟例外都只跳過那一支，迴圈continue
+                # 下去把其餘 future 取回。若讓例外往外傳，後面 camera 的 future 就
+                # 永遠不會被 result()，下一輪 loop 會對同一支再送一次 update ——
+                # 違反 tracker_pool.py 明載的「每 camera 同時至多一個 update」不變式
+                # （tracker 內部狀態無鎖，並行更新會讓軌跡錯亂 → ID 亂跳 → 活動量算錯）。
                 for cam, frame_data, fut in futures:
-                    online_targets = fut.result()
-                    objects = []
-                    for t in online_targets:
-                        x1, y1, x2, y2 = float(t[0]), float(t[1]), float(t[2]), float(t[3])
-                        obj_id = int(t[4])
-                        conf = float(t[5]) if len(t) > 5 else 0.0
-                        ti = _compute_thermal_intensity(frame_data.thermal_np, x1, y1, x2, y2)
-                        objects.append({
-                            "object_id": obj_id,
-                            "bbox": [x1, y1, x2 - x1, y2 - y1],
-                            "confidence": conf,
-                            # thermal_intensity is DB-only; not included in live WS payload
-                        })
-                        pool = database.get_pool()
-                        if pool is not None:
-                            asyncio.run_coroutine_threadsafe(
-                                write_tracking_log(
-                                    pool,
-                                    camera_id=cam,
-                                    timestamp=frame_data.ts,
-                                    frame_id=frame_data.frame_id,
-                                    object_id=obj_id,
-                                    bb_left=x1,
-                                    bb_top=y1,
-                                    bb_width=x2 - x1,
-                                    bb_height=y2 - y1,
-                                    confidence=conf,
-                                    thermal_intensity=ti,
-                                ),
-                                self._event_loop,
-                            )
-                    payload = {
-                        "frame_id": frame_data.frame_id,
-                        "timestamp": frame_data.ts,
-                        "objects": objects,
-                    }
-                    asyncio.run_coroutine_threadsafe(
-                        self._broadcast_fn(cam, payload), self._event_loop
-                    )
+                    try:
+                        online_targets = fut.result()
+                        objects = []
+                        for t in online_targets:
+                            x1, y1, x2, y2 = float(t[0]), float(t[1]), float(t[2]), float(t[3])
+                            obj_id = int(t[4])
+                            conf = float(t[5]) if len(t) > 5 else 0.0
+                            ti = _compute_thermal_intensity(frame_data.thermal_np, x1, y1, x2, y2)
+                            objects.append({
+                                "object_id": obj_id,
+                                "bbox": [x1, y1, x2 - x1, y2 - y1],
+                                "confidence": conf,
+                                # thermal_intensity is DB-only; not included in live WS payload
+                            })
+                            pool = database.get_pool()
+                            if pool is not None:
+                                asyncio.run_coroutine_threadsafe(
+                                    write_tracking_log(
+                                        pool,
+                                        camera_id=cam,
+                                        timestamp=frame_data.ts,
+                                        frame_id=frame_data.frame_id,
+                                        object_id=obj_id,
+                                        bb_left=x1,
+                                        bb_top=y1,
+                                        bb_width=x2 - x1,
+                                        bb_height=y2 - y1,
+                                        confidence=conf,
+                                        thermal_intensity=ti,
+                                    ),
+                                    self._event_loop,
+                                )
+                        payload = {
+                            "frame_id": frame_data.frame_id,
+                            "timestamp": frame_data.ts,
+                            "objects": objects,
+                        }
+                        asyncio.run_coroutine_threadsafe(
+                            self._broadcast_fn(cam, payload), self._event_loop
+                        )
+                    except Exception:
+                        logger.exception(f"[{cam}] tracker update/publish failed, skipping camera")
             finally:
                 # 無論 fresh 路徑成功或丟例外，都要 await 停滯 camera 的 age-out 更新，
                 # 維持 tracker_pool 明載的「每 camera 同時至多一個 update」不變式。

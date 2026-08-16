@@ -101,14 +101,17 @@ def test_process_batch_calls_broadcast():
     assert msg["objects"][0]["object_id"] == 1
 
 
-def _make_processing_pipeline():
-    """建好一個能真的跑完 _process_batch 的 pipeline（detector/reid/tracker 皆 mock）。"""
+def _make_processing_pipeline(n_cams: int = 1):
+    """建好一個能真的跑完 _process_batch 的 pipeline（detector/reid/tracker 皆 mock）。
+    n_cams：detector 每輪要回幾組偵測（＝ batch 內的 camera 數）。"""
     from concurrent.futures import ThreadPoolExecutor
     p = _make_pipeline()
 
     mock_detector = MagicMock()
     mock_detector.test_size = (736, 1280)
-    mock_detector.infer.return_value = [np.ones((2, 7), dtype=np.float32)]
+    mock_detector.infer.return_value = [
+        np.ones((2, 7), dtype=np.float32) for _ in range(n_cams)
+    ]
 
     mock_reid = MagicMock()
     mock_reid.extract.return_value = np.ones((2, 2048), dtype=np.float32)
@@ -192,6 +195,35 @@ def test_process_batch_ages_out_sustained_stale_camera():
     assert mock_pool.update.call_count == 2
     stale_dets = mock_pool.update.call_args_list[1].args[1]
     assert stale_dets is None or len(stale_dets) == 0
+
+
+def test_process_batch_drains_all_futures_when_one_camera_raises():
+    """某支 camera 的 tracker update 丟例外時，其餘 camera 的 future 仍必須被
+    result() 取回並照常發佈。否則例外會中斷收集迴圈、後面那些 future 被遺留，
+    下一輪 loop 對同一支再送一次 update → 違反 tracker_pool 的
+    「每 camera 同時至多一個 update」不變式（tracker 內部狀態無鎖）。"""
+    from inference.pipeline import FrameData
+    p, _detector, mock_pool, broadcast_calls = _make_processing_pipeline(n_cams=2)
+
+    def _update(cam, dets, img_info, img_size, id_feature):
+        if cam == "cam_01":
+            raise RuntimeError("tracker boom")
+        return [[10.0, 20.0, 50.0, 80.0, 7, 0.9]]
+
+    mock_pool.update.side_effect = _update
+
+    rgb = np.zeros((480, 640, 3), dtype=np.uint8)
+    p._process_batch({
+        "cam_01": FrameData(rgb_np=rgb, thermal_np=None, ts=1.0, frame_id=11),
+        "cam_02": FrameData(rgb_np=rgb, thermal_np=None, ts=1.0, frame_id=22),
+    })
+    p._event_loop.run_until_complete(asyncio.sleep(0.05))
+    p._event_loop.close()
+    p._executor.shutdown(wait=False)
+
+    # 兩支都送出並取回了 update；只有健康的那支發佈
+    assert mock_pool.update.call_count == 2
+    assert [cam for cam, _msg in broadcast_calls] == ["cam_02"]
 
 
 def test_process_batch_skips_on_exception():
