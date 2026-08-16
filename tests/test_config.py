@@ -68,7 +68,8 @@ def test_zmq_stale_ms_default():
 # ── 其他設定（不受此次修改影響）────────────────────────────────────
 
 def test_default_mot_worker_threads():
-    s = Settings(**_BASE)
+    # _env_file=None：隔離真實部署 .env（每台機器的核心數不同，會設不同的值）
+    s = Settings(**_BASE, _env_file=None)
     assert s.mot_worker_threads == 12
 
 
