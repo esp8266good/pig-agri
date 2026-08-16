@@ -50,7 +50,51 @@ def test_notify_posts_json_with_unicode(monkeypatch):
     assert captured["url"] == "https://ntfy.ed716.duckdns.org"
     body = captured["json"]
     assert body["topic"] == "pig"
-    assert body["title"] == "🚨 錄影碟不可寫"
+    # 標題前面帶主機名：pig / swine 兩個訂閱點都可能被多台機器共用，
+    # 不帶機器名就分不出是誰在叫。
+    assert body["title"] == f"[{ntfy_notifier._HOSTNAME}] 🚨 錄影碟不可寫"
     assert body["message"] == "訊息內容"
     assert body["priority"] == 5            # urgent → 5
     assert body["tags"] == ["rotating_light", "warning"]
+
+
+def test_notify_prefixes_hostname_in_title(monkeypatch):
+    """標題要帶主機名：ed716 有 pig 與 swine 兩個訂閱點，遷移期間新舊機還會同時
+    在跑，通知不標機器就分不出是誰發的。放標題最前面是因為手機通知從尾巴截斷。"""
+    captured = {}
+
+    class OkClient:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def post(self, url, json=None, **k):
+            captured["json"] = json
+            class R: status_code = 200
+            return R()
+    monkeypatch.setattr(ntfy_notifier.httpx, "AsyncClient", OkClient)
+    monkeypatch.setattr(ntfy_notifier, "_HOSTNAME", "ed716-pig")
+
+    assert _run(ntfy_notifier.notify("https://ntfy.example.com/swine", "⚠️ 測試", "m")) is True
+    assert captured["json"]["title"] == "[ed716-pig] ⚠️ 測試"
+    assert captured["json"]["topic"] == "swine"
+    # message 不動：機器身分只掛在標題，訊息內容維持原樣。
+    assert captured["json"]["message"] == "m"
+
+
+def test_notify_title_unchanged_when_hostname_empty(monkeypatch):
+    """取不到主機名時不要留一個空的 `[] ` 前綴。"""
+    captured = {}
+
+    class OkClient:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def post(self, url, json=None, **k):
+            captured["json"] = json
+            class R: status_code = 200
+            return R()
+    monkeypatch.setattr(ntfy_notifier.httpx, "AsyncClient", OkClient)
+    monkeypatch.setattr(ntfy_notifier, "_HOSTNAME", "")
+
+    assert _run(ntfy_notifier.notify("https://ntfy.example.com/pig", "⚠️ 測試", "m")) is True
+    assert captured["json"]["title"] == "⚠️ 測試"

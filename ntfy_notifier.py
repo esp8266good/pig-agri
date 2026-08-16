@@ -8,6 +8,8 @@
 latin-1 的 header 值拋例外（'ascii' codec can't encode）→ 推播全失敗。JSON body
 為 UTF-8，unicode 完全沒問題。
 """
+import socket
+
 import httpx
 from loguru import logger
 
@@ -15,6 +17,18 @@ from loguru import logger
 _PRIORITY_MAP: dict[str, int] = {
     "min": 1, "low": 2, "default": 3, "high": 4, "max": 5, "urgent": 5,
 }
+
+# 主機名放在標題最前面。ed716 有 pig 與 swine 兩個訂閱點，同一個 topic 也可能
+# 被多台機器共用（遷移期間新舊機會同時在跑），標題不帶機器名就分不出是誰在叫。
+# 放前面而不是後面：手機通知的標題是從尾巴截斷的，擺後面會第一個被吃掉。
+#
+# 這個模組的原則是「不決定 policy」，唯獨這件事破例——它是傳送端的身分，
+# 不是事件內容；擺在這個唯一的出口，將來新增呼叫端也不可能忘記加。
+_HOSTNAME = socket.gethostname()
+
+
+def _with_host(title: str) -> str:
+    return f"[{_HOSTNAME}] {title}" if _HOSTNAME else title
 
 
 def _split_topic_url(url: str) -> "tuple[str, str] | None":
@@ -39,7 +53,7 @@ async def notify(url: str, title: str, message: str, *,
     base, topic = parts
     payload: dict = {
         "topic": topic,
-        "title": title,
+        "title": _with_host(title),
         "message": message,
         "priority": _PRIORITY_MAP.get(priority, 3),
     }
