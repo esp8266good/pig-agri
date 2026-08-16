@@ -535,16 +535,24 @@ cmd_verify() {
   require_remote_up
   # 兩邊各跑一次 group by 就好。早期版本是一天打一次 count，100 天就是 200 次
   # 跨機往返加 200 次全表掃，跑到天荒地老。
-  local q="SELECT to_char(to_timestamp(\"timestamp\") AT TIME ZONE 'Asia/Taipei','YYYY-MM-DD') AS d,
-                  count(*)
-           FROM tracking_logs GROUP BY d ORDER BY d"
+  # 舊機那邊要數「自然鍵有幾個唯一值」，不是原始筆數。
+  #
+  # 舊機的 tracking_logs 還有「凍結畫面重灌」留下的重複列（dedup_tracking_logs.sql
+  # 只清到 2026-07-21，之後又長出來了）。融合時是照自然鍵去重的，所以新機的筆數
+  # 本來就會比舊機的原始筆數少。拿原始筆數比會每天都誤報「少了」。
+  local lq="SELECT to_char(to_timestamp(\"timestamp\") AT TIME ZONE 'Asia/Taipei','YYYY-MM-DD') AS d,
+                   count(DISTINCT (camera_id, frame_id, object_id, \"timestamp\"))
+            FROM tracking_logs GROUP BY d ORDER BY d"
+  local rq="SELECT to_char(to_timestamp(\"timestamp\") AT TIME ZONE 'Asia/Taipei','YYYY-MM-DD') AS d,
+                   count(*)
+            FROM tracking_logs GROUP BY d ORDER BY d"
   local lf rf; lf=$(mktemp); rf=$(mktemp)
-  say "統計中（兩邊各掃一次表，大表要一兩分鐘）…"
-  lval "$q" > "$lf"
-  rval "$q" > "$rf"
+  say "統計中（舊機要數自然鍵的唯一值，上億列要幾分鐘）…"
+  lval "$lq" > "$lf"
+  rval "$rq" > "$rf"
 
   say ""
-  say "日期            舊機        新機         差"
+  say "日期        舊機(去重後)        新機         差"
   # 第一個檔（$rf）先讀進 r[]，第二個檔（$lf）逐行比對。舊機有、新機沒有的
   # 日期，新機算 0。
   awk -F'|' '
