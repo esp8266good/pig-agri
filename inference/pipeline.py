@@ -69,6 +69,10 @@ class InferencePipeline:
         # 觀測用計數：每支 camera 這段期間有幾個 tick 拿到新幀 / 幾個 tick 是停滯。
         self._fresh_ticks: dict[str, int] = {}
         self._stale_ticks: dict[str, int] = {}
+        # 停滯 tick 裡「真的餵了空偵測」的次數。單看 stale 分不出被跳過還是被
+        # 餵了空偵測，而那正是慢速相機會不會餓死的關鍵——沒有這個數字就無法
+        # 從 log 判斷停滯門檻設得對不對。
+        self._ageout_counts: dict[str, int] = {}
         self._stats_since: float = time.monotonic()  # start() 後由 _clock 接手
         # 每支 camera 上一輪「實際處理過」的 frame_id。ZMQ 送幀停滯時 _latest 會卡住
         # 同一張凍結幀，若不比對就會每 100ms 重跑 detect→track→write，把單一幀灌進 DB
@@ -165,9 +169,10 @@ class InferencePipeline:
         for cam in sorted(set(self._fresh_ticks) | set(self._stale_ticks)):
             fresh = self._fresh_ticks.get(cam, 0)
             stale = self._stale_ticks.get(cam, 0)
+            ageout = self._ageout_counts.get(cam, 0)
             parts.append(
                 f"{cam}: fresh={fresh}({fresh / elapsed:.1f}/s) stale={stale} "
-                f"fid={self._last_processed_fid.get(cam)}"
+                f"ageout={ageout} fid={self._last_processed_fid.get(cam)}"
             )
         logger.info(
             f"[inference] active={self._active} {elapsed:.0f}s | "
@@ -175,6 +180,7 @@ class InferencePipeline:
         )
         self._fresh_ticks.clear()
         self._stale_ticks.clear()
+        self._ageout_counts.clear()
         self._stats_since = now
 
     def _loop(self) -> None:
@@ -217,6 +223,7 @@ class InferencePipeline:
                 if now_m - self._last_ageout_mono.get(cam, 0.0) < STALE_AGE_OUT_INTERVAL:
                     continue
                 self._last_ageout_mono[cam] = now_m
+                self._ageout_counts[cam] = self._ageout_counts.get(cam, 0) + 1
                 fd = snapshot[cam]
                 h, w = fd.rgb_np.shape[:2]
                 stale_futures.append(self._executor.submit(

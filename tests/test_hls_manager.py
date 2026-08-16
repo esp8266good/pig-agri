@@ -27,6 +27,12 @@ def _make_stream(tmp_path, monkeypatch, proc=None, *, start_writer=False):
         proc.stdin = MagicMock()
         proc.poll.return_value = None  # 預設模擬「ffmpeg 仍在跑」,避免 writer self-revive
     monkeypatch.setattr("hls_manager.settings.hls_base_dir", str(tmp_path))
+    # storage_monitor.monitor 是模組級單例，會被同一輪其他測試的 run_once 改掉，
+    # 而 run_once 的結果取決於「現在是不是錄影時段」——所以這裡不釘住的話，
+    # 這些測試會在 recording_off 時段（預設 17:00 之後）才失敗：writer 發現模式
+    # 變成 ephemeral 就把 ffmpeg 重啟到別的輸出目錄，測試手上那個 mock proc
+    # 自然再也收不到寫入。釘成 record 讓測試只驗它真正要驗的東西。
+    monkeypatch.setattr("storage_monitor.get_target_mode", lambda: "record")
     if not start_writer:
         monkeypatch.setattr("hls_manager.HLSStream._start_writer", lambda self: None)
     out_dir = tmp_path / "cam_01" / "rgb" / datetime.now().strftime("%Y-%m-%d-%H")
