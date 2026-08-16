@@ -11,6 +11,7 @@
 #   scripts/migrate_merge.sh db-day 2026-05-05
 #   scripts/migrate_merge.sh db-all          # 逐日跑完（最花時間，可以中斷）
 #   scripts/migrate_merge.sh small           # health_alerts / pig_notes / saved_segments
+#   scripts/migrate_merge.sh settings        # 把舊機的 user_settings 蓋到新機
 #   scripts/migrate_merge.sh hls             # 影像，一個小時目錄一個單位
 #   scripts/migrate_merge.sh verify          # 逐日比對兩邊筆數
 #   scripts/migrate_merge.sh finish          # 收尾：丟掉暫存表、對齊 sequence
@@ -27,9 +28,10 @@
 #      (camera_id, frame_id, object_id, timestamp)——跟 dedup_tracking_logs.sql
 #      同一把鍵，理由見那支腳本的註解（frame_id 會回繞重用，單獨拿它當鍵不夠）。
 #
-#   3. user_settings 預設不搬。兩台機器的 ntfy topic（pig / swine）、保留天數、
-#      錄影排程本來就該不一樣，蓋過去只會把新機設定弄壞。`status` 會列出差異
-#      讓你自己判斷要不要手動搬某幾個 key。
+#   3. user_settings 不在 db-all 的路徑上，要蓋要自己下 `settings` 子命令。
+#      兩台機器的 ntfy topic（pig / swine）、保留天數、錄影排程本來就可能該
+#      不一樣，蓋過去必須是明確的決定。`status` 會先列出差異；真的要對齊就跑
+#      `settings`，要留下某幾個 key 用 EXCLUDE="key1 key2"。
 #
 set -uo pipefail
 
@@ -379,6 +381,52 @@ cmd_small() {
 }
 
 # ────────────────────────────────────────────────────────────────
+# settings：把舊機的 user_settings 整份覆蓋到新機。
+#
+# 刻意做成獨立子命令、不放進 db-all：兩台機器的 ntfy topic（pig / swine）、
+# 保留天數、錄影排程本來就可能該不一樣，蓋過去要是明確的決定。
+# EXCLUDE="ntfy_url other_key" 可以留下某幾個 key 不蓋。
+# ────────────────────────────────────────────────────────────────
+cmd_settings() {
+  require_remote_up
+
+  local excl_sql="" k
+  for k in ${EXCLUDE:-}; do
+    excl_sql="$excl_sql AND key <> '$k'"
+    say "保留新機原本的 $k（不覆蓋）"
+  done
+
+  say "覆蓋前，新機與舊機不同的：（- 舊機 / + 新機）"
+  local lf rf; lf=$(mktemp); rf=$(mktemp)
+  lval "SELECT key || '=' || value FROM user_settings WHERE true$excl_sql ORDER BY key" | sort > "$lf"
+  rval "SELECT key || '=' || value FROM user_settings ORDER BY key" | sort > "$rf"
+  local d
+  d=$(diff --label 舊機 --label 新機 -u "$lf" "$rf" | tail -n +3 | grep -E '^[+-]')
+  if [[ -z "$d" ]]; then
+    say "  （已經一樣，不用做）"
+    rm -f "$lf" "$rf"; return 0
+  fi
+  printf '%s\n' "$d"
+  rm -f "$lf" "$rf"
+
+  say ""
+  say "覆蓋中…"
+  lsql -c "COPY (SELECT key, value FROM user_settings WHERE true$excl_sql) TO STDOUT" \
+  | ssh -C "$REMOTE_SSH" "docker exec -i $PG_CONTAINER psql -U $PG_USER -d $PG_DB -v ON_ERROR_STOP=1 -c '
+      CREATE TEMP TABLE s (key varchar(64), value text);
+      COPY s FROM STDIN;
+      INSERT INTO user_settings (key, value, updated_at)
+        SELECT key, value, now() FROM s
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now();'" \
+    || die "settings 覆蓋失敗"
+
+  say "✅ 覆蓋完成。新機現在的設定："
+  rshow "SELECT key, value FROM user_settings ORDER BY key;"
+  say ""
+  say "消費端（storage loop / ntfy / 分析排程）每輪重讀 DB，不用重啟。"
+}
+
+# ────────────────────────────────────────────────────────────────
 # 影像。小時目錄是最小單位，兩邊都有的整個跳過。
 # ────────────────────────────────────────────────────────────────
 hls_local_hours()  { (cd "$LOCAL_HLS" 2>/dev/null && find . -mindepth 3 -maxdepth 3 -type d | sed 's|^\./||' | sort); }
@@ -546,6 +594,7 @@ case "${1:-}" in
   db-day)  shift; [[ $# -ge 1 ]] || die "用法：db-day YYYY-MM-DD"; cmd_db_day "$1" ;;
   db-all)  cmd_db_all ;;
   small)   cmd_small ;;
+  settings) cmd_settings ;;
   hls)     shift; cmd_hls "${1:-}" ;;
   verify)  cmd_verify ;;
   finish)  cmd_finish ;;
