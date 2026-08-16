@@ -105,8 +105,12 @@ uv run python -c "import torch; print(torch.__version__, torch.cuda.is_available
 ## 四、`.env`：從別台複製過來一定要改的欄位
 
 ```bash
-cp .env.example .env      # 或從既有機器複製
+uv run python scripts/make_env.py          # 互動式產生，每一項當場驗證
+uv run python scripts/make_env.py --check  # 只檢查現有 .env，有 error 會非 0 結束
 ```
+
+`--check` 適合放進部署流程或開機前的健檢。手動複製 `.env.example` 也可以，
+但複製完務必跑一次 `--check`。
 
 | 欄位 | 為什麼一定要改 |
 |---|---|
@@ -297,8 +301,6 @@ DAYS=21 ./scripts/migrate_merge.sh hls
 
 - **權重的取得方式**。現在靠 rsync 別台機器，等於部署依賴一台既有機器。要有
   可下載的 artifact（或把 `ref/HybridSORT` 收進 submodule / 打成 wheel）。
-- **`.env` 的產生**。現在靠人工複製改路徑，容易漏。應該做成互動式產生器，
-  或至少寫一支檢查腳本，開機前驗證每個路徑都存在、每個 ZMQ 來源都連得到。
 - **一鍵安裝**。第二～七節其實可以是一支 `install.sh`，把 apt、uv、venv、
   systemd unit、路徑改寫全部包起來。
 - **錄影碟與 ephemeral 碟分開的空間門檻**。同一個 `storage_min_free_gb` 套在
