@@ -54,6 +54,12 @@ def _source_worker(
 
     recv_count = 0
     drop_count = 0
+    # 觀測窗：定期印一次收/丟與「幀抵達時已經多舊」。age 是 time.time()-ts，
+    # ts 由送幀端打——分布連續代表網路延遲，固定大偏移代表兩端時鐘沒對齊，
+    # 這兩種的處置完全不同（調 zmq_stale_ms vs 校時）。
+    window_ages: list[float] = []
+    last_report = time.monotonic()
+    REPORT_INTERVAL = 60.0
 
     try:
         while running.is_set():
@@ -73,6 +79,28 @@ def _source_worker(
                 continue
 
             age_ms = (time.time() - ts) * 1000
+            window_ages.append(age_ms)
+
+            # 報告放在丟棄判斷「之前」：原本擺在 recv_count 遞增後，一旦某支
+            # camera 的幀 100% 被判過期，recv_count 就永遠不動、那行 log 一輩子
+            # 不會印 —— 正好在最需要知道發生什麼的時候完全靜音。
+            now_mono = time.monotonic()
+            if now_mono - last_report >= REPORT_INTERVAL:
+                elapsed = now_mono - last_report
+                if window_ages:
+                    srt = sorted(window_ages)
+                    med = srt[len(srt) // 2]
+                    logger.info(
+                        f"{tag} {elapsed:.0f}s: recv={recv_count} drop_stale={drop_count} "
+                        f"rate={len(window_ages) / elapsed:.1f}/s "
+                        f"age(ms) min={srt[0]:.0f} med={med:.0f} max={srt[-1]:.0f} "
+                        f"(門檻 {settings.zmq_stale_ms:.0f})"
+                    )
+                else:
+                    logger.warning(f"{tag} {elapsed:.0f}s 內未收到任何幀")
+                window_ages.clear()
+                last_report = now_mono
+
             if age_ms > settings.zmq_stale_ms:
                 drop_count += 1
                 logger.debug(
@@ -88,9 +116,6 @@ def _source_worker(
                 logger.warning(f"{tag} on_frame error (continuing): {e}")
                 continue
             recv_count += 1
-
-            if recv_count % 100 == 0:
-                logger.info(f"{tag} recv={recv_count}, stale_drop={drop_count}")
 
     finally:
         sock.close()

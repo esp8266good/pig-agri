@@ -17,20 +17,11 @@ for _mod in [
 
 def _make_pipeline():
     from inference.pipeline import InferencePipeline
-    p = InferencePipeline.__new__(InferencePipeline)
-    p._latest = {}
-    p._lock = threading.Lock()
-    p._detector = None
-    p._reid = None
-    p._tracker_pool = None
-    p._executor = None
-    p._loop_thread = None
-    p._running = False
+    # 走真正的 __init__（它只建 dict／lock，沒有重量級初始化——重的東西都在
+    # start()）。原本用 __new__ 逐一手設欄位，每次 pipeline 多一個狀態欄位就
+    # 會有一批測試因為 AttributeError 而爆掉，且失敗訊息完全指不到真正的原因。
+    p = InferencePipeline()
     p._active = True
-    p._event_loop = None
-    p._broadcast_fn = None
-    p._last_processed_fid = {}
-    p._stale_streak = {}
     return p
 
 

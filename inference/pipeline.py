@@ -49,9 +49,16 @@ STALE_TICKS_BEFORE_AGING: int = 5
 
 class InferencePipeline:
     LOOP_INTERVAL: float = 0.1
+    # 處理統計的輸出間隔（秒）。60s 夠密到能看出「哪一刻開始不動」，
+    # 又不會把 log 洗掉。
+    STATS_INTERVAL: float = 60.0
 
     def __init__(self) -> None:
         self._latest: dict[str, FrameData] = {}
+        # 觀測用計數：每支 camera 這段期間有幾個 tick 拿到新幀 / 幾個 tick 是停滯。
+        self._fresh_ticks: dict[str, int] = {}
+        self._stale_ticks: dict[str, int] = {}
+        self._stats_since: float = time.monotonic()
         # 每支 camera 上一輪「實際處理過」的 frame_id。ZMQ 送幀停滯時 _latest 會卡住
         # 同一張凍結幀，若不比對就會每 100ms 重跑 detect→track→write，把單一幀灌進 DB
         # 上百萬列、汙染活動量計算（根因見 docs/handoff-tracking-gap-2026-07-20.md）。
@@ -126,11 +133,39 @@ class InferencePipeline:
         tracker 皆不呼叫，GPU 閒置）。執行緒間僅單一 bool 寫入，無需鎖。"""
         self._active = active
 
+    def _log_stats(self) -> None:
+        """每 STATS_INTERVAL 秒印一次每支 camera 的處理統計。
+
+        在這之前，「幀有進來」（zmq_receiver）與「DB 有列」之間是全黑的：
+        某支 camera 整天沒資料時，看不出是沒收到幀、被凍結防護跳過、還是
+        推論被 _active 關掉。這三種的處置完全不同，用猜的會一直猜錯。
+        """
+        now = time.monotonic()
+        if now - self._stats_since < self.STATS_INTERVAL:
+            return
+        elapsed = now - self._stats_since
+        parts = []
+        for cam in sorted(set(self._fresh_ticks) | set(self._stale_ticks)):
+            fresh = self._fresh_ticks.get(cam, 0)
+            stale = self._stale_ticks.get(cam, 0)
+            parts.append(
+                f"{cam}: fresh={fresh}({fresh / elapsed:.1f}/s) stale={stale} "
+                f"fid={self._last_processed_fid.get(cam)}"
+            )
+        logger.info(
+            f"[inference] active={self._active} {elapsed:.0f}s | "
+            + " | ".join(parts or ["(無 camera 送幀)"])
+        )
+        self._fresh_ticks.clear()
+        self._stale_ticks.clear()
+        self._stats_since = now
+
     def _loop(self) -> None:
         while self._running:
             time.sleep(self.LOOP_INTERVAL)
             with self._lock:
                 snapshot = dict(self._latest)
+            self._log_stats()   # 空 snapshot 也要印，否則「完全沒幀」時一樣是全黑
             if not snapshot:
                 continue
             self._process_batch(snapshot)
@@ -154,6 +189,7 @@ class InferencePipeline:
             # tracker，不擾動健康軌跡的 hit_streak／frame_count。
             stale_futures = []
             for cam in stale_cams:
+                self._stale_ticks[cam] = self._stale_ticks.get(cam, 0) + 1
                 self._stale_streak[cam] = self._stale_streak.get(cam, 0) + 1
                 if self._stale_streak[cam] < STALE_TICKS_BEFORE_AGING:
                     continue
@@ -177,6 +213,7 @@ class InferencePipeline:
                 for c, fd in zip(cameras, frames):
                     self._last_processed_fid[c] = fd.frame_id
                     self._stale_streak[c] = 0
+                    self._fresh_ticks[c] = self._fresh_ticks.get(c, 0) + 1
 
                 # ReID: GPU sequential
                 all_id_feats: list[np.ndarray] = []
