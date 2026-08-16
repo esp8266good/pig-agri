@@ -5,12 +5,22 @@ import { clearPigSelection, renderPigStatus, updateVodAnomalyMap, refreshAnomaly
 // 允許採用「擷取時間略晚於畫面時間」的 bbox（PDT 內插與 WS 抵達的抖動）。
 const BBOX_MATCH_TOLERANCE = 0.5;
 
-// tracker 整幀吐不出已確認軌跡（objects 空陣列）時，最多回頭沿用這麼舊的
-// 一批框。實測遠端相機兩筆 bbox 之間的空洞 p90 是 4~11.5 秒，窗口小於它
-// 就會在大洞中途把框收掉——那正是「低頻閃爍」的來源。取 15 秒蓋掉 p90；
-// 期間畫面本來就是同一張凍結影像（見下方零階保持說明），豬並沒有移動，
-// 所以沿用不會讓框跑掉。超過就誠實留白。
-const BBOX_EMPTY_HOLD_SECONDS = 15.0;
+// tracker 整幀吐不出已確認軌跡（objects 空陣列）時回頭沿用舊框。
+//
+// 固定窗口不管取多大都會留下一個「突然不見」的瞬間，只是把它推遠——實測
+// 空洞 p90 是 4~11.5 秒、最大到 34 秒，取 15 秒仍會在長尾斷掉。改成透明度
+// 隨沿用時間連續遞減：沿用愈久畫得愈淡，資訊愈不可靠這件事直接反映在視覺上，
+// 過程中沒有任何一刻是「突然消失」。
+//
+// 為什麼敢沿用這麼久：空洞期間沒有新幀，HLS writer 會重送同一張影像（見下方
+// 零階保持說明），螢幕上的畫面根本沒變，框也就沒有跑掉。淡化表達的是「無法
+// 確認 tracker 是否仍認得這些豬」，不是「框的位置可能錯了」。
+const BBOX_HELD_ALPHA_NEW = 0.5;    // 剛開始沿用時的透明度
+const BBOX_HELD_ALPHA_OLD = 0.15;   // 淡到底的透明度（仍看得見輪廓）
+const BBOX_FADE_SECONDS = 30.0;     // 從 NEW 淡到 OLD 所需秒數
+// 超過這麼久就完全不畫。涵蓋觀測到的最長空洞（34 秒）仍有餘裕；再久代表
+// 不是空洞而是真的斷了，這時留白才誠實。
+const BBOX_EMPTY_HOLD_SECONDS = 60.0;
 
 // 最後一次收到「非空」偵測的擷取時間，用來讓豬隻清單／計數在空訊息時沿用
 // 而不是跟著閃。切換攝影機／進 VOD 時和 bboxHistory 一起歸零。
@@ -338,7 +348,8 @@ function drawBoxes() {
   // only if PDT is unavailable; that estimate misses the server-side
   // pipeline delay (buffer + encode + segmentation) and runs ~3-5s ahead.
   let displayBoxes = S.latestBoxes;
-  let isHeldFrame = false;   // 這批框是沿用舊觀測（畫的時候淡化）
+  // 這批框沿用了多久（秒）。null = 不是沿用的（即時觀測或零階保持）。
+  let heldAgeSec = null;
   if (S.isLive && S.bboxHistory.length) {
     let targetTs = null;
     let dbgSrc = 'latest';
@@ -376,13 +387,18 @@ function drawBoxes() {
         for (const entry of S.bboxHistory) {
           if (!entry.boxes.length) continue;
           if (entry.ts > cur.ts) continue;
-          if (cur.ts - entry.ts > BBOX_EMPTY_HOLD_SECONDS) continue;
+          // 一律以「畫面時間」量距離，與下面淡化用的 heldAgeSec 同一把尺；
+          // 用 cur.ts 量會在長時間沒有新觀測時和淡化脫節（切掉的時機與淡到
+          // 底的時機對不上）。
+          if (targetTs - entry.ts > BBOX_EMPTY_HOLD_SECONDS) continue;
           if (!held || entry.ts > held.ts) held = entry;
         }
         if (held) {
           displayBoxes = held.boxes;
           chosenTs = held.ts;
-          isHeldFrame = true;
+          // 用畫面時間而非 cur.ts 量沿用時長：使用者實際感受到的「這批框放
+          // 多久了」是相對於眼前的畫面，不是相對於最後一筆空觀測。
+          heldAgeSec = Math.max(0, targetTs - held.ts);
         }
       }
     }
@@ -434,7 +450,12 @@ function drawBoxes() {
     ctx.save();
     if (dimmed) ctx.globalAlpha = 0.25;
     // 沿用的框畫淡一點；與 dimmed 疊加時取較小值，不會反而變亮。
-    if (isHeldFrame) ctx.globalAlpha = Math.min(ctx.globalAlpha, 0.5);
+    if (heldAgeSec != null) {
+      // 沿用愈久畫得愈淡，連續遞減不會有「突然消失」的瞬間。
+      const t = Math.min(1, heldAgeSec / BBOX_FADE_SECONDS);
+      const a = BBOX_HELD_ALPHA_NEW + (BBOX_HELD_ALPHA_OLD - BBOX_HELD_ALPHA_NEW) * t;
+      ctx.globalAlpha = Math.min(ctx.globalAlpha, a);
+    }
     if (isSel)  ctx.lineWidth = 4;
 
     ctx.strokeStyle = color;
