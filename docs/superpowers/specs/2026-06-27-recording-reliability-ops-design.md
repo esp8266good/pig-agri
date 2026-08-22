@@ -10,7 +10,7 @@
 
 1. **錄影偶爾突然停止，需重啟程式才恢復**（已確認**白天也會發生**，與夜間 no-record 排程無關 → 存在真實 bug）。
 2. 需確認「最低可用空間」偵測的是**影像儲存碟**而非只看系統碟。
-3. RAMFS（ephemeral）狀態下發生告警或錄影異常時，希望用 **ntfy** 推播到手機（endpoint：`https://ntfy.ed716.duckdns.org/pig`）。
+3. RAMFS（ephemeral）狀態下發生告警或錄影異常時，希望用 **ntfy** 推播到手機（endpoint：`https://ntfy.example.com/your-topic`）。
 4. 夜間希望可選擇**停止調用 GPU 運算**省電。
 
 本 spec 涵蓋四者：`#1` 為核心修復，`#2` 為確認（無需改 code），`#3`/`#4` 為附加功能。順序 `#1 → #3 → #4`（`#3` 依賴 `#1` 產生的錄影停止/恢復事件）。
@@ -100,7 +100,7 @@
 
 ### 5.4 設定
 
-`config.py` 新增：`ntfy_url`（預設 `https://ntfy.ed716.duckdns.org/pig`）、`ntfy_enabled`（預設 True；URL 空時實際停用）。皆 DB-backed（`routers/settings.py` `ALLOWED_KEYS` + 前端面板），storage loop / 推播點每次讀 DB 即時生效。
+`config.py` 新增：`ntfy_url`（預設 `https://ntfy.example.com/your-topic`）、`ntfy_enabled`（預設 True；URL 空時實際停用）。皆 DB-backed（`routers/settings.py` `ALLOWED_KEYS` + 前端面板），storage loop / 推播點每次讀 DB 即時生效。
 
 ---
 
@@ -129,7 +129,7 @@
 
 | key | 預設 | 消費點 | 生效延遲 |
 |---|---|---|---|
-| `ntfy_url` | `https://ntfy.ed716.duckdns.org/pig` | `_storage_alert` / 推播點 | 即時（每次讀） |
+| `ntfy_url` | `https://ntfy.example.com/your-topic` | `_storage_alert` / 推播點 | 即時（每次讀） |
 | `ntfy_enabled` | True | 同上 | 即時 |
 | `gpu_off_schedule_enabled` | False | storage loop tick → inference 旗標 | ≤20s |
 | `gpu_off_start` | `"22:00"` | 同上 | ≤20s |

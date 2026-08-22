@@ -7,7 +7,7 @@ _BASE = dict(
 
 _SAMPLE_SOURCES = (
     "rpi_local:192.168.50.5:5555:rpi_sensors:cam_01;"
-    "rpi_tailscale:100.67.51.73:5555:rpi_sensors:rpi_sensors"
+    "rpi_tailscale:100.64.0.2:5555:rpi_sensors:rpi_sensors"
 )
 
 
@@ -108,7 +108,8 @@ def test_storage_and_encoder_defaults():
 def test_new_ops_settings_defaults():
     from config import Settings
     s = Settings(_env_file=None)
-    assert s.ntfy_url == "https://ntfy.ed716.duckdns.org/pig"
+    # 預設留空＝不推播。真正的 topic 只在 .env / DB，不進版控（repo 是公開的）。
+    assert s.ntfy_url == ""
     assert s.ntfy_enabled is True
     assert s.gpu_off_schedule_enabled is False
     assert s.gpu_off_start == "22:00"

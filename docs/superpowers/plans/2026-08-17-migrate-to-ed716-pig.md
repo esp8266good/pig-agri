@@ -40,7 +40,7 @@
    `~/.config/systemd/user/`**，避免現在就被啟動。切換當天再 `cp` + `enable --now`。
 
 10. ✅ Tailscale 已加入 tailnet，`ed716-pig` = `100.104.167.102`；兩台相機
-    （`100.77.97.67`、`100.67.51.73`）的 5555 都通。
+    （`100.64.0.1`、`100.64.0.2`）的 5555 都通。
 11. ✅ postgres 走 `docker compose` 起來，`init.sql` 建好 5 張表。
 12. ✅ **服務已經在遠端跑起來，開機自啟動也裝好了**（`~/.config/systemd/user/
     pig-agri-tmux.service`，`enabled` + `active`，`Linger=yes`）。四路 ZMQ 都在
@@ -202,14 +202,14 @@ sudo loginctl enable-linger chen    # 目前 Linger=no
    - `HLS_BASE_DIR` → 遠端沒有 1TB HDD，要重新決定放哪（見下面「未決事項」）
    - `MODEL_WEIGHTS` / `MODEL_CONFIG_PATH` → 相對路徑不用改，`ref/` 已就位
    - `MOT_WORKER_THREADS` → 12 改成 6~8
-2. **Tailscale** — 相機是 `100.77.97.67`（rpi-rgbt-edge-01）與 `100.67.51.73`（nycu），
+2. **Tailscale** — 相機是 `100.64.0.1`（rpi-rgbt-edge-01）與 `100.64.0.2`（nycu），
    都在 tailnet `nycu716rgbt@` 裡。遠端沒裝 Tailscale，裝完要加入同一個 tailnet
    才連得到 ZMQ source：
    ```bash
    curl -fsSL https://tailscale.com/install.sh | sh
    sudo tailscale up            # 需要瀏覽器授權
    ```
-   驗證：`nc -vz 100.77.97.67 5555`
+   驗證：`nc -vz 100.64.0.1 5555`
 3. **DB 資料** — 要不要把歷史 tracking / 體溫資料一起搬？搬的話：
    ```bash
    # 舊機

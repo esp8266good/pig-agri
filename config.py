@@ -82,7 +82,10 @@ class Settings(BaseSettings):
     recording_off_end: str = "06:30"
 
     # ── ntfy 推播通知（ops/儲存異常 → 手機）────────────────────
-    ntfy_url: str = "https://ntfy.ed716.duckdns.org/pig"
+    # 預設留空＝不推播（ntfy_notifier.notify 對空 url 直接 no-op）。
+    # 真正的 topic 只放在未追蹤的 .env 與 DB 裡：這個 repo 是公開的，
+    # 而 ntfy 的 topic 本身就是密碼，寫進版控等於公開它。
+    ntfy_url: str = ""
     ntfy_enabled: bool = True
     # 錄影監督者重建串流的推播優先級（flaky 攝影機可能較頻，可在前端調低避免吵）。
     # 值為 ntfy priority 字串：min / low / default / high / urgent。
@@ -125,7 +128,7 @@ class Settings(BaseSettings):
 
     # ── ZMQ Multi-Source ───────────────────────────────────────
     # 格式：name:host:port:src_topic:label  多個 source 以分號分隔
-    # 範例：rpi_local:192.168.50.5:5555:rpi_sensors:cam_01;rpi_tailscale:100.67.51.73:5555:rpi_sensors:rpi_sensors
+    # 範例：rpi_local:192.168.50.5:5555:rpi_sensors:cam_01;rpi_tailscale:100.64.0.2:5555:rpi_sensors:rpi_sensors
     zmq_sources: List[ZmqSource] = []
     zmq_warmup_secs: float = 0.5   # slow joiner warm-up（秒）
     zmq_stale_ms: float = 500.0    # 幀過期門檻（毫秒）

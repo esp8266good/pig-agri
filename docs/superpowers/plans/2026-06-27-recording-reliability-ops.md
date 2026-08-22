@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - spec：`docs/superpowers/specs/2026-06-27-recording-reliability-ops-design.md`
-- ntfy 預設 endpoint：`https://ntfy.ed716.duckdns.org/pig`（精確字串，勿改）
+- ntfy 預設 endpoint：`https://ntfy.example.com/your-topic`（精確字串，勿改）
 - 新設定預設值（精確）：`ntfy_enabled=True`、`gpu_off_schedule_enabled=False`、`gpu_off_start="22:00"`、`gpu_off_end="06:00"`
 - DB-backed 設定即時生效模式：沿用既有「storage loop 每輪讀 DB」與 settings router `ALLOWED_KEYS`，**不新增 reload 機制**。
 - 既有 live DB 無 migration 系統：`sql/init.sql` 只在首次初始化跑，新 seed 用 `ON CONFLICT DO NOTHING`。
@@ -38,7 +38,7 @@
 def test_new_ops_settings_defaults():
     from config import Settings
     s = Settings(_env_file=None)
-    assert s.ntfy_url == "https://ntfy.ed716.duckdns.org/pig"
+    assert s.ntfy_url == "https://ntfy.example.com/your-topic"
     assert s.ntfy_enabled is True
     assert s.gpu_off_schedule_enabled is False
     assert s.gpu_off_start == "22:00"
@@ -57,7 +57,7 @@ Expected: FAIL（`AttributeError` 或預設值不符）
 ```python
 
     # ── ntfy 推播通知（ops/儲存異常 → 手機）────────────────────
-    ntfy_url: str = "https://ntfy.ed716.duckdns.org/pig"
+    ntfy_url: str = "https://ntfy.example.com/your-topic"
     ntfy_enabled: bool = True
 
     # ── 夜間停 GPU 省電（獨立排程；預設關閉，零行為改變）────────
@@ -1171,7 +1171,7 @@ INSERT INTO user_settings (key, value, updated_at) VALUES
     ('analysis_interval_minutes', '30', NOW()),
     ('anomaly_std_threshold', '3.0', NOW()),
     ('hls_retention_days', '90', NOW()),
-    ('ntfy_url', 'https://ntfy.ed716.duckdns.org/pig', NOW()),
+    ('ntfy_url', 'https://ntfy.example.com/your-topic', NOW()),
     ('ntfy_enabled', 'true', NOW()),
     ('gpu_off_schedule_enabled', 'false', NOW()),
     ('gpu_off_start', '22:00', NOW()),

@@ -82,7 +82,10 @@ set -uo pipefail
 
 SESSION_NAME="pig-agri"
 WORKING_DIRECTORY="__PIG_DIR__"
-NTFY_URL="https://ntfy.ed716.duckdns.org/pig"
+# ⚠ 換成你自己的 ntfy topic。topic 本身就是密碼（沒有第二層驗證），
+# 知道它的人可以讀你全部的告警、也可以往你手機灌推播。
+# 這個 repo 是公開的，真值不要寫回這裡，改寫進未追蹤的 .env 或前端設定。
+NTFY_URL="https://ntfy.example.com/your-topic"
 # 標題帶主機名：多台機器可能共用同一個 ntfy topic，不標機器就分不出是誰在叫。
 # 放最前面是因為手機通知的標題從尾巴截斷。
 NTFY_HOSTNAME="$(hostname)"
@@ -396,7 +399,7 @@ curl \
   -H 'Title: pig-agri manual test' \
   -H 'Tags: white_check_mark' \
   --data-binary 'pig-agri ntfy notification test succeeded.' \
-  'https://ntfy.ed716.duckdns.org/pig'
+  'https://ntfy.example.com/your-topic'
 ```
 
 ### 5. 測試異常重啟
@@ -558,7 +561,7 @@ systemctl --user restart pig-agri-tmux.service
 ```bash
 curl -v \
   --data-binary 'manual connectivity test' \
-  'https://ntfy.ed716.duckdns.org/pig'
+  'https://ntfy.example.com/your-topic'
 ```
 
 同時檢查 DNS、TLS 憑證、防火牆與 ntfy 伺服器是否可達。即使通知發送失敗，腳本仍會繼續嘗試重啟 Uvicorn，避免通知系統故障拖垮主要服務。

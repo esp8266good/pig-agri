@@ -252,7 +252,7 @@ def test_validate_setting_rejects_bad_values(key, value):
     ("temp_anomaly_enabled", "true"),
     ("recording_schedule_enabled", "false"),
     ("ntfy_revive_priority", "default"),
-    ("ntfy_url", "https://ntfy.ed716.duckdns.org/pig"),
+    ("ntfy_url", "https://ntfy.example.com/your-topic"),
     ("ntfy_url", ""),                     # 空＝不推播，合法
     ("storage_volume_marker", ""),        # 空＝不檢查標記，合法
     ("storage_volume_marker", ".pig_disk"),
