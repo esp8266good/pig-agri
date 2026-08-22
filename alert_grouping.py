@@ -66,11 +66,43 @@ def fold_alerts(
     return groups
 
 
-def fold_cursor(group: Optional[dict]) -> Optional[tuple[float, int]]:
-    """一個群組的 keyset cursor：它最舊的那筆告警的 (時間, id)。
-
-    下一頁從嚴格早於這個位置的地方接續，所以群組不會被切成兩頁。
-    """
-    if group is None:
-        return None
+def _oldest_member(group: dict) -> tuple[float, int]:
+    """群組裡最舊那筆告警的 keyset 位置。"""
     return (group["first_triggered_at_unix"], group["alert_ids"][-1])
+
+
+def _newest_member(group: dict) -> tuple[float, int]:
+    return (group["triggered_at_unix"], group["id"])
+
+
+def page_groups(
+    groups: list[dict],
+    limit: int,
+) -> tuple[list[dict], Optional[tuple[float, int]]]:
+    """切出一頁，並回傳「下一頁要從哪裡接續」的 keyset cursor。
+
+    不能只拿第 limit 個群組的最舊成員當 cursor。群組是依「最新成員」排序的，
+    而一個橫跨數小時的群組，它最舊的成員可能比後面好幾個群組都還舊；
+    cursor 取得不夠舊，那些老成員就會在下一頁被重新撈出來，變成同一筆告警出現兩次。
+
+    正確的 cursor 是「本頁所有成員裡最舊的那一筆」。但把 cursor 往舊的方向移之後，
+    原本排在 limit 之外、卻比 cursor 新的群組就會兩頁都碰不到（第一頁沒收、
+    第二頁又因為比 cursor 新而被濾掉），所以本頁必須跟著擴張把它們收進來。
+    擴張會讓 cursor 再變舊，因此是一個迴圈，直到不再有群組需要收為止。
+    群組依最新成員遞減排列，所以「比 cursor 新」的群組永遠是一段前綴，迴圈必定收斂。
+    """
+    if len(groups) <= limit:
+        return groups, None
+
+    k = max(limit, 1)
+    while True:
+        cut = min(_oldest_member(g) for g in groups[:k])
+        j = k
+        while j < len(groups) and _newest_member(groups[j]) > cut:
+            j += 1
+        if j == k:
+            return groups[:k], cut
+        k = j
+        if k >= len(groups):
+            # 收集到的群組全部落在 cursor 之後：整批回傳，cursor 用全體最舊的位置。
+            return groups, min(_oldest_member(g) for g in groups)

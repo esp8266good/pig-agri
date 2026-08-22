@@ -101,3 +101,68 @@ def test_groups_keep_descending_time_order():
     groups = fold_alerts(rows)
     assert [g["triggered_at_unix"] for g in groups] == [
         BASE_TS, BASE_TS - 7 * 3600, BASE_TS - 14 * 3600]
+
+
+# ── 分頁邊界 ─────────────────────────────────────────────────────────
+# 實機發現的 bug：群組依「最新成員」排序，但一個橫跨數小時的群組，它最舊的成員
+# 可能比後面好幾個群組都還舊。cursor 若只看「最後一個回傳群組的最舊成員」，
+# 前面那個長跨距群組的老成員就落在 cursor 之外，下一頁會再抓一次 → 同一筆告警
+# 出現在兩頁。單元測試當初沒抓到，是因為假資料裡沒有長短群組交錯的情形。
+from alert_grouping import page_groups
+
+
+def test_page_fits_returns_no_cursor():
+    groups = fold_alerts([_alert(2, BASE_TS), _alert(1, BASE_TS - 7 * 3600)])
+    page, cursor = page_groups(groups, limit=5)
+    assert len(page) == 2 and cursor is None
+
+
+def test_cursor_is_the_oldest_member_of_the_whole_page():
+    """長跨距群組排在前面、短群組排在後面：cursor 必須舊到把長群組的老成員也蓋住。"""
+    rows = [
+        _alert(4, BASE_TS,             object_id=85),   # 群組 A 最新
+        _alert(3, BASE_TS - 1 * 3600,  object_id=61),   # 群組 B（單筆）
+        _alert(2, BASE_TS - 5 * 3600,  object_id=85),   # 群組 A 最舊，比 B 還舊
+        _alert(1, BASE_TS - 20 * 3600, object_id=70),   # 群組 C
+    ]
+    page, cursor = page_groups(fold_alerts(rows), limit=2)
+    shown = {i for g in page for i in g["alert_ids"]}
+    assert 2 in shown, "群組 A 的老成員屬於本頁"
+    # cursor 就是本頁全部成員裡最舊的那一筆的位置
+    assert cursor == (BASE_TS - 5 * 3600, 2)
+
+
+def test_page_expands_to_cover_groups_newer_than_cursor():
+    """cut 變舊之後，原本排在 limit 之外、但比 cut 新的群組必須一起收進本頁，
+    否則它們既不在第一頁、又因為比 cursor 新而被第二頁跳過，直接消失。"""
+    rows = [
+        _alert(4, BASE_TS,             object_id=85),
+        _alert(3, BASE_TS - 1 * 3600,  object_id=61),
+        _alert(2, BASE_TS - 5 * 3600,  object_id=85),
+        _alert(1, BASE_TS - 20 * 3600, object_id=70),
+    ]
+    groups = fold_alerts(rows)
+    page, cursor = page_groups(groups, limit=1)
+    oids = [g["object_id"] for g in page]
+    assert 61 in oids, "群組 B 比 cursor 新，不收進本頁就會被兩頁都漏掉"
+
+
+def test_no_alert_appears_on_both_pages():
+    """端到端：把一頁的成員與下一頁的成員取交集，必須是空的。"""
+    rows = [
+        _alert(6, BASE_TS,             object_id=85),
+        _alert(5, BASE_TS - 1 * 3600,  object_id=61),
+        _alert(4, BASE_TS - 2 * 3600,  object_id=70),
+        _alert(3, BASE_TS - 5 * 3600,  object_id=85),
+        _alert(2, BASE_TS - 30 * 3600, object_id=61),
+        _alert(1, BASE_TS - 40 * 3600, object_id=70),
+    ]
+    groups = fold_alerts(rows)
+    page1, cursor = page_groups(groups, limit=2)
+    ids1 = {i for g in page1 for i in g["alert_ids"]}
+    rest = [r for r in rows
+            if (r["triggered_at_unix"], r["id"]) < cursor]
+    page2, _ = page_groups(fold_alerts(rest), limit=2)
+    ids2 = {i for g in page2 for i in g["alert_ids"]}
+    assert ids1 & ids2 == set(), f"重疊：{ids1 & ids2}"
+    assert ids1 | ids2 == {r["id"] for r in rows}, "也不能有告警兩頁都沒出現"
