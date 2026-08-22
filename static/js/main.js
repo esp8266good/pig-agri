@@ -2,6 +2,7 @@
 import { S, els, setStatus, setSkeleton } from './state.js';
 import { loadStream, loadVod, startLiveTimers, stopLiveTimers, detachVodListeners, exitVodState } from './player.js';
 import { loadTimeline, clearSelection, closeSlotActionMenu, closeDeleteModal, localDayStart } from './timeline.js';
+import { initMaskEditor, loadMaskRegions } from './mask.js';
 import { switchTab, onSortHeaderClick, refreshAnomalyMap, refreshNotifications, loadMoreNotifications, refreshFocusList, setFocusOnlyBoxes, loadSettings, loadBookmarks, closeBookmarkEditModal, openSettingsDrawer, closeSettingsDrawer, initSettingsDrawer, updateSoloHint } from './panels.js';
 import { enterGrid, leaveGrid, bindGridPick, getGridPlaybackHour } from './grid.js';
 import { ensureAuth } from './auth.js';
@@ -155,6 +156,7 @@ async function init() {
     const cachedCam = (() => { try { return localStorage.getItem('lastCamera'); } catch (_) { return null; } })();
     S.currentCamera = (cachedCam && cameras.includes(cachedCam)) ? cachedCam : cameras[0];
     els.camSelect.value = S.currentCamera;
+    loadMaskRegions();
     loadStream();
     const today = new Date();
     S.currentMonth = new Date(today.getFullYear(), today.getMonth(), 1);
@@ -186,6 +188,7 @@ async function init() {
   if (els.alertLoadMoreBtn) {
     els.alertLoadMoreBtn.addEventListener('click', () => loadMoreNotifications());
   }
+  initMaskEditor();
   if (els.focusOnlyChk) {
     // 勾選狀態存在 localStorage，所以要從 S 反向同步到 DOM，不能只信 HTML 的 checked。
     els.focusOnlyChk.checked = S.focusOnlyBoxes;
@@ -197,6 +200,7 @@ els.camSelect.addEventListener('change', () => {
   S.currentCamera = els.camSelect.value;
   try { localStorage.setItem('lastCamera', S.currentCamera); } catch (_) {}
   resetCameraState();
+  loadMaskRegions();
   loadStream();
   loadTimeline();
   startLiveTimers();

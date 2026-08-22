@@ -6,6 +6,13 @@ export const S = {
   currentCamera: null, currentType: 'rgb', animFrameId: null, isLive: true,
   currentMonth: null, selectedDay: null, monthHoursSet: new Set(),
   vodDebounceTimer: null, vodFetching: false, anomalyMap: {}, vodAlerts: [],
+  // 遮罩：目前相機的區域（正規化 0..1 座標），與編輯模式旗標。
+  maskRegions: [], maskEditing: false,
+  // 顯示遮罩範圍。預設關：遮罩正常運作時不需要看到它，一直蓋著色塊只會干擾看豬。
+  showMaskOverlay: (() => {
+    try { return localStorage.getItem('showMaskOverlay') === 'true'; }
+    catch (_) { return false; }
+  })(),
   // 關注清單：object_id → 'anomaly'|'lowest'|'reference'，由 /alerts/focus 每輪更新。
   focusLabels: {}, focusItems: [], focusStatus: 'ok',
   // 只畫關注清單的框。純視覺偏好，每個瀏覽器各自記。
