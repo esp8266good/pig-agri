@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 import database
-from alert_grouping import fold_alerts, fold_cursor
+from alert_grouping import fold_alerts, page_groups
 from config import settings as app_settings
 from focus_list import select_focus
 from analysis.scheduler import get_anomaly_cache
@@ -138,13 +138,13 @@ async def get_alerts(
         cur_ts = rows[-1]["triggered_at_unix"]
         cur_id = rows[-1]["id"]
 
-    has_more = len(groups) > limit
-    page = groups[:limit]
-    cursor = fold_cursor(page[-1]) if (has_more and page) else None
+    # cursor 的正確性見 alert_grouping.page_groups：不能只看最後一個群組，
+    # 長跨距的群組會讓同一筆告警在兩頁都出現。
+    page, cursor = page_groups(groups, limit)
     return {
         "alerts": page,
         "total": len(page),
-        "has_more": has_more,
+        "has_more": cursor is not None,
         "next_before_ts": cursor[0] if cursor else None,
         "next_before_id": cursor[1] if cursor else None,
     }

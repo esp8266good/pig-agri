@@ -7,12 +7,13 @@
 from focus_list import select_focus
 
 
-def _entry(activity, *, act_anom=False, temp_anom=False, herd_ok=True):
+def _entry(activity, *, act_anom=False, temp_anom=False, herd_ok=True,
+           analyzed=True):
     return {
         "activity_current": activity, "activity_mean": 10.0, "activity_std": 0.0,
         "activity_anomaly": act_anom, "temp_anomaly": temp_anom,
         "temp_current": None, "temp_mean": None, "temp_std": None,
-        "herd_ok": herd_ok,
+        "herd_ok": herd_ok, "analyzed": analyzed,
     }
 
 
@@ -109,3 +110,22 @@ def test_status_is_ok_when_herd_is_active():
     entries = {1: _entry(2.0), 2: _entry(30.0)}
     assert select_focus(entries, lowest_enabled=True, lowest_n=1,
                         top_n=1)["status"] == "ok"
+
+
+# ── 重啟後尚未分析 ───────────────────────────────────────────────────
+# scheduler 的 _loop 是先 sleep(interval) 再分析，所以重啟後最長要等一個
+# analysis_interval（預設 30 分鐘）才有第一筆結果。這段期間 herd_ok 是預設的
+# False，若不分開講就會誤報成「豬群活動量普遍偏低」，把使用者指向錯誤的結論。
+
+def test_never_analyzed_is_reported_separately_from_herd_low():
+    entries = {1: _entry(None, herd_ok=False, analyzed=False),
+               2: _entry(None, herd_ok=False, analyzed=False)}
+    r = select_focus(entries, lowest_enabled=True, lowest_n=3, top_n=3)
+    assert r["status"] == "not_analyzed"
+    assert r["items"] == []
+
+
+def test_one_analyzed_entry_is_enough_to_leave_the_not_analyzed_state():
+    entries = {1: _entry(2.0, analyzed=True), 2: _entry(None, analyzed=False)}
+    assert select_focus(entries, lowest_enabled=True, lowest_n=1,
+                        top_n=0)["status"] == "ok"

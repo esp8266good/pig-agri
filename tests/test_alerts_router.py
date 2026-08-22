@@ -264,9 +264,9 @@ def test_delete_by_ids_rejects_empty_list(alert_client):
 
 _FOCUS_CACHE = {"cam_01": {
     1: {"activity_current": 2.0, "activity_anomaly": False, "temp_anomaly": False,
-        "herd_ok": True},
+        "herd_ok": True, "analyzed": True},
     2: {"activity_current": 30.0, "activity_anomaly": False, "temp_anomaly": False,
-        "herd_ok": True},
+        "herd_ok": True, "analyzed": True},
 }}
 
 
@@ -312,7 +312,7 @@ def test_focus_unknown_camera_returns_empty(alert_client):
 def test_focus_reports_herd_low(alert_client):
     cache = {"cam_01": {
         1: {"activity_current": 0.4, "activity_anomaly": False,
-            "temp_anomaly": False, "herd_ok": False}}}
+            "temp_anomaly": False, "herd_ok": False, "analyzed": True}}}
     with patch("routers.alerts.get_anomaly_cache", return_value=cache), \
          patch("routers.alerts.get_all_settings", new_callable=AsyncMock,
                return_value={}):

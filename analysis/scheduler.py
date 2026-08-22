@@ -25,6 +25,10 @@ def _default_entry() -> dict:
         # 全欄是否有評估依據。per-camera 的判斷存在 per-object 的 entry 裡，
         # 沿用 activity_mean 的既有做法；關注清單要靠它決定給不給名字。
         "herd_ok": False,
+        # 是否已經被分析過至少一次。_loop 是先 sleep 再分析，重啟後最長要等一個
+        # analysis_interval 才有第一筆結果；沒有這個旗標就分不出「全欄安靜」
+        # 與「還沒算過」，關注清單會在重啟後誤報。
+        "analyzed": False,
     }
 
 
@@ -212,6 +216,7 @@ class Scheduler:
 
                 entry["activity_mean"] = median_rate
                 entry["herd_ok"] = herd_ok
+                entry["analyzed"] = True
 
                 # 當 herd_ok 為 False（全欄休息 / 豬數不足 / median < abs_floor）時，
                 # 此區塊整個跳過——已在 alerted 的豬不會被自動清旗，

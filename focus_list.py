@@ -19,6 +19,9 @@ LABEL_REFERENCE = "reference"
 # 否則等於把那個保護作廢。
 STATUS_OK = "ok"
 STATUS_HERD_LOW = "herd_low"
+# 重啟後到第一輪分析完成之間。這段期間 herd_ok 還是預設的 False，
+# 不分開講的話會誤報成「豬群活動量普遍偏低」，把使用者指向錯誤的結論。
+STATUS_NOT_ANALYZED = "not_analyzed"
 
 
 def _item(object_id: int, entry: dict, label: str) -> dict:
@@ -64,6 +67,9 @@ def select_focus(
     # herd_ok 由 scheduler 每輪寫進每個 entry（它是 per-camera 的判斷，
     # 但 cache 的形狀是 per-object，沿用 activity_mean 的既有做法）。
     herd_ok = any(e.get("herd_ok") for _, e in pairs) if pairs else True
+
+    if pairs and not any(e.get("analyzed") for _, e in pairs):
+        return {"status": STATUS_NOT_ANALYZED, "items": []}
 
     if not anomalies and not herd_ok:
         # 沒有評估依據，也沒有還沒解除的舊警報：整份清單讓位給狀態訊息。
