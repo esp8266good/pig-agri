@@ -19,7 +19,10 @@ COOKIE_NAME = "pig_session"
 # /static 整包公開是刻意的：登入頁就是前端 app 的一部分，且裡面沒有任何秘密
 # （帳密只在後端比對，JS 只負責把使用者輸入 POST 出去）。真正要保護的是
 # /tracking、/alerts、/storage、/stream、/settings 這些資料與破壞性端點。
-_PUBLIC_EXACT = frozenset({"/", "/health", "/auth/login", "/auth/logout", "/auth/status"})
+# /manual 刻意公開：有人卡在登入頁時，手冊正好是他該看的東西，
+# 而且手冊裡不含任何場域資料。
+_PUBLIC_EXACT = frozenset({"/", "/health", "/manual",
+                           "/auth/login", "/auth/logout", "/auth/status"})
 _PUBLIC_PREFIX = ("/static/",)
 
 

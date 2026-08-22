@@ -8,6 +8,8 @@ export const S = {
   vodDebounceTimer: null, vodFetching: false, anomalyMap: {}, vodAlerts: [],
   // 遮罩：目前相機的區域（正規化 0..1 座標），與編輯模式旗標。
   maskRegions: [], maskEditing: false,
+  // 說明模式：點任何東西只顯示用途、不執行。觸控裝置沒有 hover，靠這個補。
+  helpMode: false,
   // 顯示遮罩範圍。預設關：遮罩正常運作時不需要看到它，一直蓋著色塊只會干擾看豬。
   showMaskOverlay: (() => {
     try { return localStorage.getItem('showMaskOverlay') === 'true'; }

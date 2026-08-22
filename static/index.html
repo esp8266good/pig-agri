@@ -135,6 +135,9 @@
     <div class="header-status">
       <button class="icon-btn" id="bell-btn" aria-label="通知中心">
         <svg class="icon"><use href="#i-bell"/></svg><span id="bell-badge" style="display:none">0</span></button>
+      <button class="icon-btn" id="help-btn" aria-label="說明模式" aria-pressed="false">?</button>
+      <a class="icon-btn manual-link" id="manual-link" href="/manual" target="_blank"
+         rel="noopener" aria-label="操作手冊" title="操作手冊（另開分頁）">手冊</a>
       <button class="icon-btn" id="settings-btn" aria-label="設定">
         <svg class="icon"><use href="#i-gear"/></svg></button>
       <!-- 只有 AUTH_ENABLED=true 時 auth.js 才會取消 hidden -->
@@ -322,6 +325,7 @@
     </aside>
   </main>
 
+  <div id="help-sheet" role="status" aria-live="polite" hidden></div>
   <div id="settings-overlay" hidden></div>
   <aside id="settings-drawer" aria-label="系統設定" hidden>
     <div class="drawer-head">

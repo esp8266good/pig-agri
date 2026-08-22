@@ -929,6 +929,28 @@
     .mark-read-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
     .mark-read-btn:disabled { opacity: 0.4; cursor: default; }
     .notif-empty { color: var(--text-faint); font-style: italic; padding: var(--space-3); text-align: center; }
+    /* ── 說明模式 ───────────────────────────────────────────── */
+    /* 開啟時整頁降一點對比，明示「現在點東西不會有事」。 */
+    body.help-mode .layout { filter: saturate(0.55) brightness(0.92); }
+    body.help-mode [data-help] { outline: 1px dashed var(--accent); outline-offset: 2px; }
+    body.help-mode { cursor: help; }
+    #help-btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+    #help-sheet {
+      position: fixed; left: 0; right: 0; bottom: 0; z-index: 60;
+      padding: var(--space-3) var(--space-4);
+      background: var(--surface-2);
+      border-top: 1px solid var(--accent);
+      color: var(--text);
+      font-size: var(--text-sm);
+      line-height: 1.6;
+      /* 手機上是最可靠的呈現位置：不必算浮層座標，也不會被鍵盤或瀏覽器工具列蓋掉 */
+      max-height: 40vh; overflow-y: auto;
+    }
+    .manual-link {
+      display: inline-flex; align-items: center;
+      font-size: var(--text-xs); text-decoration: none;
+    }
+
     /* ── 遮罩編輯器 ─────────────────────────────────────────── */
     #mask-canvas {
       position: absolute; inset: 0;
