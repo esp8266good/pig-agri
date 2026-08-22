@@ -54,16 +54,18 @@
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
     body {
-      /* 底部的固定面板（說明條、時間軸多選操作列）會蓋住頁面最後一段內容。
-         --bottom-inset 由 state.js 依目前可見的面板高度即時寫入。 */
-      padding-bottom: var(--bottom-inset, 0px);
       font-family: var(--font-body);
       font-size: var(--text-sm);
       color: var(--text);
       background: var(--bg);
       min-height: 100dvh;
       display: block;
-      padding: 0;
+      /* 底部的固定面板（說明條、時間軸多選操作列）會蓋住頁面最後一段內容。
+         --bottom-inset 由 state.js 依目前可見的面板高度即時寫入。
+         ⚠ 一定要寫在 padding 簡寫裡，不能另外寫一行 padding-bottom：
+         同一個規則裡後面的 `padding: 0` 簡寫會把它重設回 0，
+         而且 computed 值看起來就是 0px，完全看不出是被誰蓋掉的。 */
+      padding: 0 0 var(--bottom-inset, 0px);
     }
     button { cursor: pointer; border: none; background: none; font: inherit; color: inherit; }
     select { font: inherit; }
