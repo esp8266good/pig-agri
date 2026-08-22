@@ -265,6 +265,15 @@
         </div>
 
         <div id="tab-pig-status" class="tab-content active">
+          <section id="focus-section" aria-label="關注清單">
+            <div id="focus-header">
+              <h4>關注清單</h4>
+              <label class="focus-only-toggle">
+                <input type="checkbox" id="focus-only-checkbox" checked> 只畫這些框
+              </label>
+            </div>
+            <ul id="focus-list"></ul>
+          </section>
           <label class="solo-toggle">
             <input type="checkbox" id="solo-checkbox"> 只顯示選取的豬
             <span id="solo-hint" class="solo-hint" hidden>← 需先點選下方豬隻列（僅 LIVE 生效）</span>
@@ -342,6 +351,23 @@
           <div class="settings-field">
             <label for="set-anomaly-threshold">異常閾值（σ，≥ 1.0）</label>
             <input type="number" id="set-anomaly-threshold" min="1.0" step="0.1">
+          </div>
+        </div>
+      </section>
+      <section class="settings-group">
+        <h3>關注清單</h3><p class="group-desc">右欄「現在該去看哪幾隻豬」。異常永遠優先；沒有異常時才列出活動量最低的幾隻。</p>
+        <div class="settings-form">
+          <div class="settings-field settings-field-row">
+            <label for="set-focus_lowest_enabled">沒有異常時列出最低活動量的豬</label>
+            <input type="checkbox" id="set-focus_lowest_enabled">
+          </div>
+          <div class="settings-field">
+            <label for="set-focus_lowest_n">列出幾隻（最低）</label>
+            <input type="number" id="set-focus_lowest_n" min="1" max="20" step="1">
+          </div>
+          <div class="settings-field">
+            <label for="set-focus_top_n">對照組幾隻（活動量最高，0 = 不顯示）</label>
+            <input type="number" id="set-focus_top_n" min="0" max="20" step="1">
           </div>
         </div>
       </section>

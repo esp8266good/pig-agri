@@ -258,3 +258,63 @@ def test_delete_by_ids_removes_every_member(alert_client):
 def test_delete_by_ids_rejects_empty_list(alert_client):
     resp = alert_client.request("DELETE", "/alerts/by-ids", json={"ids": []})
     assert resp.status_code == 400
+
+
+# ── 關注清單 ─────────────────────────────────────────────────────────
+
+_FOCUS_CACHE = {"cam_01": {
+    1: {"activity_current": 2.0, "activity_anomaly": False, "temp_anomaly": False,
+        "herd_ok": True},
+    2: {"activity_current": 30.0, "activity_anomaly": False, "temp_anomaly": False,
+        "herd_ok": True},
+}}
+
+
+def test_focus_uses_db_settings(alert_client):
+    with patch("routers.alerts.get_anomaly_cache", return_value=_FOCUS_CACHE), \
+         patch("routers.alerts.get_all_settings", new_callable=AsyncMock,
+               return_value={"focus_lowest_enabled": "true",
+                             "focus_lowest_n": "1", "focus_top_n": "0"}):
+        resp = alert_client.get("/alerts/focus?camera_id=cam_01")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["camera_id"] == "cam_01"
+    assert [(i["object_id"], i["label"]) for i in body["items"]] == [(1, "lowest")]
+
+
+def test_focus_top_n_zero_hides_reference(alert_client):
+    with patch("routers.alerts.get_anomaly_cache", return_value=_FOCUS_CACHE), \
+         patch("routers.alerts.get_all_settings", new_callable=AsyncMock,
+               return_value={"focus_lowest_enabled": "false",
+                             "focus_lowest_n": "3", "focus_top_n": "0"}):
+        resp = alert_client.get("/alerts/focus?camera_id=cam_01")
+    assert resp.json()["items"] == []
+
+
+def test_focus_falls_back_to_defaults_when_settings_unreadable(alert_client):
+    """DB 讀不到設定時退回預設值，清單少幾隻總比整個端點 500 好。"""
+    with patch("routers.alerts.get_anomaly_cache", return_value=_FOCUS_CACHE), \
+         patch("routers.alerts.get_all_settings", new_callable=AsyncMock,
+               side_effect=RuntimeError("db gone")):
+        resp = alert_client.get("/alerts/focus?camera_id=cam_01")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+
+
+def test_focus_unknown_camera_returns_empty(alert_client):
+    with patch("routers.alerts.get_anomaly_cache", return_value=_FOCUS_CACHE), \
+         patch("routers.alerts.get_all_settings", new_callable=AsyncMock,
+               return_value={}):
+        resp = alert_client.get("/alerts/focus?camera_id=cam_99")
+    assert resp.json()["items"] == []
+
+
+def test_focus_reports_herd_low(alert_client):
+    cache = {"cam_01": {
+        1: {"activity_current": 0.4, "activity_anomaly": False,
+            "temp_anomaly": False, "herd_ok": False}}}
+    with patch("routers.alerts.get_anomaly_cache", return_value=cache), \
+         patch("routers.alerts.get_all_settings", new_callable=AsyncMock,
+               return_value={}):
+        resp = alert_client.get("/alerts/focus?camera_id=cam_01")
+    assert resp.json()["status"] == "herd_low"

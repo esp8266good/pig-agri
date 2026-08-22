@@ -22,6 +22,9 @@ def _default_entry() -> dict:
         "activity_state": "normal", "temp_state": "normal",
         "activity_current": None, "activity_mean": None, "activity_std": None,
         "temp_current": None, "temp_mean": None, "temp_std": None,
+        # 全欄是否有評估依據。per-camera 的判斷存在 per-object 的 entry 裡，
+        # 沿用 activity_mean 的既有做法；關注清單要靠它決定給不給名字。
+        "herd_ok": False,
     }
 
 
@@ -208,6 +211,7 @@ class Scheduler:
                 rate = rates.get(object_id)
 
                 entry["activity_mean"] = median_rate
+                entry["herd_ok"] = herd_ok
 
                 # 當 herd_ok 為 False（全欄休息 / 豬數不足 / median < abs_floor）時，
                 # 此區塊整個跳過——已在 alerted 的豬不會被自動清旗，

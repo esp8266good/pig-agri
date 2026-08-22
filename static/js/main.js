@@ -2,7 +2,7 @@
 import { S, els, setStatus, setSkeleton } from './state.js';
 import { loadStream, loadVod, startLiveTimers, stopLiveTimers, detachVodListeners, exitVodState } from './player.js';
 import { loadTimeline, clearSelection, closeSlotActionMenu, closeDeleteModal, localDayStart } from './timeline.js';
-import { switchTab, onSortHeaderClick, refreshAnomalyMap, refreshNotifications, loadMoreNotifications, loadSettings, loadBookmarks, closeBookmarkEditModal, openSettingsDrawer, closeSettingsDrawer, initSettingsDrawer, updateSoloHint } from './panels.js';
+import { switchTab, onSortHeaderClick, refreshAnomalyMap, refreshNotifications, loadMoreNotifications, refreshFocusList, setFocusOnlyBoxes, loadSettings, loadBookmarks, closeBookmarkEditModal, openSettingsDrawer, closeSettingsDrawer, initSettingsDrawer, updateSoloHint } from './panels.js';
 import { enterGrid, leaveGrid, bindGridPick, getGridPlaybackHour } from './grid.js';
 import { ensureAuth } from './auth.js';
 
@@ -185,6 +185,11 @@ async function init() {
   }
   if (els.alertLoadMoreBtn) {
     els.alertLoadMoreBtn.addEventListener('click', () => loadMoreNotifications());
+  }
+  if (els.focusOnlyChk) {
+    // 勾選狀態存在 localStorage，所以要從 S 反向同步到 DOM，不能只信 HTML 的 checked。
+    els.focusOnlyChk.checked = S.focusOnlyBoxes;
+    els.focusOnlyChk.addEventListener('change', e => setFocusOnlyBoxes(e.target.checked));
   }
 }
 

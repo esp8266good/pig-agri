@@ -5,9 +5,12 @@ from pydantic import BaseModel
 
 import database
 from alert_grouping import fold_alerts, fold_cursor
+from config import settings as app_settings
+from focus_list import select_focus
 from analysis.scheduler import get_anomaly_cache
 from db_writer import (
     count_unread_alerts,
+    get_all_settings,
     delete_alert,
     delete_alerts_bulk,
     delete_alerts_by_ids,
@@ -37,6 +40,45 @@ async def get_active_alerts(camera_id: Optional[str] = None):
     if camera_id is not None:
         return {"cache": {camera_id: {str(k): v for k, v in cache.get(camera_id, {}).items()}}}
     return {"cache": {cam: {str(k): v for k, v in objs.items()} for cam, objs in cache.items()}}
+
+
+def _as_bool(v, default: bool) -> bool:
+    if v is None:
+        return default
+    return str(v).strip().lower() == "true"
+
+
+def _as_int(v, default: int) -> int:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return default
+
+
+@router.get("/focus")
+async def get_focus_list(camera_id: str):
+    """關注清單：現在該去看哪幾隻豬。
+
+    資料來源是 scheduler 的異常快取，跟豬隻狀態表格同源，所以兩邊的活動量一致。
+    DB 不可用時退回 app_settings 的預設值，清單少幾隻總比整個掛掉好。
+    """
+    cache = get_anomaly_cache().get(camera_id, {})
+    pool = database.get_pool()
+    if pool is None:
+        db = {}
+    else:
+        try:
+            db = await get_all_settings(pool)
+        except Exception:
+            db = {}
+    result = select_focus(
+        cache,
+        lowest_enabled=_as_bool(db.get("focus_lowest_enabled"),
+                                app_settings.focus_lowest_enabled),
+        lowest_n=_as_int(db.get("focus_lowest_n"), app_settings.focus_lowest_n),
+        top_n=_as_int(db.get("focus_top_n"), app_settings.focus_top_n),
+    )
+    return {"camera_id": camera_id, **result}
 
 
 @router.get("/count")

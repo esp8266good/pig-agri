@@ -160,6 +160,14 @@ class Settings(BaseSettings):
     # 體溫異常偵測總開關
     temp_anomaly_enabled: bool = True
 
+    # 關注清單：前端右欄「現在該去看哪幾隻豬」的列表。
+    # 最低 N 只在該相機零異常時才出現；對照 N 是活動量最高的幾隻，
+    # 用途只有一個——給人眼一個「正常長什麼樣」的參考點。
+    focus_lowest_enabled: bool = True
+    focus_lowest_n: int = 3
+    # 0 表示關閉對照組。不另給啟用開關：0 在這裡沒有語意歧義。
+    focus_top_n: int = 3
+
     # ── Validators ────────────────────────────────────────────
     @field_validator("zmq_sources", mode="before")
     @classmethod

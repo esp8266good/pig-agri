@@ -53,6 +53,9 @@ CREATE TABLE IF NOT EXISTS saved_segments (
 INSERT INTO user_settings (key, value, updated_at) VALUES
     ('analysis_interval_minutes', '30', NOW()),
     ('anomaly_std_threshold', '3.0', NOW()),
+    ('focus_lowest_enabled', 'true', NOW()),
+    ('focus_lowest_n', '3', NOW()),
+    ('focus_top_n', '3', NOW()),
     ('hls_retention_days', '90', NOW()),
     ('ntfy_url', 'https://ntfy.ed716.duckdns.org/pig', NOW()),
     ('ntfy_enabled', 'true', NOW()),

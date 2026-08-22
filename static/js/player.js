@@ -442,7 +442,16 @@ function drawBoxes() {
     const ph = h * scale;
     const anomaly     = S.anomalyMap[o.object_id];
     const isAnomalous = anomaly && (anomaly.activity_anomaly || anomaly.temp_anomaly);
-    const color       = isAnomalous ? '#ff4444' : baseColor;
+    // 關注清單的三種標籤各有顏色。零異常時畫面上仍然有橘框與綠框，
+    // 使用者才分得出「系統正常但沒事」與「系統掛了」。
+    const focusLabel  = S.focusLabels[o.object_id] ?? null;
+    // 只在 LIVE 套用「只畫關注清單」：VOD 沒有關注清單（那是當下的判斷），
+    // 在 VOD 濾掉非異常的框會讓沒有異常的時段整片空白，分不出系統壞了沒。
+    if (S.focusOnlyBoxes && S.isLive && !isAnomalous && !focusLabel) continue;
+    const color = isAnomalous ? '#ff4444'
+                : focusLabel === 'lowest'    ? '#ff9a3c'
+                : focusLabel === 'reference' ? '#3ecf8e'
+                : baseColor;
 
     // 選取強調：選取的框加粗全亮，其餘淡化（selectedObjectId 為 null 時不變）
     const isSel  = S.selectedObjectId != null && o.object_id === S.selectedObjectId;

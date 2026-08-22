@@ -88,6 +88,87 @@ async function saveBookmarkEdit() {
   finally { btn.disabled = false; }
 }
 
+// ── 關注清單 ──────────────────────────────────────────────
+// 挑選規則全在後端（focus_list.select_focus），前端只負責畫。
+const FOCUS_LABEL_TEXT = {
+  anomaly:   { text: '異常',  cls: 'focus-anomaly' },
+  lowest:    { text: '最低',  cls: 'focus-lowest' },
+  reference: { text: '對照',  cls: 'focus-reference' },
+};
+
+const FOCUS_STATUS_TEXT = {
+  // herd_ok=false：scheduler 既有的保護，整欄不做異常判定。
+  // 這時給名字就是給錯誤的指示，所以只說明狀態。
+  herd_low: '豬群活動量普遍偏低，暫不評估',
+  // 關注清單是「現在」的判斷，回放沒有這個概念。
+  vod: '回放中不評估關注清單',
+};
+
+function renderFocusList() {
+  if (!els.focusListEl) return;
+  els.focusListEl.innerHTML = '';
+  const statusMsg = FOCUS_STATUS_TEXT[S.focusStatus];
+  if (statusMsg) {
+    els.focusListEl.innerHTML = `<li class="focus-status">${statusMsg}</li>`;
+    return;
+  }
+  if (!S.focusItems.length) {
+    els.focusListEl.innerHTML = '<li class="focus-status">目前沒有需要注意的豬</li>';
+    return;
+  }
+  let refSeparatorDone = false;
+  for (const item of S.focusItems) {
+    const meta = FOCUS_LABEL_TEXT[item.label] ?? FOCUS_LABEL_TEXT.anomaly;
+    // 對照組的意義與前兩類相反，用分隔線隔開，混在同一串裡會誤導。
+    if (item.label === 'reference' && !refSeparatorDone) {
+      const sep = document.createElement('li');
+      sep.className = 'focus-separator';
+      sep.textContent = '正常的樣子（活動量最高）';
+      els.focusListEl.appendChild(sep);
+      refSeparatorDone = true;
+    }
+    const li = document.createElement('li');
+    li.className = `focus-item ${meta.cls}`;
+    li.dataset.oid = item.object_id;
+    const tag = document.createElement('span');
+    tag.className = 'focus-tag';
+    tag.textContent = meta.text;
+    const oid = document.createElement('span');
+    oid.className = 'focus-oid';
+    oid.textContent = `#${item.object_id}`;
+    const act = document.createElement('span');
+    act.className = 'focus-act';
+    act.textContent = item.activity != null ? `${item.activity.toFixed(1)} px/s` : '—';
+    li.append(tag, oid, act);
+    if (item.temp_anomaly) {
+      const t = document.createElement('span');
+      t.className = 'focus-icon';
+      t.textContent = '🌡';
+      li.appendChild(t);
+    }
+    li.addEventListener('click', () => togglePigSelection(item.object_id));
+    els.focusListEl.appendChild(li);
+  }
+}
+
+export async function refreshFocusList() {
+  if (!S.currentCamera) return;
+  try {
+    const d = await fetch(`/alerts/focus?camera_id=${S.currentCamera}`)
+      .then(r => r.json());
+    S.focusItems  = d.items || [];
+    S.focusStatus = d.status || 'ok';
+    S.focusLabels = {};
+    for (const item of S.focusItems) S.focusLabels[item.object_id] = item.label;
+    renderFocusList();
+  } catch (_) {}
+}
+
+export function setFocusOnlyBoxes(on) {
+  S.focusOnlyBoxes = !!on;
+  try { localStorage.setItem('focusOnlyBoxes', String(S.focusOnlyBoxes)); } catch (_) {}
+}
+
 // ── Anomaly map ───────────────────────────────────────────
 export async function refreshAnomalyMap() {
   if (!S.currentCamera) return;
@@ -103,11 +184,16 @@ export async function refreshAnomalyMap() {
       S.anomalyMap[parseInt(oid)] = info;
     }
     renderPigStatus();
+    await refreshFocusList();
   } catch (_) {}
 }
 
 export function updateVodAnomalyMap(currentTs) {
   S.anomalyMap = {};
+  S.focusItems = [];
+  S.focusLabels = {};
+  S.focusStatus = 'vod';
+  renderFocusList();
   for (const alert of S.vodAlerts) {
     const winStart = alert.triggered_at_unix - 1800;
     const winEnd   = alert.triggered_at_unix;
@@ -446,6 +532,8 @@ export async function loadSettings() {
       'set-ntfy_revive_priority': 'ntfy_revive_priority',
       'set-gpu_off_start': 'gpu_off_start',
       'set-gpu_off_end': 'gpu_off_end',
+      'set-focus_lowest_n': 'focus_lowest_n',
+      'set-focus_top_n': 'focus_top_n',
     };
     for (const [id, key] of Object.entries(_smap)) {
       const el = document.getElementById(id);
@@ -455,6 +543,8 @@ export async function loadSettings() {
     if (_ne) _ne.checked = String(data.ntfy_enabled) === 'true';
     const _ge = document.getElementById('set-gpu_off_schedule_enabled');
     if (_ge) _ge.checked = String(data.gpu_off_schedule_enabled) === 'true';
+    const _fl = document.getElementById('set-focus_lowest_enabled');
+    if (_fl) _fl.checked = String(data.focus_lowest_enabled) === 'true';
   } catch (_) {}
   syncDepFields();
 }
@@ -477,6 +567,9 @@ export async function saveSettings() {
     gpu_off_schedule_enabled:   String(document.getElementById('set-gpu_off_schedule_enabled').checked),
     gpu_off_start:              document.getElementById('set-gpu_off_start').value,
     gpu_off_end:                document.getElementById('set-gpu_off_end').value,
+    focus_lowest_enabled:       String(document.getElementById('set-focus_lowest_enabled').checked),
+    focus_lowest_n:             document.getElementById('set-focus_lowest_n').value,
+    focus_top_n:                document.getElementById('set-focus_top_n').value,
   };
   const statusEl = document.getElementById('settings-status');
   try {
