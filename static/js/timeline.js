@@ -1,5 +1,5 @@
 // static/js/timeline.js — 月曆／每小時時間軸／保留・書籤・刪除操作。
-import { S, els } from './state.js';
+import { S, els, syncBottomInset } from './state.js';
 import { loadVod } from './player.js';
 import { openBookmarkEditModal, loadBookmarks } from './panels.js';
 
@@ -266,6 +266,7 @@ function updateActionBar() {
   const bar = document.getElementById('storage-action-bar');
   document.getElementById('storage-sel-count').textContent = `已選 ${S.selectedHours.size} 小時`;
   bar.classList.toggle('visible', S.selectMode && S.selectedHours.size > 0);
+  syncBottomInset();   // 操作列是 fixed 的，不墊出空間就會蓋住頁面最後一段
 }
 
 export function clearSelection() {

@@ -54,6 +54,9 @@
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
     body {
+      /* 底部的固定面板（說明條、時間軸多選操作列）會蓋住頁面最後一段內容。
+         --bottom-inset 由 state.js 依目前可見的面板高度即時寫入。 */
+      padding-bottom: var(--bottom-inset, 0px);
       font-family: var(--font-body);
       font-size: var(--text-sm);
       color: var(--text);
@@ -144,8 +147,11 @@
       /* 3b: max-height → height 固定，三分頁共用同一外框高度、內容各自捲動，
          內容少的分頁（通知/書籤）不再縮得比豬隻狀態短。top 改跟 --header-h
          （header 在 1200~1300px 可能折行，寫死 72px 會滑進 header 底下）。 */
+      /* 右欄是 sticky、自己算高度，所以底部面板的留白要另外扣掉，
+         否則被蓋住的是右欄清單的最後幾列。 */
       .right-col { position: sticky; top: calc(var(--header-h, 60px) + 12px);
-                   height: calc(100dvh - var(--header-h, 60px) - 28px); display: flex; }
+                   height: calc(100dvh - var(--header-h, 60px) - 28px
+                                - var(--bottom-inset, 0px)); display: flex; }
       .right-col #bottom-panel { min-height: 0; }
       .right-col #bottom-panel { display: flex; flex-direction: column; width: 100%; }
       .right-col .tab-content.active { overflow-y: auto; flex: 1; }
@@ -936,7 +942,9 @@
     body.help-mode { cursor: help; }
     #help-btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
     #help-sheet {
-      position: fixed; left: 0; right: 0; bottom: 0; z-index: 60;
+      /* 要高過設定抽屜的 z-index 91：抽屜開著時說明條被蓋掉一半，
+         而抽屜裡的欄位正是最需要說明的地方。 */
+      position: fixed; left: 0; right: 0; bottom: 0; z-index: 95;
       padding: var(--space-3) var(--space-4);
       background: var(--surface-2);
       border-top: 1px solid var(--accent);
@@ -1116,7 +1124,9 @@
     #settings-drawer.open { transform: translateX(0); }
     .drawer-head { display: flex; align-items: center; justify-content: space-between;
       padding: var(--space-4); border-bottom: 1px solid var(--divider); }
-    .drawer-body { overflow-y: auto; padding: var(--space-4); flex: 1; }
+    .drawer-body { overflow-y: auto; padding: var(--space-4); flex: 1;
+      /* 說明條蓋在畫面底部時，抽屜最後一個欄位會被吃掉 */
+      padding-bottom: calc(var(--space-4) + var(--bottom-inset, 0px)); }
     .settings-group { margin-bottom: var(--space-6); }
     .settings-group h3 { font-size: var(--text-sm); margin-bottom: var(--space-1); }
     .group-desc { font-size: var(--text-xs); color: var(--text-muted); margin-bottom: var(--space-3); }

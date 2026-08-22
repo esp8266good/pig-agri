@@ -6,7 +6,7 @@
 //
 // 說明文字集中放在這裡而不是散在 HTML 的 data-help 屬性上：一個地方改完，
 // 桌機 title 與說明模式兩邊同時更新，也不必為了改一句話去動版面結構。
-import { S } from './state.js';
+import { S, syncBottomInset } from './state.js';
 
 const HELP = {
   // ── 頂部 ──
@@ -83,21 +83,36 @@ function showHelp(text) {
   if (!el) return;
   el.textContent = text;
   el.removeAttribute('hidden');
+  syncBottomInset();
 }
 
 function hideSheet() {
   sheet()?.setAttribute('hidden', '');
+  syncBottomInset();
 }
+
+// 這些按鈕的作用只是「打開或關閉某個面板」，本身不改變任何設定或資料。
+// 說明模式下要讓它們照常運作，否則使用者根本走不到設定抽屜裡面，
+// 就看不到抽屜裡那些欄位的說明——而那正是最需要說明的地方。
+// 放行的同時仍然顯示它們自己的說明。
+const PASSTHROUGH = [
+  '#settings-btn', '#settings-close-btn', '#settings-overlay',
+  '#bell-btn', '.tab-btn', '#view-toggle-btn', '#manual-link',
+].join(',');
 
 // 用捕獲階段攔截：要在元件自己的 handler 之前把事件吃掉，
 // 否則「點了才發現不該點」就來不及了。pointerdown 一起攔是為了 <select>，
 // 只擋 click 的話原生下拉選單還是會展開。
 function intercept(e) {
   if (!S.helpMode) return;
-  const btn = e.target.closest?.('#help-btn');
-  if (btn) return;                    // 「?」本身要能按，否則出不去
-  e.preventDefault();
-  e.stopPropagation();
+  if (e.target.closest?.('#help-btn')) return;   // 「?」本身要能按，否則出不去
+  if (e.target.closest?.('#help-sheet')) return; // 說明條本身可捲動
+
+  const pass = e.target.closest?.(PASSTHROUGH);
+  if (!pass) {
+    e.preventDefault();
+    e.stopPropagation();
+  }
   if (e.type === 'pointerdown' || e.type === 'click') {
     const el = e.target.closest?.('[data-help]');
     showHelp(el ? el.dataset.help : FALLBACK);

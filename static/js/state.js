@@ -109,3 +109,38 @@ export function fmtClock(sec) {
   const m = Math.floor(sec / 60), s = sec % 60;
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
+
+
+// ── 底部固定面板的留白 ────────────────────────────────────
+// 說明模式的說明條、時間軸多選後彈出的操作列，都是 position: fixed 貼在畫面底部，
+// 會蓋住頁面最後一段內容（多選操作列這個問題存在很久了）。
+// 這裡量出目前可見的底部面板有多高，寫進 --bottom-inset，
+// 由 CSS 去墊出對應的捲動空間。任何之後新增的底部面板只要加進 _BOTTOM_BARS 就會跟著生效。
+const _BOTTOM_BARS = [
+  () => {
+    const el = document.getElementById('help-sheet');
+    return el && !el.hasAttribute('hidden') ? el : null;
+  },
+  () => {
+    const el = document.getElementById('storage-action-bar');
+    return el && el.classList.contains('visible') ? el : null;
+  },
+];
+
+export function syncBottomInset() {
+  let inset = 0;
+  for (const get of _BOTTOM_BARS) {
+    const el = get();
+    if (el) inset = Math.max(inset, el.offsetHeight || 0);
+  }
+  document.documentElement.style.setProperty('--bottom-inset', `${inset}px`);
+}
+
+// 說明條的高度會隨文字長度變，光在開關時量一次不夠。
+if (typeof ResizeObserver !== 'undefined') {
+  const ro = new ResizeObserver(() => syncBottomInset());
+  for (const id of ['help-sheet', 'storage-action-bar']) {
+    const el = document.getElementById(id);
+    if (el) ro.observe(el);
+  }
+}
