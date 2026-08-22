@@ -1,17 +1,37 @@
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 import database
+from alert_grouping import fold_alerts, fold_cursor
+from config import settings as app_settings
+from focus_list import select_focus
 from analysis.scheduler import get_anomaly_cache
 from db_writer import (
+    count_unread_alerts,
+    get_all_settings,
     delete_alert,
     delete_alerts_bulk,
+    delete_alerts_by_ids,
     mark_alert_read,
+    mark_alerts_read,
     query_health_alerts,
 )
 
 router = APIRouter(prefix="/alerts", tags=["alerts"])
+
+# 每次向 DB 要多少「原始」告警。折疊率無法預先知道，所以這是一個批次大小
+# 而不是一頁的大小；router 會一直抓到湊滿一頁折疊結果為止。
+RAW_BATCH = 200
+
+# 抓取原始列的總量上限。折疊率極高時（同一隻豬連續告警幾千筆）若不設上限，
+# 湊滿一頁可能要掃完整張表。撞到上限就回目前湊到的，寧可少一頁也不要卡住請求。
+RAW_BUDGET = 5000
+
+
+class AlertIds(BaseModel):
+    ids: list[int]
 
 
 @router.get("/active")
@@ -22,6 +42,55 @@ async def get_active_alerts(camera_id: Optional[str] = None):
     return {"cache": {cam: {str(k): v for k, v in objs.items()} for cam, objs in cache.items()}}
 
 
+def _as_bool(v, default: bool) -> bool:
+    if v is None:
+        return default
+    return str(v).strip().lower() == "true"
+
+
+def _as_int(v, default: int) -> int:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return default
+
+
+@router.get("/focus")
+async def get_focus_list(camera_id: str):
+    """關注清單：現在該去看哪幾隻豬。
+
+    資料來源是 scheduler 的異常快取，跟豬隻狀態表格同源，所以兩邊的活動量一致。
+    DB 不可用時退回 app_settings 的預設值，清單少幾隻總比整個掛掉好。
+    """
+    cache = get_anomaly_cache().get(camera_id, {})
+    pool = database.get_pool()
+    if pool is None:
+        db = {}
+    else:
+        try:
+            db = await get_all_settings(pool)
+        except Exception:
+            db = {}
+    result = select_focus(
+        cache,
+        lowest_enabled=_as_bool(db.get("focus_lowest_enabled"),
+                                app_settings.focus_lowest_enabled),
+        lowest_n=_as_int(db.get("focus_lowest_n"), app_settings.focus_lowest_n),
+        top_n=_as_int(db.get("focus_top_n"), app_settings.focus_top_n),
+    )
+    return {"camera_id": camera_id, **result}
+
+
+@router.get("/count")
+async def get_unread_count(camera_id: Optional[str] = None):
+    """未讀數。前端 badge 專用，不受清單分頁影響。"""
+    pool = database.get_pool()
+    if pool is None:
+        raise HTTPException(status_code=503, detail="Database not available")
+    n = await count_unread_alerts(pool, camera_id=camera_id)
+    return {"unread": n}
+
+
 @router.get("")
 async def get_alerts(
     camera_id: Optional[str] = None,
@@ -29,19 +98,83 @@ async def get_alerts(
     limit: int = 50,
     start_ts: Optional[float] = None,
     end_ts: Optional[float] = None,
+    before_ts: Optional[float] = None,
+    before_id: Optional[int] = None,
 ):
+    """回傳折疊後的告警群組，一頁 `limit` 條。
+
+    折疊率事先不知道，所以這裡是一個迴圈：抓一批原始列、折疊、還不夠就往回再抓。
+    停止條件是「折出 limit + 1 個群組」而不是 limit，因為要看到第 limit + 1 個群組
+    開頭，才能確定第 limit 個群組已經收攏完畢；否則同一個群組會被切到兩頁，
+    在使用者眼裡就是同一條通知重複出現。
+    """
     pool = database.get_pool()
     if pool is None:
         raise HTTPException(status_code=503, detail="Database not available")
-    alerts = await query_health_alerts(
-        pool,
-        camera_id=camera_id,
-        unread_only=unread_only,
-        limit=limit,
-        start_ts=start_ts,
-        end_ts=end_ts,
-    )
-    return {"alerts": alerts, "total": len(alerts)}
+
+    collected: list[dict] = []
+    groups: list[dict] = []
+    cur_ts, cur_id = before_ts, before_id
+
+    while True:
+        rows = await query_health_alerts(
+            pool,
+            camera_id=camera_id,
+            unread_only=unread_only,
+            limit=RAW_BATCH,
+            start_ts=start_ts,
+            end_ts=end_ts,
+            before_ts=cur_ts,
+            before_id=cur_id,
+        )
+        collected.extend(rows)
+        groups = fold_alerts(collected)
+        if len(rows) < RAW_BATCH:          # DB 裡沒有更舊的了
+            break
+        if len(groups) > limit:            # 第 limit 個群組已經收攏
+            break
+        if len(collected) >= RAW_BUDGET:   # 掃太多了，就這樣回
+            break
+        cur_ts = rows[-1]["triggered_at_unix"]
+        cur_id = rows[-1]["id"]
+
+    has_more = len(groups) > limit
+    page = groups[:limit]
+    cursor = fold_cursor(page[-1]) if (has_more and page) else None
+    return {
+        "alerts": page,
+        "total": len(page),
+        "has_more": has_more,
+        "next_before_ts": cursor[0] if cursor else None,
+        "next_before_id": cursor[1] if cursor else None,
+    }
+
+
+@router.put("/read")
+async def mark_read_many(payload: AlertIds):
+    """把一整個折疊群組的成員全部標為已讀。
+
+    只標最新那筆的話，底下的成員仍然未讀，badge 會留下一個清不掉的紅點。
+    """
+    if not payload.ids:
+        raise HTTPException(status_code=400, detail="ids must not be empty")
+    pool = database.get_pool()
+    if pool is None:
+        raise HTTPException(status_code=503, detail="Database not available")
+    n = await mark_alerts_read(pool, payload.ids)
+    return {"updated": n}
+
+
+@router.delete("/by-ids")
+async def delete_many(payload: AlertIds):
+    """刪掉一整個折疊群組。理由同 mark_read_many。"""
+    if not payload.ids:
+        raise HTTPException(status_code=400, detail="ids must not be empty")
+    pool = database.get_pool()
+    if pool is None:
+        raise HTTPException(status_code=503, detail="Database not available")
+    n = await delete_alerts_by_ids(pool, payload.ids)
+    return {"deleted": n}
 
 
 @router.put("/{alert_id}/read")

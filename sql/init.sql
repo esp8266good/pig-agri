@@ -53,8 +53,11 @@ CREATE TABLE IF NOT EXISTS saved_segments (
 INSERT INTO user_settings (key, value, updated_at) VALUES
     ('analysis_interval_minutes', '30', NOW()),
     ('anomaly_std_threshold', '3.0', NOW()),
+    ('focus_lowest_enabled', 'true', NOW()),
+    ('focus_lowest_n', '3', NOW()),
+    ('focus_top_n', '3', NOW()),
     ('hls_retention_days', '90', NOW()),
-    ('ntfy_url', 'https://ntfy.ed716.duckdns.org/pig', NOW()),
+    ('ntfy_url', '', NOW()),   -- 真正的 topic 從前端設定填入，不進版控
     ('ntfy_enabled', 'true', NOW()),
     ('ntfy_revive_priority', 'default', NOW()),
     ('gpu_off_schedule_enabled', 'false', NOW()),

@@ -42,14 +42,14 @@ def test_notify_posts_json_with_unicode(monkeypatch):
             class R: status_code = 200
             return R()
     monkeypatch.setattr(ntfy_notifier.httpx, "AsyncClient", OkClient)
-    ok = _run(ntfy_notifier.notify("https://ntfy.ed716.duckdns.org/pig",
+    ok = _run(ntfy_notifier.notify("https://ntfy.example.com/your-topic",
                                    "🚨 錄影碟不可寫", "訊息內容",
                                    priority="urgent", tags="rotating_light,warning"))
     assert ok is True
     # POST 到 base（不含 topic 路徑），topic 進 body
-    assert captured["url"] == "https://ntfy.ed716.duckdns.org"
+    assert captured["url"] == "https://ntfy.example.com"
     body = captured["json"]
-    assert body["topic"] == "pig"
+    assert body["topic"] == "your-topic"
     # 標題前面帶主機名：pig / swine 兩個訂閱點都可能被多台機器共用，
     # 不帶機器名就分不出是誰在叫。
     assert body["title"] == f"[{ntfy_notifier._HOSTNAME}] 🚨 錄影碟不可寫"

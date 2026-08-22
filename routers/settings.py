@@ -16,6 +16,10 @@ ALLOWED_KEYS = frozenset({
     "anomaly_std_threshold",
     "hls_retention_days",
     "temp_anomaly_enabled",
+    # 關注清單
+    "focus_lowest_enabled",
+    "focus_lowest_n",
+    "focus_top_n",
     # 儲存健康監控（storage_monitor loop 每輪讀 DB → 即時生效、不需 reload）
     "storage_check_interval_seconds",
     "storage_min_free_gb",
@@ -56,6 +60,10 @@ _NUMERIC_BOUNDS: dict[str, tuple] = {
     "analysis_interval_minutes":      (int,   1,   1440),
     "analysis_window_minutes":        (int,   1,   10080),
     "anomaly_std_threshold":          (float, 0.1, 100.0),
+    # 上界 20 是為了擋「打 999 把整欄列出來」，關注清單就失去意義了。
+    "focus_lowest_n":                 (int,   1,   20),
+    # 下界 0 = 關閉對照組。
+    "focus_top_n":                    (int,   0,   20),
     "hls_retention_days":             (int,   1,   3650),
     "storage_check_interval_seconds": (int,   5,   86400),
     "storage_min_free_gb":            (float, 0.0, 1_000_000.0),
@@ -159,6 +167,9 @@ async def get_settings():
             "anomaly_std_threshold":       str(app_settings.anomaly_std_threshold),
             "hls_retention_days":          str(app_settings.hls_retention_days),
             "temp_anomaly_enabled":        str(app_settings.temp_anomaly_enabled).lower(),
+            "focus_lowest_enabled":        str(app_settings.focus_lowest_enabled).lower(),
+            "focus_lowest_n":              str(app_settings.focus_lowest_n),
+            "focus_top_n":                 str(app_settings.focus_top_n),
             "storage_check_interval_seconds": str(app_settings.storage_check_interval_seconds),
             "storage_min_free_gb":            str(app_settings.storage_min_free_gb),
             "storage_min_free_inodes_ratio":  str(app_settings.storage_min_free_inodes_ratio),

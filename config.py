@@ -82,7 +82,10 @@ class Settings(BaseSettings):
     recording_off_end: str = "06:30"
 
     # ── ntfy 推播通知（ops/儲存異常 → 手機）────────────────────
-    ntfy_url: str = "https://ntfy.ed716.duckdns.org/pig"
+    # 預設留空＝不推播（ntfy_notifier.notify 對空 url 直接 no-op）。
+    # 真正的 topic 只放在未追蹤的 .env 與 DB 裡：這個 repo 是公開的，
+    # 而 ntfy 的 topic 本身就是密碼，寫進版控等於公開它。
+    ntfy_url: str = ""
     ntfy_enabled: bool = True
     # 錄影監督者重建串流的推播優先級（flaky 攝影機可能較頻，可在前端調低避免吵）。
     # 值為 ntfy priority 字串：min / low / default / high / urgent。
@@ -125,7 +128,7 @@ class Settings(BaseSettings):
 
     # ── ZMQ Multi-Source ───────────────────────────────────────
     # 格式：name:host:port:src_topic:label  多個 source 以分號分隔
-    # 範例：rpi_local:192.168.50.5:5555:rpi_sensors:cam_01;rpi_tailscale:100.67.51.73:5555:rpi_sensors:rpi_sensors
+    # 範例：rpi_local:192.168.50.5:5555:rpi_sensors:cam_01;rpi_tailscale:100.64.0.2:5555:rpi_sensors:rpi_sensors
     zmq_sources: List[ZmqSource] = []
     zmq_warmup_secs: float = 0.5   # slow joiner warm-up（秒）
     zmq_stale_ms: float = 500.0    # 幀過期門檻（毫秒）
@@ -159,6 +162,14 @@ class Settings(BaseSettings):
     activity_min_span_seconds: float = 300.0
     # 體溫異常偵測總開關
     temp_anomaly_enabled: bool = True
+
+    # 關注清單：前端右欄「現在該去看哪幾隻豬」的列表。
+    # 最低 N 只在該相機零異常時才出現；對照 N 是活動量最高的幾隻，
+    # 用途只有一個——給人眼一個「正常長什麼樣」的參考點。
+    focus_lowest_enabled: bool = True
+    focus_lowest_n: int = 3
+    # 0 表示關閉對照組。不另給啟用開關：0 在這裡沒有語意歧義。
+    focus_top_n: int = 3
 
     # ── Validators ────────────────────────────────────────────
     @field_validator("zmq_sources", mode="before")

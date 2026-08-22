@@ -158,7 +158,14 @@ async def query_health_alerts(
     limit: int = 50,
     start_ts: Optional[float] = None,
     end_ts: Optional[float] = None,
+    before_ts: Optional[float] = None,
+    before_id: Optional[int] = None,
 ) -> list[dict]:
+    """(before_ts, before_id) 是 keyset cursor：只取嚴格早於這個位置的告警。
+
+    用 (時間, id) 而不是只用時間，是因為同一秒內可能寫進多筆告警；
+    只比時間會讓其中幾筆被永遠跳過，翻頁翻到一半資料就默默消失。
+    """
     conditions = []
     params: list = []
     idx = 1
@@ -177,6 +184,13 @@ async def query_health_alerts(
         conditions.append(f"EXTRACT(EPOCH FROM triggered_at) < ${idx}")
         params.append(end_ts)
         idx += 1
+    if before_ts is not None:
+        conditions.append(
+            f"(triggered_at, id) < (to_timestamp(${idx}), ${idx + 1})"
+        )
+        params.append(before_ts)
+        params.append(before_id if before_id is not None else 0)
+        idx += 2
 
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     params.append(limit)
@@ -188,11 +202,54 @@ async def query_health_alerts(
                EXTRACT(EPOCH FROM triggered_at)::float AS triggered_at_unix
         FROM health_alerts
         {where}
-        ORDER BY triggered_at DESC
+        ORDER BY triggered_at DESC, id DESC
         LIMIT {limit_ph}
     """
     rows = await pool.fetch(sql, *params)
     return [dict(r) for r in rows]
+
+
+async def count_unread_alerts(
+    pool: asyncpg.Pool,
+    camera_id: Optional[str] = None,
+) -> int:
+    """未讀告警的真實筆數，不受清單分頁的 limit 影響。
+
+    前端 badge 原本抓一整頁未讀再算長度，數字因此封頂在該頁的 limit。
+    """
+    if camera_id is None:
+        row = await pool.fetchrow(
+            "SELECT COUNT(*)::int AS n FROM health_alerts WHERE is_read = FALSE"
+        )
+    else:
+        row = await pool.fetchrow(
+            "SELECT COUNT(*)::int AS n FROM health_alerts "
+            "WHERE is_read = FALSE AND camera_id=$1",
+            camera_id,
+        )
+    return int(row["n"]) if row else 0
+
+
+async def mark_alerts_read(pool: asyncpg.Pool, ids: list[int]) -> int:
+    """整組標記已讀。回傳實際更新筆數（從 'UPDATE N' 末尾解析，asyncpg 慣例）。"""
+    if not ids:
+        return 0
+    result = await pool.execute(
+        "UPDATE health_alerts SET is_read = TRUE WHERE id = ANY($1::bigint[])",
+        ids,
+    )
+    return int(result.rsplit(" ", 1)[-1])
+
+
+async def delete_alerts_by_ids(pool: asyncpg.Pool, ids: list[int]) -> int:
+    """整組永久刪除。回傳實際刪除筆數。"""
+    if not ids:
+        return 0
+    result = await pool.execute(
+        "DELETE FROM health_alerts WHERE id = ANY($1::bigint[])",
+        ids,
+    )
+    return int(result.rsplit(" ", 1)[-1])
 
 
 async def mark_alert_read(pool: asyncpg.Pool, alert_id: int) -> bool:
