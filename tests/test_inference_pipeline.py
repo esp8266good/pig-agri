@@ -369,3 +369,84 @@ def test_set_active_false_skips_detector():
     except Exception:
         pass
     mock_detector.infer.assert_called()
+
+
+# ── 遮罩過濾 ─────────────────────────────────────────────────────────
+# 遮罩是唯一碰推論路徑的功能。這裡驗的是「有沒有真的接上」，
+# 過濾本身的邊界正確性由 tests/test_mask_filter.py 負責。
+
+_LEFT_HALF = [{"label": "走道", "enabled": True,
+               "points": [[0, 0], [0.5, 0], [0.5, 1], [0, 1]]}]
+
+
+def _pipeline_with_dets(dets):
+    """detector 回指定的偵測框，其餘照 _make_processing_pipeline。"""
+    import numpy as np
+    p, mock_detector, mock_tracker_pool, _ = _make_processing_pipeline()
+    mock_detector.infer.return_value = [np.asarray(dets, dtype=np.float32)]
+    return p, mock_tracker_pool
+
+
+def _dets_given_to_tracker(mock_tracker_pool):
+    return mock_tracker_pool.update.call_args[0][1]
+
+
+def test_masked_detection_never_reaches_tracker():
+    import numpy as np
+    from inference.pipeline import FrameData
+    # test_size=(736,1280)、畫面 100x100 → scale=7.36，dets 用縮放後座標
+    inside = [10 * 7.36, 10 * 7.36, 40 * 7.36, 40 * 7.36, 0.9, 0.9, 0.0]
+    outside = [60 * 7.36, 10 * 7.36, 90 * 7.36, 40 * 7.36, 0.9, 0.9, 0.0]
+    p, pool = _pipeline_with_dets([inside, outside])
+    p.set_masks("cam_01", _LEFT_HALF)
+    rgb = np.zeros((100, 100, 3), dtype=np.uint8)
+    p._process_batch({"cam_01": FrameData(rgb_np=rgb, thermal_np=None,
+                                          ts=1.0, frame_id=1)})
+    given = _dets_given_to_tracker(pool)
+    assert len(given) == 1, "遮罩內的偵測不該進 tracker"
+    assert given[0][0] > 300, "留下來的應該是界外那一個"
+
+
+def test_global_switch_off_disables_filtering():
+    """遮罩把真的豬吃掉時的一鍵復原：總開關關掉就完全不過濾。"""
+    import numpy as np
+    from inference.pipeline import FrameData
+    inside = [10 * 7.36, 10 * 7.36, 40 * 7.36, 40 * 7.36, 0.9, 0.9, 0.0]
+    p, pool = _pipeline_with_dets([inside])
+    p.set_masks("cam_01", _LEFT_HALF)
+    p.set_mask_enabled(False)
+    rgb = np.zeros((100, 100, 3), dtype=np.uint8)
+    p._process_batch({"cam_01": FrameData(rgb_np=rgb, thermal_np=None,
+                                          ts=1.0, frame_id=1)})
+    assert len(_dets_given_to_tracker(pool)) == 1
+
+
+def test_mask_of_another_camera_does_not_leak():
+    import numpy as np
+    from inference.pipeline import FrameData
+    inside = [10 * 7.36, 10 * 7.36, 40 * 7.36, 40 * 7.36, 0.9, 0.9, 0.0]
+    p, pool = _pipeline_with_dets([inside])
+    p.set_masks("cam_99", _LEFT_HALF)
+    rgb = np.zeros((100, 100, 3), dtype=np.uint8)
+    p._process_batch({"cam_01": FrameData(rgb_np=rgb, thermal_np=None,
+                                          ts=1.0, frame_id=1)})
+    assert len(_dets_given_to_tracker(pool)) == 1
+
+
+def test_raster_is_cached_and_invalidated_on_change():
+    from inference.pipeline import InferencePipeline
+    p = InferencePipeline()
+    p.set_masks("cam_01", _LEFT_HALF)
+    first = p._mask_for("cam_01", 100, 100)
+    assert p._mask_for("cam_01", 100, 100) is first, "同一組遮罩不該每幀重畫"
+    p.set_masks("cam_01", [{"label": "x", "enabled": True,
+                            "points": [[0.6, 0], [1, 0], [1, 1], [0.6, 1]]}])
+    assert p._mask_for("cam_01", 100, 100) is not first, "改遮罩後快取要失效"
+
+
+def test_no_mask_configured_returns_none():
+    from inference.pipeline import InferencePipeline
+    p = InferencePipeline()
+    assert p._mask_for("cam_01", 100, 100) is None
+    p.set_masks("cam_01", [])
+    assert p._mask_for("cam_01", 100, 100) is None

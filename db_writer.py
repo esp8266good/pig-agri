@@ -1,5 +1,6 @@
 """Database writer module for tracking logs."""
 
+import json
 from typing import Optional
 import asyncpg
 
@@ -228,6 +229,57 @@ async def count_unread_alerts(
             camera_id,
         )
     return int(row["n"]) if row else 0
+
+
+async def query_camera_masks(
+    pool: asyncpg.Pool,
+    camera_id: Optional[str] = None,
+) -> list[dict]:
+    """遮罩區域。points 是正規化的 0..1 座標序列。"""
+    if camera_id is None:
+        rows = await pool.fetch(
+            "SELECT id, camera_id, label, enabled, points FROM camera_masks "
+            "ORDER BY camera_id, id"
+        )
+    else:
+        rows = await pool.fetch(
+            "SELECT id, camera_id, label, enabled, points FROM camera_masks "
+            "WHERE camera_id=$1 ORDER BY id",
+            camera_id,
+        )
+    out = []
+    for r in rows:
+        d = dict(r)
+        # asyncpg 的 JSONB 沒註冊 codec 時回字串，註冊過則回 list；兩種都要吃。
+        if isinstance(d["points"], str):
+            d["points"] = json.loads(d["points"])
+        out.append(d)
+    return out
+
+
+async def replace_camera_masks(
+    pool: asyncpg.Pool,
+    camera_id: str,
+    regions: list[dict],
+) -> int:
+    """整批覆蓋某台相機的遮罩（編輯器就是一次存整組）。
+
+    刪除與寫入放在同一個 transaction：中途失敗時不會留下「舊的已刪、新的沒寫」
+    的空遮罩狀態，那會讓被遮住的區域突然全部恢復偵測。
+    """
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute("DELETE FROM camera_masks WHERE camera_id=$1", camera_id)
+            for region in regions:
+                await conn.execute(
+                    "INSERT INTO camera_masks (camera_id, label, enabled, points) "
+                    "VALUES ($1, $2, $3, $4::jsonb)",
+                    camera_id,
+                    str(region.get("label", ""))[:64],
+                    bool(region.get("enabled", True)),
+                    json.dumps(region.get("points") or []),
+                )
+    return len(regions)
 
 
 async def mark_alerts_read(pool: asyncpg.Pool, ids: list[int]) -> int:

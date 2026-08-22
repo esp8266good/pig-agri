@@ -171,6 +171,10 @@ class Settings(BaseSettings):
     # 0 表示關閉對照組。不另給啟用開關：0 在這裡沒有語意歧義。
     focus_top_n: int = 3
 
+    # 遮罩總開關。遮罩是唯一碰推論路徑的功能，萬一它把真的豬吃掉了，
+    # 逐塊關太慢；這個開關的存在就是敢把遮罩接進 pipeline 的前提。
+    mask_enabled: bool = True
+
     # ── Validators ────────────────────────────────────────────
     @field_validator("zmq_sources", mode="before")
     @classmethod
