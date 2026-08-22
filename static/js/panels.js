@@ -3,6 +3,10 @@ import { S, els } from './state.js';
 import { loadVod } from './player.js';
 import { loadTimeline } from './timeline.js';
 
+// 一頁幾條「折疊後」的通知。後端會一直往回抓原始告警直到湊滿這個數，
+// 所以每一頁都是滿的，不會因為折疊率高就回一個半空的頁。
+const ALERT_PAGE_SIZE = 50;
+
 export async function loadBookmarks() {
   const ul = document.getElementById('bookmark-list');
   if (!ul || !S.currentCamera) return;
@@ -217,69 +221,94 @@ export function renderPigStatus() {
   }
 }
 
-function renderNotifications(alerts) {
+// 一條通知 = 一個折疊群組（同相機、同豬、同指標、時間上連續的告警）。
+// group.alert_ids 是群組內所有成員，新→舊；標記已讀與刪除都要作用在整組，
+// 只動最新那筆的話 badge 會留下一個清不掉的紅點。
+function _fmtAlertTime(unixTs) {
+  return new Date(unixTs * 1000).toLocaleString('zh-TW', {
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit',
+  });
+}
+
+function _buildAlertItem(group) {
+  const sigma = group.std_value > 0
+    ? ((group.current_value - group.mean_value) / group.std_value).toFixed(1)
+    : '—';
+  const metricLabel = group.metric === 'activity' ? '活動量偏低' : '體溫異常';
+  const li = document.createElement('li');
+  li.className = 'alert-item' + (group.is_read ? '' : ' unread');
+  // camera_id 來自後端/DB，用 textContent 建節點而非 innerHTML 內插，避免注入風險。
+  const infoDiv = document.createElement('div');
+  infoDiv.className = 'alert-info';
+  const camSpan = document.createElement('span');
+  camSpan.className = 'alert-cam';
+  camSpan.textContent = `${group.camera_id} #${group.object_id}`;
+  const metricSpan = document.createElement('span');
+  metricSpan.className = 'alert-metric';
+  metricSpan.textContent = metricLabel;
+  const timeSpan = document.createElement('span');
+  timeSpan.className = 'alert-time';
+  timeSpan.textContent = _fmtAlertTime(group.triggered_at_unix);
+  const sigmaSpan = document.createElement('span');
+  sigmaSpan.className = 'alert-sigma';
+  sigmaSpan.textContent = `偏差 ${sigma}σ`;
+  infoDiv.append(camSpan, metricSpan, timeSpan, sigmaSpan);
+
+  const count = group.count || 1;
+  if (count > 1) {
+    const countSpan = document.createElement('span');
+    countSpan.className = 'alert-count';
+    countSpan.textContent = `×${count}`;
+    countSpan.title = `這段期間連續告警 ${count} 次，最早 ${_fmtAlertTime(group.first_triggered_at_unix)}`;
+    camSpan.after(countSpan);
+  }
+
+  const markReadBtn = document.createElement('button');
+  markReadBtn.className = 'mark-read-btn';
+  markReadBtn.disabled = !!group.is_read;
+  markReadBtn.textContent = group.is_read ? '已讀' : '標記已讀';
+
+  const deleteBtn = document.createElement('button');
+  deleteBtn.className = 'mark-read-btn';
+  deleteBtn.textContent = '刪除';
+
+  li.append(infoDiv, markReadBtn, deleteBtn);
+  markReadBtn.addEventListener('click', () => markAlertGroupRead(group, markReadBtn));
+  deleteBtn.addEventListener('click', () => onDeleteGroupClick(group, deleteBtn));
+  li.addEventListener('click', e => {
+    if (e.target.classList.contains('mark-read-btn')) return;
+    if (group.camera_id !== S.currentCamera) {
+      els.camSelect.value = group.camera_id;
+      S.currentCamera = group.camera_id;
+    }
+    loadVod(group.triggered_at_unix - 1800);
+  });
+  return li;
+}
+
+function renderNotifications(groups, append = false) {
   if (!els.alertListEl) return;
-  els.alertListEl.innerHTML = '';
-  if (!alerts.length) {
-    els.alertListEl.innerHTML = '<li class="notif-empty">目前無警示記錄</li>';
+  if (!append) els.alertListEl.innerHTML = '';
+  if (!groups.length) {
+    if (!append) els.alertListEl.innerHTML = '<li class="notif-empty">目前無警示記錄</li>';
     return;
   }
-  for (const alert of alerts) {
-    const dt = new Date(alert.triggered_at_unix * 1000)
-      .toLocaleString('zh-TW', {year:'numeric',month:'2-digit',day:'2-digit',
-                                hour:'2-digit',minute:'2-digit'});
-    const sigma = alert.std_value > 0
-      ? ((alert.current_value - alert.mean_value) / alert.std_value).toFixed(1)
-      : '—';
-    const metricLabel = alert.metric === 'activity' ? '活動量偏低' : '體溫異常';
-    const li = document.createElement('li');
-    li.className = 'alert-item' + (alert.is_read ? '' : ' unread');
-    // Finding 3（whole-branch review）：alert.camera_id 來自後端/DB，非硬編字面值，
-    // 用 textContent 建節點而非 innerHTML 字串內插，避免注入風險（防禦性強化，行為不變）。
-    const infoDiv = document.createElement('div');
-    infoDiv.className = 'alert-info';
-    const camSpan = document.createElement('span');
-    camSpan.className = 'alert-cam';
-    camSpan.textContent = `${alert.camera_id} #${alert.object_id}`;
-    const metricSpan = document.createElement('span');
-    metricSpan.className = 'alert-metric';
-    metricSpan.textContent = metricLabel;
-    const timeSpan = document.createElement('span');
-    timeSpan.className = 'alert-time';
-    timeSpan.textContent = dt;
-    const sigmaSpan = document.createElement('span');
-    sigmaSpan.className = 'alert-sigma';
-    sigmaSpan.textContent = `偏差 ${sigma}σ`;
-    infoDiv.append(camSpan, metricSpan, timeSpan, sigmaSpan);
+  for (const group of groups) els.alertListEl.appendChild(_buildAlertItem(group));
+}
 
-    const markReadBtn = document.createElement('button');
-    markReadBtn.className = 'mark-read-btn';
-    markReadBtn.disabled = !!alert.is_read;
-    markReadBtn.textContent = alert.is_read ? '已讀' : '標記已讀';
-
-    const deleteBtn = document.createElement('button');
-    deleteBtn.className = 'mark-read-btn';
-    deleteBtn.textContent = '刪除';
-
-    li.append(infoDiv, markReadBtn, deleteBtn);
-    markReadBtn.addEventListener('click', () => markAlertRead(alert.id, markReadBtn));
-    deleteBtn.addEventListener('click', () => onDeleteAlertClick(alert.id, deleteBtn));
-    li.addEventListener('click', e => {
-      if (e.target.classList.contains('mark-read-btn')) return;
-      if (alert.camera_id !== S.currentCamera) {
-        els.camSelect.value = alert.camera_id;
-        S.currentCamera = alert.camera_id;
-      }
-      loadVod(alert.triggered_at_unix - 1800);
-    });
-    els.alertListEl.appendChild(li);
-  }
+function _syncLoadMoreBtn() {
+  if (!els.alertLoadMoreBtn) return;
+  els.alertLoadMoreBtn.hidden = !S.alertHasMore;
+  els.alertLoadMoreBtn.disabled = false;
+  els.alertLoadMoreBtn.textContent = '載入更多';
 }
 
 async function _refreshBellBadge() {
   try {
-    const d = await fetch('/alerts?unread_only=true').then(r => r.json());
-    const n = (d.alerts || []).length;
+    // 專用端點。原本抓一整頁未讀再算長度，數字被那一頁的 limit 封頂。
+    const d = await fetch('/alerts/count').then(r => r.json());
+    const n = d.unread || 0;
     els.bellBadge.textContent = n;
     els.bellBadge.style.display = n > 0 ? '' : 'none';
   } catch (_) {}
@@ -291,9 +320,13 @@ function _emptyNotifIfNeeded() {
   }
 }
 
-async function markAlertRead(alertId, btn) {
+async function markAlertGroupRead(group, btn) {
   try {
-    const resp = await fetch(`/alerts/${alertId}/read`, { method: 'PUT' });
+    const resp = await fetch('/alerts/read', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: group.alert_ids }),
+    });
     if (!resp.ok) return;
     const li = btn.closest('.alert-item');
     if (!S.showReadAlerts) {
@@ -308,10 +341,18 @@ async function markAlertRead(alertId, btn) {
   } catch (_) {}
 }
 
-async function onDeleteAlertClick(alertId, btn) {
-  if (!confirm('永久刪除此警示記錄?')) return;
+async function onDeleteGroupClick(group, btn) {
+  const n = group.count || 1;
+  const msg = n > 1
+    ? `永久刪除這 ${n} 筆連續警示記錄?`
+    : '永久刪除此警示記錄?';
+  if (!confirm(msg)) return;
   try {
-    const resp = await fetch(`/alerts/${alertId}`, { method: 'DELETE' });
+    const resp = await fetch('/alerts/by-ids', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: group.alert_ids }),
+    });
     if (!resp.ok) { alert('刪除失敗'); return; }
     btn.closest('.alert-item').remove();
     _emptyNotifIfNeeded();
@@ -338,15 +379,43 @@ async function onClearReadClick() {
   } catch (_) { alert('清空失敗'); }
 }
 
+function _alertQuery(extra = '') {
+  const unread = S.showReadAlerts ? '' : '&unread_only=true';
+  return `/alerts?camera_id=${S.currentCamera}&limit=${ALERT_PAGE_SIZE}${unread}${extra}`;
+}
+
 export async function refreshNotifications() {
   if (!S.currentCamera) return;
   try {
-    const unread = S.showReadAlerts ? '' : '&unread_only=true';
-    const d = await fetch(`/alerts?camera_id=${S.currentCamera}&limit=50${unread}`)
-      .then(r => r.json());
+    const d = await fetch(_alertQuery()).then(r => r.json());
+    S.alertHasMore   = !!d.has_more;
+    S.alertBeforeTs  = d.next_before_ts;
+    S.alertBeforeId  = d.next_before_id;
     renderNotifications(d.alerts || []);
+    _syncLoadMoreBtn();
     await _refreshBellBadge();
   } catch (_) {}
+}
+
+// 「載入更多」而不是頁碼：通知是時間序、只會往回看，
+// 資料持續增加時頁碼會讓同一頁的內容一直漂移。
+export async function loadMoreNotifications() {
+  if (!S.currentCamera || !S.alertHasMore) return;
+  if (els.alertLoadMoreBtn) {
+    els.alertLoadMoreBtn.disabled = true;
+    els.alertLoadMoreBtn.textContent = '載入中…';
+  }
+  try {
+    const extra = `&before_ts=${S.alertBeforeTs}&before_id=${S.alertBeforeId}`;
+    const d = await fetch(_alertQuery(extra)).then(r => r.json());
+    S.alertHasMore  = !!d.has_more;
+    S.alertBeforeTs = d.next_before_ts;
+    S.alertBeforeId = d.next_before_id;
+    renderNotifications(d.alerts || [], true);
+  } catch (_) {
+  } finally {
+    _syncLoadMoreBtn();
+  }
 }
 
 // ── Settings ──────────────────────────────────────────────

@@ -929,6 +929,30 @@
     .mark-read-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
     .mark-read-btn:disabled { opacity: 0.4; cursor: default; }
     .notif-empty { color: var(--text-faint); font-style: italic; padding: var(--space-3); text-align: center; }
+    /* 折疊群組的次數標記。一條通知可能代表連續好幾筆告警。 */
+    .alert-count {
+      padding: 0 var(--space-1);
+      border-radius: var(--radius-sm);
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      font-size: var(--text-xs);
+      font-variant-numeric: tabular-nums;
+    }
+    .load-more-btn {
+      display: block;
+      width: calc(100% - var(--space-4));
+      margin: var(--space-2) auto var(--space-3);
+      padding: var(--space-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--surface-2);
+      color: var(--text-muted);
+      font-size: var(--text-xs);
+      cursor: pointer;
+    }
+    .load-more-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+    .load-more-btn:disabled { opacity: 0.5; cursor: default; }
     /* ── Settings drawer（唯一使用處，單欄版型） ─────────────── */
     #tab-settings { padding: var(--space-3) var(--space-4); }
     .settings-form { display: grid; grid-template-columns: 1fr; gap: var(--space-3); }

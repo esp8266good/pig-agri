@@ -2,7 +2,7 @@
 import { S, els, setStatus, setSkeleton } from './state.js';
 import { loadStream, loadVod, startLiveTimers, stopLiveTimers, detachVodListeners, exitVodState } from './player.js';
 import { loadTimeline, clearSelection, closeSlotActionMenu, closeDeleteModal, localDayStart } from './timeline.js';
-import { switchTab, onSortHeaderClick, refreshAnomalyMap, refreshNotifications, loadSettings, loadBookmarks, closeBookmarkEditModal, openSettingsDrawer, closeSettingsDrawer, initSettingsDrawer, updateSoloHint } from './panels.js';
+import { switchTab, onSortHeaderClick, refreshAnomalyMap, refreshNotifications, loadMoreNotifications, loadSettings, loadBookmarks, closeBookmarkEditModal, openSettingsDrawer, closeSettingsDrawer, initSettingsDrawer, updateSoloHint } from './panels.js';
 import { enterGrid, leaveGrid, bindGridPick, getGridPlaybackHour } from './grid.js';
 import { ensureAuth } from './auth.js';
 
@@ -182,6 +182,9 @@ async function init() {
       S.showReadAlerts = e.target.checked;
       refreshNotifications();
     });
+  }
+  if (els.alertLoadMoreBtn) {
+    els.alertLoadMoreBtn.addEventListener('click', () => loadMoreNotifications());
   }
 }
 

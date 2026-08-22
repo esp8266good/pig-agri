@@ -6,7 +6,9 @@ export const S = {
   currentCamera: null, currentType: 'rgb', animFrameId: null, isLive: true,
   currentMonth: null, selectedDay: null, monthHoursSet: new Set(),
   vodDebounceTimer: null, vodFetching: false, anomalyMap: {}, vodAlerts: [],
-  showReadAlerts: false, liveAnomalyIntervalId: null, liveHandoffIntervalId: null,
+  showReadAlerts: false,
+  // 通知分頁的 keyset cursor：指向目前最後一個折疊群組裡最舊的那筆告警。
+  alertHasMore: false, alertBeforeTs: null, alertBeforeId: null, liveAnomalyIntervalId: null, liveHandoffIntervalId: null,
   currentLiveUrl: null, currentObjectIds: new Set(), selectedObjectId: null,
   soloMode: false, sortKey: 'activity', sortDir: 1,
   selectMode: false, selectedHours: new Set(), savedSegmentsMap: new Map(),
@@ -45,6 +47,7 @@ export const els = {
   bellBadge:    document.getElementById('bell-badge'),
   pigStatusBody:document.getElementById('pig-status-body'),
   alertListEl:  document.getElementById('alert-list'),
+  alertLoadMoreBtn: document.getElementById('alert-load-more'),
   transportEl:  document.getElementById('transport'),
   playBtn:      document.getElementById('play-btn'),
   playIconUse:  document.getElementById('play-icon-use'),
