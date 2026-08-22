@@ -547,6 +547,8 @@ export async function loadSettings() {
     if (_ge) _ge.checked = String(data.gpu_off_schedule_enabled) === 'true';
     const _fl = document.getElementById('set-focus_lowest_enabled');
     if (_fl) _fl.checked = String(data.focus_lowest_enabled) === 'true';
+    const _me = document.getElementById('set-mask_enabled');
+    if (_me) _me.checked = String(data.mask_enabled) === 'true';
   } catch (_) {}
   syncDepFields();
 }
@@ -572,6 +574,7 @@ export async function saveSettings() {
     focus_lowest_enabled:       String(document.getElementById('set-focus_lowest_enabled').checked),
     focus_lowest_n:             document.getElementById('set-focus_lowest_n').value,
     focus_top_n:                document.getElementById('set-focus_top_n').value,
+    mask_enabled:               String(document.getElementById('set-mask_enabled').checked),
   };
   const statusEl = document.getElementById('settings-status');
   try {

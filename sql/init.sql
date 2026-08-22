@@ -40,6 +40,18 @@ CREATE TABLE IF NOT EXISTS user_settings (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 遮罩區域。每列一個多邊形，points 是正規化的 0..1 座標（換相機解析度不用重畫）。
+-- 每塊可獨立命名與停用：出問題時可以單獨關掉一塊來二分定位，而不是整組開關。
+CREATE TABLE IF NOT EXISTS camera_masks (
+    id         BIGSERIAL PRIMARY KEY,
+    camera_id  VARCHAR(16) NOT NULL,
+    label      TEXT NOT NULL DEFAULT '',
+    enabled    BOOLEAN NOT NULL DEFAULT TRUE,
+    points     JSONB NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_camera_masks_cam ON camera_masks(camera_id);
+
 CREATE TABLE IF NOT EXISTS saved_segments (
     id         BIGSERIAL PRIMARY KEY,
     camera_id  VARCHAR(16) NOT NULL,
@@ -56,6 +68,7 @@ INSERT INTO user_settings (key, value, updated_at) VALUES
     ('focus_lowest_enabled', 'true', NOW()),
     ('focus_lowest_n', '3', NOW()),
     ('focus_top_n', '3', NOW()),
+    ('mask_enabled', 'true', NOW()),
     ('hls_retention_days', '90', NOW()),
     ('ntfy_url', '', NOW()),   -- 真正的 topic 從前端設定填入，不進版控
     ('ntfy_enabled', 'true', NOW()),

@@ -155,6 +155,7 @@
         <div id="video-wrap">
           <video id="video" autoplay muted playsinline></video>
           <canvas id="overlay" aria-hidden="true"></canvas>
+          <canvas id="mask-canvas" hidden></canvas>
           <pre id="bbox-hud" aria-hidden="true"></pre>
           <div class="video-skeleton visible" id="skeleton" aria-hidden="true">
             <div class="skeleton-pulse"></div>
@@ -163,6 +164,18 @@
             <svg class="icon"><use href="#i-nosignal"/></svg>
             <span id="no-signal-text">無訊號</span>
           </div>
+        </div>
+
+        <div id="mask-editor" hidden>
+          <div class="mask-toolbar">
+            <strong>遮罩編輯中</strong>
+            <span class="mask-hint">在畫面上點出邊界（至少三個點），再按「完成這一塊」。</span>
+            <button id="mask-commit-btn">完成這一塊</button>
+            <button id="mask-undo-btn">退回上一點</button>
+            <button id="mask-save-btn" class="mask-save">儲存並套用</button>
+            <button id="mask-cancel-btn">取消</button>
+          </div>
+          <ul id="mask-region-list"></ul>
         </div>
 
         <!-- Transport / scrubber -->
@@ -368,6 +381,22 @@
           <div class="settings-field">
             <label for="set-focus_top_n">對照組幾隻（活動量最高，0 = 不顯示）</label>
             <input type="number" id="set-focus_top_n" min="0" max="20" step="1">
+          </div>
+        </div>
+      </section>
+      <section class="settings-group">
+        <h3>遮罩</h3><p class="group-desc">擋掉走道、牆面這種不該被當成豬的區域。遮罩不會改變畫面，只是讓落在裡面的偵測被忽略。</p>
+        <div class="settings-form">
+          <div class="settings-field settings-field-row">
+            <label for="set-mask_enabled">啟用遮罩</label>
+            <input type="checkbox" id="set-mask_enabled">
+          </div>
+          <div class="settings-field settings-field-row">
+            <label for="mask-show-overlay">在畫面上顯示遮罩範圍</label>
+            <input type="checkbox" id="mask-show-overlay">
+          </div>
+          <div class="settings-field">
+            <button type="button" id="mask-edit-btn" class="mask-edit-btn">編輯這台相機的遮罩</button>
           </div>
         </div>
       </section>

@@ -16,10 +16,11 @@ from analysis.scheduler import Scheduler
 from config import settings as app_settings
 from hls_manager import hls_manager
 from hls_retention import effective_retention_days, purge_expired_hls
-from db_writer import get_all_settings, get_protected_hours, write_health_alert
+from db_writer import (get_all_settings, get_protected_hours,
+                       query_camera_masks, write_health_alert)
 from auth_middleware import AuthMiddleware
 from inference.pipeline import inference_pipeline
-from routers import alerts, auth, notes, stream, storage, tracking
+from routers import alerts, auth, masks, notes, stream, storage, tracking
 from routers import settings as settings_router
 from zmq_receiver import zmq_receiver
 
@@ -206,6 +207,32 @@ async def _recording_supervisor_loop() -> None:
             logger.warning(f"錄影監督者巡檢失敗：{e}")
 
 
+async def _load_masks_into_pipeline() -> None:
+    """啟動時把 DB 裡的遮罩灌進 pipeline。
+
+    平時遮罩靠 routers/masks 在存檔時 push；重啟後沒人 push，
+    不在這裡載入的話遮罩就默默失效，而且失效的方式是「偵測突然變多」，
+    不會有任何錯誤訊息。DB 讀不到就當作沒有遮罩，不要讓推論起不來。
+    """
+    pool = database.get_pool()
+    if pool is None:
+        return
+    try:
+        rows = await query_camera_masks(pool)
+        by_cam: dict[str, list[dict]] = {}
+        for row in rows:
+            by_cam.setdefault(row["camera_id"], []).append(row)
+        for cam, regions in by_cam.items():
+            inference_pipeline.set_masks(cam, regions)
+        db = await get_all_settings(pool)
+        if db.get("mask_enabled") is not None:
+            inference_pipeline.set_mask_enabled(
+                str(db["mask_enabled"]).strip().lower() == "true")
+        logger.info(f"遮罩載入完成：{len(by_cam)} 台相機、{len(rows)} 塊區域")
+    except Exception:
+        logger.exception("遮罩載入失敗，本次啟動不套用遮罩")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     auth.check_auth_config()
@@ -214,6 +241,7 @@ async def lifespan(app: FastAPI):
     await scheduler.start()
     app.state.scheduler = scheduler
     loop = asyncio.get_event_loop()
+    await _load_masks_into_pipeline()
     inference_pipeline.start(loop)
     zmq_receiver.start()
     retention_task = asyncio.create_task(_retention_loop())
@@ -264,6 +292,7 @@ app.include_router(auth.router)
 app.include_router(stream.router)
 app.include_router(tracking.router)
 app.include_router(alerts.router)
+app.include_router(masks.router)
 app.include_router(settings_router.router)
 app.include_router(notes.router)
 app.include_router(storage.router)

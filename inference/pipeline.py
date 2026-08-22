@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from typing import Callable
 
 import numpy as np
+
+from mask_filter import filter_detections, rasterize
 from loguru import logger
 
 import inference  # triggers sys.path setup
@@ -77,6 +79,15 @@ class InferencePipeline:
         # 每支 camera 上一輪「實際處理過」的 frame_id。ZMQ 送幀停滯時 _latest 會卡住
         # 同一張凍結幀，若不比對就會每 100ms 重跑 detect→track→write，把單一幀灌進 DB
         # 上百萬列、汙染活動量計算（根因見 docs/handoff-tracking-gap-2026-07-20.md）。
+        # 遮罩：camera_id → 區域列表。由 routers/masks 在存檔時 push 進來
+        # （pipeline 在自己的 thread，查不了 async 的 DB pool）。
+        self._masks: dict[str, list[dict]] = {}
+        # 遮罩總開關。關掉＝完全不過濾，是遮罩把真的豬吃掉時的一鍵復原。
+        self._mask_enabled: bool = True
+        # rasterize 每次都要填多邊形，不能每幀重畫。快取 key 帶 version，
+        # 改遮罩時 version 遞增，舊的 raster 自然失效，不需要跨 thread 清快取。
+        self._mask_version: int = 0
+        self._mask_raster: dict[tuple, np.ndarray] = {}
         self._last_processed_fid: dict[str, int] = {}
         # 每支 camera 最後一次拿到新幀 / 最後一次餵空偵測的 monotonic 時刻，
         # 用來區分「正常的慢」與「真的斷了」，並限制 age-out 的頻率。
@@ -148,6 +159,32 @@ class InferencePipeline:
             self._latest[camera_id] = FrameData(
                 rgb_np=rgb_np, thermal_np=thermal_np, ts=ts, frame_id=frame_id
             )
+
+    def set_masks(self, camera_id: str, regions: list[dict]) -> None:
+        """換掉某台相機的遮罩，立即生效（下一幀就套用）。"""
+        self._masks[camera_id] = list(regions or [])
+        self._mask_version += 1
+
+    def set_mask_enabled(self, enabled: bool) -> None:
+        self._mask_enabled = bool(enabled)
+
+    def _mask_for(self, camera_id: str, width: int, height: int):
+        """取這台相機在這個解析度下的遮罩圖，沒有遮罩回 None。"""
+        if not self._mask_enabled:
+            return None
+        regions = self._masks.get(camera_id)
+        if not regions:
+            return None
+        key = (camera_id, width, height, self._mask_version)
+        raster = self._mask_raster.get(key)
+        if raster is None:
+            raster = rasterize(regions, width, height)
+            # 只留最近的幾張：相機數不多，解析度也不常變，這個上限純粹是
+            # 防止 version 一直遞增把快取撐爆。
+            if len(self._mask_raster) > 32:
+                self._mask_raster.clear()
+            self._mask_raster[key] = raster
+        return raster
 
     def set_active(self, active: bool) -> None:
         """夜間省電閘門：False → _process_batch 跳過 GPU 計算（detector/ReID/
@@ -245,6 +282,21 @@ class InferencePipeline:
                     self._last_processed_fid[c] = fd.frame_id
                     self._last_fresh_mono[c] = now_m
                     self._fresh_ticks[c] = self._fresh_ticks.get(c, 0) + 1
+
+                # 遮罩過濾：放在 ReID 之前，順便省掉被丟棄那些框的 feature 抽取。
+                # dets 的座標在 detector 縮放後的空間，mask_filter 內部會 / scale
+                # 換回原始畫面座標（與下面餵給 ReID 的換算一致）。
+                if self._mask_enabled and self._masks:
+                    filtered = []
+                    for cam, frame_data, dets in zip(cameras, frames, all_dets):
+                        h, w = frame_data.rgb_np.shape[:2]
+                        mask = self._mask_for(cam, w, h)
+                        if mask is None:
+                            filtered.append(dets)
+                            continue
+                        scale = min(test_size[0] / h, test_size[1] / w)
+                        filtered.append(filter_detections(dets, mask, scale))
+                    all_dets = filtered
 
                 # ReID: GPU sequential
                 all_id_feats: list[np.ndarray] = []

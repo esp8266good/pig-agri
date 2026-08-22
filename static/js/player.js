@@ -1,4 +1,5 @@
 // static/js/player.js — HLS 播放（live / VOD）、WS 追蹤連線、canvas bbox 疊圖、transport scrubber。
+import { drawMaskRegions } from './mask.js';
 import { S, els, MAX_WS_RETRY, WS_RETRY_BASE_MS, setStatus, showToast, setSkeleton, fmtClock, hasActiveType } from './state.js';
 import { clearPigSelection, renderPigStatus, updateVodAnomalyMap, refreshAnomalyMap, refreshNotifications } from './panels.js';
 
@@ -430,6 +431,9 @@ function drawBoxes() {
   const renderH = vidH * scale;
   const offX = (elW - renderW) / 2;
   const offY = (elH - renderH) / 2;
+  // 遮罩疊圖畫在 bbox 之前，才不會蓋住框。預設關閉，除錯時才開。
+  drawMaskRegions(ctx, { elW, elH, scale, offX, offY,
+                         renderW, renderH });
   const baseColor = getBoxColor();
   ctx.lineWidth = 1.5;
   ctx.font = 'bold 11px "DM Sans", monospace';

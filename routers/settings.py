@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, HTTPException, Request
 
 import database
+from inference.pipeline import inference_pipeline
 from config import settings as app_settings
 from db_writer import get_all_settings, upsert_settings
 
@@ -20,6 +21,7 @@ ALLOWED_KEYS = frozenset({
     "focus_lowest_enabled",
     "focus_lowest_n",
     "focus_top_n",
+    "mask_enabled",
     # 儲存健康監控（storage_monitor loop 每輪讀 DB → 即時生效、不需 reload）
     "storage_check_interval_seconds",
     "storage_min_free_gb",
@@ -170,6 +172,7 @@ async def get_settings():
             "focus_lowest_enabled":        str(app_settings.focus_lowest_enabled).lower(),
             "focus_lowest_n":              str(app_settings.focus_lowest_n),
             "focus_top_n":                 str(app_settings.focus_top_n),
+            "mask_enabled":                str(app_settings.mask_enabled).lower(),
             "storage_check_interval_seconds": str(app_settings.storage_check_interval_seconds),
             "storage_min_free_gb":            str(app_settings.storage_min_free_gb),
             "storage_min_free_inodes_ratio":  str(app_settings.storage_min_free_inodes_ratio),
@@ -209,6 +212,12 @@ async def update_settings(request: Request, body: dict[str, str]):
     if not updates:
         raise HTTPException(status_code=400, detail="No valid keys provided")
     await upsert_settings(pool, updates)
+    # 遮罩總開關要立刻生效：它的用途是「遮罩把真的豬吃掉了，馬上關掉」，
+    # 等下次重啟才生效等於沒有這個開關。
+    if "mask_enabled" in updates:
+        inference_pipeline.set_mask_enabled(
+            str(updates["mask_enabled"]).strip().lower() == "true")
+
     if _RELOAD_KEYS & updates.keys():
         current = await get_all_settings(pool)
         request.app.state.scheduler.reload(
