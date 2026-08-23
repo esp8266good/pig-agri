@@ -42,3 +42,4 @@ venv.bak/
 scripts/*.log
 # service-readme.md 的個人化副本
 service-readme_pig.md
+.verify_thermal_passed

@@ -25,8 +25,16 @@ if [ "$verdict" != "PASS" ]; then
 fi
 msg+=$'\n\n''接手用的 prompt 在 docs/superpowers/plans/2026-08-24-thermal-y16-rollout.md 最後一節。'
 
-curl -s -m 20 -o /dev/null -w "ntfy %{http_code}\n" \
-  -H "Title: $title" -H "Priority: $prio" -H "Tags: $tags" \
-  -d "$msg" "$NTFY"
+# 每天跑，但不是每天都吵人：第一次通過一定推（那是交接要的答案），之後只有
+# 退化或無法判定才推。哪天又壞掉會自己叫，通過的日子安靜。
+FLAG=.verify_thermal_passed
+if [ "$verdict" = "PASS" ] && [ -f "$FLAG" ]; then
+  echo "PASS 且先前已通知過，不重複推播"
+else
+  curl -s -m 20 -o /dev/null -w "ntfy %{http_code}\n" \
+    -H "Title: $title" -H "Priority: $prio" -H "Tags: $tags" \
+    -d "$msg" "$NTFY"
+  [ "$verdict" = "PASS" ] && date -Is > "$FLAG"
+fi
 
 printf '%s\n' "$result"
