@@ -325,9 +325,16 @@ function connectWS(cameraId) {
 }
 
 // ── Canvas overlay ────────────────────────────────────────
-function getBoxColor() {
-  return S.currentType === 'thermal' ? '#ff8c42' : '#22bb77';
-}
+// 一般豬（沒有任何標籤）的框色。以前 rgb 畫 #22bb77 綠、thermal 畫 #ff8c42 橘，
+// 但那兩個顏色分別跟 reference 的 #3ecf8e 綠、lowest 的 #ff9a3c 橘幾乎一樣：
+// 畫面上同時出現時根本分不出哪隻是被挑出來的。改成中性灰白之後，飽和色一律
+// 只代表「這隻豬有事」，看到彩色就是有意義。
+const NEUTRAL_BOX_COLOR = '#c9d1cd';
+// 灰白框壓在熱像的橘紅底、或 rgb 的淺色地板上都會糊掉，所以每個框先描一圈
+// 暗色再畫本色。紅框壓在深色墊料上也吃到同樣的好處。
+const BOX_HALO_COLOR = 'rgba(0,0,0,0.55)';
+// 'ghost' 模式下一般框的透明度。低到不干擾，又還看得見輪廓。
+const GHOST_BOX_ALPHA = 0.18;
 
 // ── 影格比例 ──────────────────────────────────────────────
 // #video-wrap 以前寫死 aspect-ratio: 4/3，但相機送出來的是 1280x720（16:9），
@@ -442,7 +449,13 @@ function drawBoxes() {
     displayBoxes = displayBoxes.filter(o => o.object_id === S.selectedObjectId);
   }
 
-  if (!vidW || !vidH || !displayBoxes.length) {
+  if (!vidW || !vidH) {
+    drawDbgHud();
+    S.animFrameId = requestAnimationFrame(drawBoxes);
+    return;
+  }
+  if (!displayBoxes.length) {
+    drawBoxCountChip(ctx, elH, 0, 0);
     drawDbgHud();
     S.animFrameId = requestAnimationFrame(drawBoxes);
     return;
@@ -455,9 +468,10 @@ function drawBoxes() {
   // 遮罩疊圖畫在 bbox 之前，才不會蓋住框。預設關閉，除錯時才開。
   drawMaskRegions(ctx, { elW, elH, scale, offX, offY,
                          renderW, renderH });
-  const baseColor = getBoxColor();
-  ctx.lineWidth = 1.5;
   ctx.font = 'bold 11px "DM Sans", monospace';
+  // 被 'focus' 濾掉、與被 'ghost' 淡化的一般框各數幾個。零異常時畫面會整片
+  // 空白，這個數字是「偵測還活著」的唯一證據（見下方 drawBoxCountChip）。
+  let plainCount = 0;
 
   for (const o of displayBoxes) {
     const [x, y, w, h] = o.bbox;
@@ -470,19 +484,27 @@ function drawBoxes() {
     // 關注清單的三種標籤各有顏色。零異常時畫面上仍然有橘框與綠框，
     // 使用者才分得出「系統正常但沒事」與「系統掛了」。
     const focusLabel  = S.focusLabels[o.object_id] ?? null;
-    // 只在 LIVE 套用「只畫關注清單」：VOD 沒有關注清單（那是當下的判斷），
-    // 在 VOD 濾掉非異常的框會讓沒有異常的時段整片空白，分不出系統壞了沒。
-    if (S.focusOnlyBoxes && S.isLive && !isAnomalous && !focusLabel) continue;
-    const color = isAnomalous ? '#ff4444'
-                : focusLabel === 'lowest'    ? '#ff9a3c'
-                : focusLabel === 'reference' ? '#3ecf8e'
-                : baseColor;
-
     // 選取強調：選取的框加粗全亮，其餘淡化（selectedObjectId 為 null 時不變）
     const isSel  = S.selectedObjectId != null && o.object_id === S.selectedObjectId;
     const dimmed = S.selectedObjectId != null && !isSel;
+    // 使用者親手點選的那一隻永遠照畫：他要找的就是牠，被顯示模式濾掉會像壞了。
+    const isKey  = isAnomalous || !!focusLabel || isSel;
+    if (!isKey) {
+      plainCount++;
+      // 'focus' 直接不畫；'ghost' 畫但極淡；'all' 照常。VOD 沒有關注清單，
+      // 所以在回放這條等於「只留異常的紅框」，也就是預設看到的樣子。
+      if (S.boxDisplayMode === 'focus') continue;
+    }
+    const ghosted = !isKey && S.boxDisplayMode === 'ghost';
+    const color = isAnomalous ? '#ff4444'
+                : focusLabel === 'lowest'    ? '#ff9a3c'
+                : focusLabel === 'reference' ? '#3ecf8e'
+                : NEUTRAL_BOX_COLOR;
+
     ctx.save();
+    ctx.lineWidth = 1.5;
     if (dimmed) ctx.globalAlpha = 0.25;
+    if (ghosted) ctx.globalAlpha = Math.min(ctx.globalAlpha, GHOST_BOX_ALPHA);
     // 沿用的框畫淡一點；與 dimmed 疊加時取較小值，不會反而變亮。
     if (heldAgeSec != null) {
       // 沿用愈久畫得愈淡，連續遞減不會有「突然消失」的瞬間。
@@ -492,19 +514,31 @@ function drawBoxes() {
     }
     if (isSel)  ctx.lineWidth = 4;
 
+    roundRect(ctx, px, py, pw, ph, 3);
+    // 淡框不描暗邊：那圈黑線比框本身還顯眼，等於白淡化。
+    if (!ghosted) {
+      ctx.strokeStyle = BOX_HALO_COLOR;
+      ctx.lineWidth  += 2;
+      ctx.stroke();
+      ctx.lineWidth  -= 2;
+    }
     ctx.strokeStyle = color;
     ctx.fillStyle   = color;
-    roundRect(ctx, px, py, pw, ph, 3);
     ctx.stroke();
 
-    // 豬隻 ID 標籤
-    const label = `#${o.object_id}`;
-    const tw = ctx.measureText(label).width;
-    ctx.fillStyle = color;
-    ctx.fillRect(px - 0.5, py - 16, tw + 6, 15);
-    ctx.fillStyle = '#000';
-    ctx.fillText(label, px + 2, py - 4);
-    ctx.fillStyle = color;
+    // 豬隻 ID 標籤。只有重點框才畫：每個框頂一塊實心色塊，在小螢幕上比框本身
+    // 還吵。想知道某隻一般豬的 ID 就點右邊清單選取牠，選取的框一定會帶標籤。
+    if (isKey) {
+      const label = `#${o.object_id}`;
+      const tw = ctx.measureText(label).width;
+      ctx.fillStyle = BOX_HALO_COLOR;
+      ctx.fillRect(px - 1.5, py - 17, tw + 8, 17);
+      ctx.fillStyle = color;
+      ctx.fillRect(px - 0.5, py - 16, tw + 6, 15);
+      ctx.fillStyle = '#000';
+      ctx.fillText(label, px + 2, py - 4);
+      ctx.fillStyle = color;
+    }
 
     // 異常圖示（bbox 左下角）
     if (anomaly) {
@@ -515,8 +549,32 @@ function drawBoxes() {
     }
     ctx.restore();
   }
+  drawBoxCountChip(ctx, elH, displayBoxes.length, plainCount);
   drawDbgHud();
   S.animFrameId = requestAnimationFrame(drawBoxes);
+}
+
+// 左下角的一行小字。存在的理由只有一個：'focus' 模式把一般框全濾掉之後，
+// 一個沒有異常的時段跟「偵測整個掛掉」在畫面上長得一模一樣。有了這個數字，
+// 「已隱藏 12 個正常框」＝系統在數豬、只是沒事；「未偵測到豬隻」＝真的沒東西。
+// 畫在 canvas 而不是另做 DOM：它要跟著影片實際的畫面區域走，而且左上角已經被
+// bbox 同步診斷 HUD 佔住了。
+function drawBoxCountChip(ctx, elH, totalBoxes, plainCount) {
+  if (S.boxDisplayMode !== 'focus') return;   // 其餘模式框都看得見，不必再說
+  // 「只顯示選取的豬」是使用者自己把畫面清空的，這時數字只會誤導。
+  if (S.soloMode && S.selectedObjectId != null) return;
+  if (totalBoxes > 0 && plainCount === 0) return;   // 沒有東西被藏起來
+  const text = totalBoxes === 0 ? '未偵測到豬隻' : `已隱藏 ${plainCount} 個正常框`;
+  ctx.save();
+  ctx.font = '11px "DM Sans", sans-serif';
+  const tw = ctx.measureText(text).width;
+  const x = 6, y = elH - 22;
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  roundRect(ctx, x, y, tw + 12, 18, 4);
+  ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.72)';
+  ctx.fillText(text, x + 6, y + 13);
+  ctx.restore();
 }
 
 // Diagnostic HUD for live bbox/stream sync — toggle with the 'd' key.

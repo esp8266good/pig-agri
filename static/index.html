@@ -291,12 +291,19 @@
           <section id="focus-section" aria-label="關注清單">
             <div id="focus-header">
               <h4>關注清單</h4>
-              <label class="focus-only-toggle">
-                <input type="checkbox" id="focus-only-checkbox" checked> 只畫這些框
-              </label>
             </div>
             <ul id="focus-list"></ul>
           </section>
+          <!-- 這條控制的是影片上畫幾種框，跟關注清單是兩件事：回放沒有關注清單，
+               但一樣要能決定要不要看見那一堆沒有意義的框。所以它放在清單外面。 -->
+          <div class="box-mode-row" id="box-mode-row">
+            <label for="box-mode-select">畫面上的框</label>
+            <select id="box-mode-select">
+              <option value="focus">只畫重點</option>
+              <option value="ghost">其餘畫成淡框</option>
+              <option value="all">全部照畫</option>
+            </select>
+          </div>
           <label class="solo-toggle">
             <input type="checkbox" id="solo-checkbox"> 只顯示選取的豬
             <span id="solo-hint" class="solo-hint" hidden>← 需先點選下方豬隻列（僅 LIVE 生效）</span>

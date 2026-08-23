@@ -4,7 +4,7 @@ import { loadStream, loadVod, startLiveTimers, stopLiveTimers, detachVodListener
 import { loadTimeline, clearSelection, closeSlotActionMenu, closeDeleteModal, localDayStart } from './timeline.js';
 import { initMaskEditor, loadMaskRegions } from './mask.js';
 import { initHelp } from './help.js';
-import { switchTab, onSortHeaderClick, refreshAnomalyMap, refreshNotifications, loadMoreNotifications, refreshFocusList, setFocusOnlyBoxes, loadSettings, loadBookmarks, closeBookmarkEditModal, openSettingsDrawer, closeSettingsDrawer, initSettingsDrawer, updateSoloHint } from './panels.js';
+import { switchTab, onSortHeaderClick, refreshAnomalyMap, refreshNotifications, loadMoreNotifications, refreshFocusList, setBoxDisplayMode, loadSettings, loadBookmarks, closeBookmarkEditModal, openSettingsDrawer, closeSettingsDrawer, initSettingsDrawer, updateSoloHint } from './panels.js';
 import { enterGrid, leaveGrid, bindGridPick, getGridPlaybackHour } from './grid.js';
 import { ensureAuth } from './auth.js';
 
@@ -195,10 +195,10 @@ async function init() {
   }
   initMaskEditor();
   initHelp();
-  if (els.focusOnlyChk) {
-    // 勾選狀態存在 localStorage，所以要從 S 反向同步到 DOM，不能只信 HTML 的 checked。
-    els.focusOnlyChk.checked = S.focusOnlyBoxes;
-    els.focusOnlyChk.addEventListener('change', e => setFocusOnlyBoxes(e.target.checked));
+  if (els.boxModeSel) {
+    // 選擇存在 localStorage，所以要從 S 反向同步到 DOM，不能只信 HTML 的 selected。
+    els.boxModeSel.value = S.boxDisplayMode;
+    els.boxModeSel.addEventListener('change', e => setBoxDisplayMode(e.target.value));
   }
 }
 
