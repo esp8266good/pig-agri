@@ -1,6 +1,7 @@
 import struct
 import threading
 import time
+from datetime import datetime
 from typing import Optional
 
 import cv2
@@ -10,7 +11,14 @@ from loguru import logger
 
 import hls_manager as hls_mod
 import inference.pipeline as pipeline_mod
+import thermal_render
 from config import ZmqSource, settings
+
+# 擷取端可能送兩種 thermal payload，用檔頭分辨，不必改封包格式也不會誤判：
+#   PNG16  → 原生解析度的 Y16 溫度場（現行 rpi5 sender，mode=y16_png）
+#   JPEG   → 舊的假色 preview 圖（舊版 sender；仍能顯示，但算不出體溫）
+_PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+_JPEG_MAGIC = b"\xff\xd8"
 
 # zmq_common.py
 _HDR = struct.Struct("dQII")   # ts, frame_id, rgb_len, th_len
@@ -183,14 +191,63 @@ class ZMQReceiver:
             hls_mod.hls_manager.feed(label, "rgb", rgb_bytes, capture_ts=ts)
 
         if thermal_bytes:
-            arr        = np.frombuffer(thermal_bytes, dtype=np.uint8)
-            thermal_np = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-            hls_mod.hls_manager.feed(label, "thermal", thermal_bytes)
+            thermal_np = self._handle_thermal(label, ts, thermal_bytes)
 
         if rgb_np is not None:
             pipeline_mod.inference_pipeline.update_frame(
                 label, rgb_np, thermal_np, ts, frame_id
             )
+
+    def _handle_thermal(self, label: str, ts: float, payload: bytes):
+        """解出熱像，回傳要交給推論的陣列，順便把可看的圖餵進 HLS。
+
+        走 PNG16 這條時回傳的是**攝氏溫度場**（float32 2D），推論端才算得出每隻
+        豬 bbox 範圍的真實體溫。走舊的 JPEG 那條回傳的是 BGR 圖，
+        _compute_thermal_celsius 看到三維陣列會拒絕給值——寧可沒有體溫，
+        也不要回報一個從顏色算出來的假數字。
+        """
+        arr = np.frombuffer(payload, dtype=np.uint8)
+
+        if payload[:8] != _PNG_MAGIC:
+            # 舊擷取端：假色 preview JPEG，原樣轉進 HLS。
+            hls_mod.hls_manager.feed(label, "thermal", payload)
+            return cv2.imdecode(arr, cv2.IMREAD_COLOR)
+
+        y16 = cv2.imdecode(arr, cv2.IMREAD_UNCHANGED)
+        if y16 is None or y16.dtype != np.uint16:
+            logger.warning(f"[{label}] thermal PNG16 decode failed "
+                           f"(dtype={None if y16 is None else y16.dtype})")
+            return None
+        if y16.ndim == 3:
+            y16 = y16[:, :, 0]
+
+        temp_c = thermal_render.y16_to_celsius(y16)
+
+        # 上色只為了給人看，失敗不能拖垮體溫這條路。
+        try:
+            preview = thermal_render.celsius_to_preview(
+                temp_c,
+                lo_c=settings.thermal_preview_min_c,
+                hi_c=settings.thermal_preview_max_c,
+                out_w=settings.thermal_preview_width,
+                out_h=settings.thermal_preview_height,
+                overlay=(f"{datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S')}  "
+                         f"min {float(temp_c.min()):.1f}C  "
+                         f"max {float(temp_c.max()):.1f}C  "
+                         f"range {settings.thermal_preview_min_c:.0f}-"
+                         f"{settings.thermal_preview_max_c:.0f}C"),
+            )
+            # capture_ts 一併給：熱像以前沒帶擷取時間，前端 VOD 只能退回
+            # 「起始時間 + 播放進度」估算。現在跟 rgb 同一條時鐘。
+            hls_mod.hls_manager.feed(
+                label, "thermal",
+                thermal_render.encode_jpeg(preview, settings.thermal_preview_jpeg_quality),
+                capture_ts=ts,
+            )
+        except Exception as e:
+            logger.warning(f"[{label}] thermal preview render failed: {e}")
+
+        return temp_c
 
 
 zmq_receiver = ZMQReceiver()

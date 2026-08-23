@@ -38,7 +38,7 @@ def _log(bb_left, ts, bb_top=0.0, thermal=None):
     return {
         "bb_left": bb_left, "bb_top": bb_top,
         "bb_width": 10.0, "bb_height": 10.0,
-        "thermal_intensity": thermal, "timestamp": ts,
+        "thermal_celsius": thermal, "timestamp": ts,
     }
 
 

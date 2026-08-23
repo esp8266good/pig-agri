@@ -189,7 +189,7 @@ class Scheduler:
             for object_id in object_ids:
                 logs = await self._pool.fetch(
                     """SELECT bb_left, bb_top, bb_width, bb_height,
-                              thermal_intensity, timestamp
+                              thermal_celsius, timestamp
                        FROM tracking_logs
                        WHERE camera_id=$1 AND object_id=$2
                          AND timestamp >= $3 AND timestamp < $4
@@ -239,8 +239,8 @@ class Scheduler:
 
                 if self._temp_enabled:
                     temps = [
-                        lg["thermal_intensity"] for lg in logs_by_obj[object_id]
-                        if lg["thermal_intensity"] is not None
+                        lg["thermal_celsius"] for lg in logs_by_obj[object_id]
+                        if lg["thermal_celsius"] is not None
                     ]
                     if len(temps) >= self._settings.anomaly_min_samples:
                         mean_t = float(np.mean(temps))
