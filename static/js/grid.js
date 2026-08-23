@@ -182,6 +182,14 @@ async function buildTile(root, cam, beforeNode = null, gen = _gridGen) {
       url = live.url;
     }
     const video = tile.querySelector('video');
+    // 每格自己貼合該路串流的比例，理由同 player.js 的 syncVideoAspect()：
+    // 寫死 4/3 而串流是 16:9，每一格上下都白白黑掉四分之一的高度。
+    const fitTile = () => {
+      if (video.videoWidth && video.videoHeight)
+        tile.style.setProperty('--video-ar', `${video.videoWidth} / ${video.videoHeight}`);
+    };
+    video.addEventListener('loadedmetadata', fitTile);
+    video.addEventListener('resize', fitTile);
     if (window.Hls && Hls.isSupported()) {
       const hls = new Hls({ lowLatencyMode: false, liveSyncDurationCount: 3,
                             maxBufferLength: 20 });

@@ -329,6 +329,27 @@ function getBoxColor() {
   return S.currentType === 'thermal' ? '#ff8c42' : '#22bb77';
 }
 
+// ── 影格比例 ──────────────────────────────────────────────
+// #video-wrap 以前寫死 aspect-ratio: 4/3，但相機送出來的是 1280x720（16:9），
+// contain 之後上下各留一條黑邊，等於整個畫框有四分之一的高度是黑的。
+// 改成量 video 真正的 videoWidth/videoHeight 寫回 CSS 變數，畫框就剛好貼合影像、
+// 一條黑邊都不留；換成別的比例的相機也自動跟上，不必再改 CSS。
+// metadata 還沒到之前用 16/9 當預設，避免載入瞬間畫框跳動。
+export function syncVideoAspect() {
+  const w = els.video.videoWidth, h = els.video.videoHeight;
+  if (!w || !h) return;
+  // 寫在 :root 而不是 #video-wrap 上：高度受限時要縮的是整張 .video-card
+  // （卡片貼合影片，transport 與頁尾才會跟影片切齊；只縮畫框的話卡片還是滿版，
+  // 影片兩側留下的空卡片跟黑邊一樣是浪費）。CSS 變數只往下繼承，
+  // 掛在畫框上的話它的祖先卡片讀不到。
+  const root = document.documentElement.style;
+  root.setProperty('--main-video-ar', `${w} / ${h}`);
+  // 數值版本：calc() 不能拿 `16 / 9` 這種 aspect-ratio 值來乘。
+  root.setProperty('--main-video-ar-num', String(w / h));
+}
+els.video.addEventListener('loadedmetadata', syncVideoAspect);
+els.video.addEventListener('resize', syncVideoAspect);   // 換相機/換 rendition 時比例可能變
+
 function drawBoxes() {
   updateTransport();
   const canvas = document.getElementById('overlay');

@@ -33,11 +33,15 @@ async function setViewMode(mode, opts = {}) {
     // startLiveTimers——grid 本身有自己的計時器，不需要單畫面播放器連線。
     exitVodState();
     singleEls.forEach(el => el.hidden = true);
+    // 放大模式的退出鈕長在 video-card 上，而 grid 模式把 video-card 整個藏起來：
+    // 不先退出的話，右欄與時間軸會在 grid 模式下憑空消失，而且沒有東西可以按回來。
+    setVideoMax(false, false);
     toggleIcon.setAttribute('href', '#i-single');
     await enterGrid();
   } else {
     leaveGrid();
     singleEls.forEach(el => el.hidden = false);
+    try { if (localStorage.getItem('videoMax') === 'true') setVideoMax(true, false); } catch (_) {}
     toggleIcon.setAttribute('href', '#i-grid');
     if (opts.vodStartTs != null) {
       // grid 回放中點格：帶時段直接進該攝影機 VOD，時間軸同步選中該日
@@ -237,6 +241,35 @@ document.querySelectorAll('#pig-status-table th.sortable').forEach(th => {
     settingsBtn.addEventListener('click', () => openSettingsDrawer());
   }
 }
+// ── 放大影片 ──────────────────────────────────────────────
+// 收起右欄與時間軸，把整個版面讓給影片。純視覺切換，不碰播放器也不碰資料，
+// 所以離開時什麼都不用還原。每個瀏覽器各自記住上次的選擇。
+// persist=false 用在「不是使用者主動關的」情況（例如切去 grid 被迫退出）：
+// 那時不該把偏好也一起改掉，否則從 grid 回到單畫面會莫名其妙變回小畫面。
+function setVideoMax(on, persist = true) {
+  document.body.classList.toggle('video-max', on);
+  const btn = document.getElementById('video-max-btn');
+  if (btn) {
+    btn.setAttribute('aria-pressed', String(on));
+    btn.setAttribute('aria-label', on ? '還原影片大小' : '放大影片');
+    btn.title = on ? '還原版面（顯示右欄與時間軸）' : '放大影片（收起右欄與時間軸）';
+    document.getElementById('video-max-icon')
+      ?.setAttribute('href', on ? '#i-collapse' : '#i-expand');
+  }
+  if (persist) { try { localStorage.setItem('videoMax', String(on)); } catch (_) {} }
+}
+export function isVideoMax() { return document.body.classList.contains('video-max'); }
+
+document.getElementById('video-max-btn')
+  ?.addEventListener('click', () => setVideoMax(!isVideoMax()));
+// Esc 是「退出放大」的通用預期。只在放大時吃掉，不影響其他 Esc 用途。
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && isVideoMax()) { setVideoMax(false); e.preventDefault(); }
+});
+try {
+  if (localStorage.getItem('videoMax') === 'true') setVideoMax(true);
+} catch (_) {}
+
 // #view-toggle-btn：單畫面 ⇄ Grid 多畫面監看
 {
   const viewToggleBtn = document.getElementById('view-toggle-btn');

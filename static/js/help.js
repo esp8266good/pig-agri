@@ -14,6 +14,7 @@ const HELP = {
   'btn-rgb':             '一般彩色畫面。',
   'btn-thermal':         '熱像畫面。熱像沒有豬隻方框，它只用來看體溫。',
   'view-toggle-btn':     '切換單一畫面與多畫面同時監看。',
+  'video-max-btn':       '把右邊的清單和下面的時間軸收起來，讓影片吃滿整個畫面。再按一次（或按 Esc）回到原本的版面。只影響顯示，不會停掉錄影或分析。',
   'bell-btn':            '通知中心。上面的數字是未讀的告警筆數。',
   'manual-link':         '操作手冊，會開新分頁。裡面有完整的使用說明與每一項設定的後果。',
   'settings-btn':        '系統設定。裡面有幾項改錯會刪掉錄影，每一項都有說明。',
@@ -98,6 +99,8 @@ function hideSheet() {
 const PASSTHROUGH = [
   '#settings-btn', '#settings-close-btn', '#settings-overlay',
   '#bell-btn', '.tab-btn', '#view-toggle-btn', '#manual-link',
+  // 放大影片只是收合版面，不改任何設定或資料，說明模式下照樣放行。
+  '#video-max-btn',
 ].join(',');
 
 // 用捕獲階段攔截：要在元件自己的 handler 之前把事件吃掉，
