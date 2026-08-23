@@ -23,7 +23,13 @@ if [ "$verdict" != "PASS" ]; then
   msg+=$'\n''  然後 systemctl --user restart rgbt-sender'
   msg+=$'\n''· server：git revert 那個 merge，重啟 app service'
 fi
-msg+=$'\n\n''接手用的 prompt 在 docs/superpowers/plans/2026-08-24-thermal-y16-rollout.md 最後一節。'
+# 推播會在手機上讀到，手邊不會有 repo：把接手要用的最短入口直接寫進訊息，
+# 而不是只給一個檔案路徑（那等於還要先開一個 session 才知道怎麼開對的 session）。
+msg+=$'\n\n''── 接手 ──'
+msg+=$'\n''cd pig-agri && bash scripts/verify_thermal_rollout.sh'
+msg+=$'\n''完整背景與退回方式：'
+msg+=$'\n''docs/superpowers/plans/2026-08-24-thermal-y16-rollout.md'
+msg+=$'\n''（第 4 節是這次排除掉的路，不要重新推導）'
 
 # 每天跑，但不是每天都吵人：第一次通過一定推（那是交接要的答案），之後只有
 # 退化或無法判定才推。哪天又壞掉會自己叫，通過的日子安靜。
