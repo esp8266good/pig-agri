@@ -112,35 +112,19 @@ export function fmtClock(sec) {
 
 
 // ── 底部固定面板的留白 ────────────────────────────────────
-// 說明模式的說明條、時間軸多選後彈出的操作列，都是 position: fixed 貼在畫面底部，
-// 會蓋住頁面最後一段內容（多選操作列這個問題存在很久了）。
-// 這裡量出目前可見的底部面板有多高，寫進 --bottom-inset，
-// 由 CSS 去墊出對應的捲動空間。任何之後新增的底部面板只要加進 _BOTTOM_BARS 就會跟著生效。
-const _BOTTOM_BARS = [
-  () => {
-    const el = document.getElementById('help-sheet');
-    return el && !el.hasAttribute('hidden') ? el : null;
-  },
-  () => {
-    const el = document.getElementById('storage-action-bar');
-    return el && el.classList.contains('visible') ? el : null;
-  },
-];
-
+// 說明模式的說明條、時間軸多選後彈出的操作列，都貼在畫面底部，會蓋住頁面最後一段內容。
+// 它們現在全部裝在 #bottom-stack（一個 flex column）裡面垂直排開，所以只要量這個
+// 容器有多高就好：以前是分別量、再取最大值，那個做法預設了兩條面板互相重疊——
+// 而它們確實重疊了，說明條把整條操作列蓋掉，數字卻看起來完全正常。
+// 之後新增底部面板，直接放進 #bottom-stack 就會自動計入，這裡不用改。
 export function syncBottomInset() {
-  let inset = 0;
-  for (const get of _BOTTOM_BARS) {
-    const el = get();
-    if (el) inset = Math.max(inset, el.offsetHeight || 0);
-  }
+  const stack = document.getElementById('bottom-stack');
+  const inset = stack ? Math.round(stack.getBoundingClientRect().height) : 0;
   document.documentElement.style.setProperty('--bottom-inset', `${inset}px`);
 }
 
 // 說明條的高度會隨文字長度變，光在開關時量一次不夠。
 if (typeof ResizeObserver !== 'undefined') {
-  const ro = new ResizeObserver(() => syncBottomInset());
-  for (const id of ['help-sheet', 'storage-action-bar']) {
-    const el = document.getElementById(id);
-    if (el) ro.observe(el);
-  }
+  const stack = document.getElementById('bottom-stack');
+  if (stack) new ResizeObserver(() => syncBottomInset()).observe(stack);
 }

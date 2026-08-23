@@ -57,6 +57,14 @@
     <symbol id="i-single" viewBox="0 0 24 24">
       <rect x="3" y="3" width="18" height="18" rx="2"/>
     </symbol>
+    <symbol id="i-expand" viewBox="0 0 24 24">
+      <polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/>
+      <line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>
+    </symbol>
+    <symbol id="i-collapse" viewBox="0 0 24 24">
+      <polyline points="14 10 21 10 21 3"/><polyline points="10 14 3 14 3 21"/>
+      <line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>
+    </symbol>
     <symbol id="i-calendar" viewBox="0 0 24 24">
       <rect x="3" y="5" width="18" height="16" rx="2"/>
       <line x1="3" y1="9" x2="21" y2="9"/>
@@ -211,6 +219,9 @@
             <div class="stat-chip" id="latency-chip" style="display:none">
               延遲：<strong id="latency-val">—</strong> ms
             </div>
+            <button class="icon-btn" id="video-max-btn" aria-pressed="false"
+                    aria-label="放大影片" title="放大影片（收起右欄與時間軸）">
+              <svg class="icon"><use id="video-max-icon" href="#i-expand"/></svg></button>
           </div>
         </div>
       </div>
@@ -235,13 +246,6 @@
           </div>
         </div>
         <div id="timeline-bar" role="list" aria-label="所選日期的每小時時間軸"></div>
-        <div id="storage-action-bar" role="toolbar" aria-label="儲存管理操作">
-          <span id="storage-sel-count">已選 0 小時</span>
-          <button id="btn-retain"><svg class="icon"><use href="#i-lock"/></svg>保留</button>
-          <button id="btn-bookmark"><svg class="icon"><use href="#i-star"/></svg>書籤</button>
-          <button id="btn-delete-rec"><svg class="icon"><use href="#i-trash"/></svg>刪除</button>
-          <button id="btn-clear-sel"><svg class="icon"><use href="#i-x"/></svg>取消選取</button>
-        </div>
       </div>
 
       <div id="grid-playback-banner" hidden>
@@ -257,6 +261,9 @@
             <span id="grid-date-btn-label">—</span>
             <svg class="icon icon-sm"><use href="#i-chev-r" transform="rotate(90 12 12)"/></svg>
           </button>
+          <!-- 這條時間軸跟單畫面那條長得一樣，但它是「一次換掉全部畫面」。
+               不寫出來的話，使用者只會發現點下去每一格畫面都變了卻不知道為什麼。 -->
+          <span id="grid-timeline-hint">選一個時段，上面所有畫面一起跳過去</span>
           <div id="grid-calendar" class="cal-popover" hidden>
             <div class="cal-header">
               <button class="cal-nav-btn" id="grid-prev-month" aria-label="上一月">&#8249;</button>
@@ -325,7 +332,20 @@
     </aside>
   </main>
 
-  <div id="help-sheet" role="status" aria-live="polite" hidden></div>
+  <!-- 底部固定面板堆疊。所有貼在畫面底部的 fixed 面板都要放進這裡，才會垂直排開
+       而不是互相蓋住（說明條蓋掉儲存操作列就是這樣來的）。堆疊的總高度由
+       state.js 的 syncBottomInset() 量出來寫進 --bottom-inset，頁面據此墊出捲動空間。
+       排序：離手指近的放下面。新增面板時直接加成這裡的子元素，不必自己算偏移量。 -->
+  <div id="bottom-stack">
+    <div id="storage-action-bar" role="toolbar" aria-label="儲存管理操作">
+      <span id="storage-sel-count">已選 0 小時</span>
+      <button id="btn-retain"><svg class="icon"><use href="#i-lock"/></svg>保留</button>
+      <button id="btn-bookmark"><svg class="icon"><use href="#i-star"/></svg>書籤</button>
+      <button id="btn-delete-rec"><svg class="icon"><use href="#i-trash"/></svg>刪除</button>
+      <button id="btn-clear-sel"><svg class="icon"><use href="#i-x"/></svg>取消選取</button>
+    </div>
+    <div id="help-sheet" role="status" aria-live="polite" hidden></div>
+  </div>
   <div id="settings-overlay" hidden></div>
   <aside id="settings-drawer" aria-label="系統設定" hidden>
     <div class="drawer-head">

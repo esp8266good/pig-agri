@@ -155,6 +155,12 @@ async function buildTile(root, cam, beforeNode = null, gen = _gridGen) {
     tile.querySelector('.tile-count').textContent = '';
   }
   tile.querySelector('.tile-name').textContent = cam;
+  // 「點格子會切到那台的單畫面」完全看不出來，滑鼠移上去只有邊框變色。
+  // title 給桌機，data-help 給說明模式（tile 是動態產生的，initHelp() 那輪
+  // 還不存在，所以要在這裡自己補上）。
+  const tileHelp = '點一下切到這台攝影機的單畫面，那裡才有豬隻方框、以及保留／刪除影像的功能。';
+  tile.title = tileHelp;
+  tile.dataset.help = tileHelp;
   tile.addEventListener('click', () => _onPickCamera && _onPickCamera(cam));
   root.insertBefore(tile, beforeNode);   // beforeNode=null 時等同 appendChild，保持重試後原位置
   // 該型別無來源（如 thermal 攝影機沒裝）：預期狀態，無訊號佔位、不建播放器、無重試鈕。
@@ -182,6 +188,14 @@ async function buildTile(root, cam, beforeNode = null, gen = _gridGen) {
       url = live.url;
     }
     const video = tile.querySelector('video');
+    // 每格自己貼合該路串流的比例，理由同 player.js 的 syncVideoAspect()：
+    // 寫死 4/3 而串流是 16:9，每一格上下都白白黑掉四分之一的高度。
+    const fitTile = () => {
+      if (video.videoWidth && video.videoHeight)
+        tile.style.setProperty('--video-ar', `${video.videoWidth} / ${video.videoHeight}`);
+    };
+    video.addEventListener('loadedmetadata', fitTile);
+    video.addEventListener('resize', fitTile);
     if (window.Hls && Hls.isSupported()) {
       const hls = new Hls({ lowLatencyMode: false, liveSyncDurationCount: 3,
                             maxBufferLength: 20 });

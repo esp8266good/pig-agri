@@ -67,6 +67,15 @@
          而且 computed 值看起來就是 0px，完全看不出是被誰蓋掉的。 */
       padding: 0 0 var(--bottom-inset, 0px);
     }
+    /* hidden 屬性必須真的能藏住東西。瀏覽器預設的 [hidden] { display: none } 是
+       UA 樣式，任何一條作者寫的 display 規則都蓋得過它，而且蓋過去之後
+       `el.hidden = true` 看起來有設、元素卻還在畫面上，非常難查。
+       這個專案已經被咬過兩次：多畫面模式下單畫面的時間軸沒藏起來（畫面上下各
+       一條 24 小時列，上面那條點了不會有反應），以及通知分頁的「載入更多」
+       在沒有更多可載時仍然顯示。改成作者樣式 + !important，一次擋掉整類問題。
+       ⚠ 需要「設了 hidden 卻仍要顯示」的元素不存在，也不該存在；真有這種需求
+       請改用 class 控制，不要放寬這條規則。 */
+    [hidden] { display: none !important; }
     button { cursor: pointer; border: none; background: none; font: inherit; color: inherit; }
     select { font: inherit; }
     :focus-visible {
@@ -251,16 +260,30 @@
     #video-wrap {
       position: relative;
       width: 100%;
-      aspect-ratio: 4/3;
+      /* 比例跟著串流走：player.js 的 syncVideoAspect() 在 loadedmetadata 時把
+         videoWidth/videoHeight 寫進 :root 的 --main-video-ar。寫死 4/3 而相機送
+         16:9 的時候，contain 會在上下各留一條黑邊，等於畫框有 25% 的高度是黑的。
+         metadata 還沒到之前用 16/9 墊著，載入瞬間畫框才不會跳。 */
+      aspect-ratio: var(--main-video-ar, 16 / 9);
       background: #000; /* 刻意保留：影片 letterbox 黑底，非語意 token */
       overflow: hidden;
     }
     @media (min-width: 1200px) {
-      /* 3a: 影片高度上限依視窗高度計——保證影片＋transport＋footer＋整條時間軸
+      /* 3a: 影片高度上限依視窗高度計，保證影片＋transport＋footer＋整條時間軸
          同屏可見（offset ≈ header 60 + transport 44 + footer 44 + 時間軸區 120
-         + layout padding/gap 48 ≈ 316，取 320）。aspect-ratio 讓位給 max-height，
-         video 的 object-fit:contain 自動左右黑邊置中。 */
-      #video-wrap { max-height: calc(100dvh - 320px); min-height: 240px; }
+         + layout padding/gap 48 ≈ 316，取 320）。
+         ⚠ 兩個坑：
+         (1) 只寫 max-height 的話寬度還是 100%，畫框被拉成比影像更扁，
+             contain 就在左右補黑邊。要把高度上限換算成寬度上限（高 × 寬高比），
+             寬高一起縮，畫框才永遠剛好等於影像。
+         (2) 這個上限要下在整張 .video-card 上，不能只下在畫框上。只縮畫框的話
+             卡片仍然滿版，影片兩側留下一大塊空卡片、transport 與頁尾也比影片寬，
+             那跟黑邊一樣是浪費版面。卡片一起縮，整張卡就貼合影片。 */
+      .video-card {
+        width: min(100%, calc((100dvh - 320px) * var(--main-video-ar-num, 1.7778)));
+        margin-inline: auto;
+      }
+      #video-wrap { min-height: 240px; }
     }
     video {
       width: 100%; height: 100%;
@@ -338,6 +361,29 @@
       flex-wrap: wrap;
     }
 
+    /* ── 放大影片 ───────────────────────────────────────────
+       影片的大小平常被兩件事卡住：寬螢幕是右欄那 400px，矮螢幕是為了讓時間軸
+       同屏而設的高度上限。兩者卡的方向不同，所以不各修一半，直接給一個把兩樣
+       都收起來的模式：需要看清楚畫面的時候按一下，看完再按一下回來。
+       預設版面完全不動。 */
+    #video-max-btn { width: 30px; height: 30px; }
+    body.video-max .right-col,
+    body.video-max #timeline-section { display: none; }
+    /* 時間軸都收起來了，指著時間軸的那條操作列留著只會讓人不知道自己在操作什麼。 */
+    body.video-max #storage-action-bar.visible { display: none; }
+    body.video-max .layout {
+      grid-template-columns: minmax(0, 1fr);
+      max-width: none;
+      padding: var(--space-2);
+    }
+    /* 高度上限重算：這個模式下 header 60 + transport 44 + footer 44 + padding 16
+       ≈ 164，取 180 留一點餘裕。寬度一樣由比例換算回來，兩個方向都不留黑邊。 */
+    body.video-max .video-card {
+      width: min(100%, calc((100dvh - 180px) * var(--main-video-ar-num, 1.7778)));
+      margin-inline: auto;
+    }
+    #video-max-btn[aria-pressed="true"] { color: var(--accent); }
+
     /* ── Status pill ────────────────────────────────────────── */
     .status-pill {
       display: inline-flex;
@@ -400,7 +446,8 @@
     /* ── WS reconnect toast ─────────────────────────────────── */
     .toast {
       position: fixed;
-      bottom: var(--space-6);
+      /* 底部面板開著時往上讓開，否則 z-index 100 的 toast 會壓在說明條正上方。 */
+      bottom: calc(var(--space-6) + var(--bottom-inset, 0px));
       left: 50%;
       transform: translateX(-50%) translateY(16px);
       background: var(--surface-3);
@@ -595,23 +642,39 @@
       font: inherit;
     }
     .slot-action-menu button:hover { background: var(--surface-2); }
+    /* ── 底部固定面板堆疊 ─────────────────────────────────────
+       說明條與儲存操作列以前各自 `position: fixed; bottom: 0`，等於搶同一塊位置，
+       z-index 高的那個把另一個整條蓋掉。改成裝進同一個 flex column 之後它們垂直
+       排開，也只剩一個地方要量高度。 */
+    #bottom-stack {
+      position: fixed; left: 0; right: 0; bottom: 0;
+      z-index: 95;
+      display: flex; flex-direction: column;
+      pointer-events: none;   /* 沒有面板時不擋住底下的內容 */
+    }
+    #bottom-stack > * { pointer-events: auto; }
+
+    /* 定位與層級都交給 #bottom-stack。這裡用 display 而不是 transform 開關，
+       是因為它現在是 flex 子元素：用 transform 藏的話版面高度還在，
+       --bottom-inset 會多墊一條看不見的空白出來。 */
     #storage-action-bar {
-      position: fixed;
-      bottom: 0;
-      left: 0;
-      right: 0;
-      display: flex;
+      display: none;
       gap: var(--space-3);
       align-items: center;
       padding: var(--space-3) var(--space-4);
       background: var(--surface-2);
       border-top: 1px solid var(--border);
       box-shadow: var(--shadow-lg);
-      transform: translateY(100%);
-      transition: transform 200ms;
-      z-index: 80;
     }
-    #storage-action-bar.visible { transform: translateY(0); }
+    /* 淡入而不是從畫面外滑上來：堆疊裡它下面還有說明條，往上滑的過程會整條
+       壓在說明條上，恰好是這次要修掉的那個症狀。 */
+    #storage-action-bar.visible { display: flex; animation: bottom-bar-in 160ms ease-out; }
+    @keyframes bottom-bar-in { from { opacity: 0; } to { opacity: 1; } }
+    @media (prefers-reduced-motion: reduce) { #storage-action-bar.visible { animation: none; } }
+    /* 設定抽屜開著的時候不要讓操作列從抽屜上面穿出來。整個 #bottom-stack 的
+       z-index 高過抽屜（說明條必須蓋得過抽屜，否則抽屜裡的欄位就沒有說明可看），
+       所以這裡要單獨把操作列收起來。 */
+    body:has(#settings-drawer.open) #storage-action-bar.visible { display: none; }
     #storage-action-bar button {
       display: inline-flex;
       align-items: center;
@@ -943,10 +1006,9 @@
     body.help-mode [data-help] { outline: 1px dashed var(--accent); outline-offset: 2px; }
     body.help-mode { cursor: help; }
     #help-btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+    /* 定位交給 #bottom-stack（它的 z-index 95 高過設定抽屜的 91：
+       抽屜開著時說明條若被蓋掉，抽屜裡那些最需要說明的欄位就沒說明可看）。 */
     #help-sheet {
-      /* 要高過設定抽屜的 z-index 91：抽屜開著時說明條被蓋掉一半，
-         而抽屜裡的欄位正是最需要說明的地方。 */
-      position: fixed; left: 0; right: 0; bottom: 0; z-index: 95;
       padding: var(--space-3) var(--space-4);
       background: var(--surface-2);
       border-top: 1px solid var(--accent);
@@ -1147,7 +1209,7 @@
     #grid-view[hidden] { display: none; }
     .grid-tile { position: relative; background: var(--surface); overflow: hidden;
       border: 1px solid var(--border); border-radius: var(--radius-lg);
-      aspect-ratio: 4/3; cursor: pointer;
+      aspect-ratio: var(--video-ar, 16 / 9); cursor: pointer;   /* 同 #video-wrap，由 grid.js 寫入 */
       transition: border-color var(--transition); }
     .grid-tile:hover { border-color: var(--accent-border); }
     .grid-tile video { width: 100%; height: 100%; object-fit: contain; background: #000; } /* 同 video 黑底 */
@@ -1186,6 +1248,8 @@
     #grid-date-btn { display: inline-flex; align-items: center; gap: var(--space-2);
       padding: var(--space-1) var(--space-3); background: var(--surface-2);
       border: 1px solid var(--border); border-radius: var(--radius-full); }
+    #grid-timeline-hint { color: var(--text-muted); font-size: var(--text-xs); }
+    @media (max-width: 640px) { #grid-timeline-hint { display: none; } }
     #grid-timeline-bar { display: grid; grid-template-columns: repeat(24, 1fr); gap: 2px; }
     .grid-slot { height: 32px; display: flex; align-items: center; justify-content: center;
       font-size: var(--text-xs); color: var(--text-faint); background: var(--surface-2);

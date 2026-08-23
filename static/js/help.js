@@ -14,6 +14,7 @@ const HELP = {
   'btn-rgb':             '一般彩色畫面。',
   'btn-thermal':         '熱像畫面。熱像沒有豬隻方框，它只用來看體溫。',
   'view-toggle-btn':     '切換單一畫面與多畫面同時監看。',
+  'video-max-btn':       '把右邊的清單和下面的時間軸收起來，讓影片吃滿整個畫面。再按一次（或按 Esc）回到原本的版面。只影響顯示，不會停掉錄影或分析。',
   'bell-btn':            '通知中心。上面的數字是未讀的告警筆數。',
   'manual-link':         '操作手冊，會開新分頁。裡面有完整的使用說明與每一項設定的後果。',
   'settings-btn':        '系統設定。裡面有幾項改錯會刪掉錄影，每一項都有說明。',
@@ -35,6 +36,13 @@ const HELP = {
   'btn-bookmark':        '幫選取的時段加上星號標記，方便日後找回來。',
   'btn-delete-rec':      '永久刪除選取時段的影像。刪掉救不回來。',
   'btn-clear-sel':       '取消目前的時段選取。',
+
+  // ── 多畫面監看 ──
+  'grid-date-btn':       '選擇要看哪一天的回放。所有畫面會一起換到那一天。',
+  'grid-timeline-bar':   '這一天的 24 個小時，只要有任何一台攝影機錄到就會亮起來。點一下，上面所有畫面一起跳到那個時段。這裡不能多選，也不能保留或刪除影像；要做那些事請先切回單畫面。',
+  'grid-timeline-hint':  '這條時間軸管的是所有畫面，不是單獨一台。',
+  'grid-playback-banner': '現在所有畫面都在回放同一個時段，不是即時畫面。',
+  'grid-live-btn':       '離開回放，所有畫面回到即時直播。',
 
   // ── 右欄 ──
   'focus-only-checkbox': '只在畫面上畫關注清單裡的豬（紅、橘、綠三種）。取消勾選就把每一隻都畫出來。只影響直播。',
@@ -98,6 +106,8 @@ function hideSheet() {
 const PASSTHROUGH = [
   '#settings-btn', '#settings-close-btn', '#settings-overlay',
   '#bell-btn', '.tab-btn', '#view-toggle-btn', '#manual-link',
+  // 放大影片只是收合版面，不改任何設定或資料，說明模式下照樣放行。
+  '#video-max-btn',
 ].join(',');
 
 // 用捕獲階段攔截：要在元件自己的 handler 之前把事件吃掉，
