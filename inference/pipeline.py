@@ -15,23 +15,37 @@ import database
 from db_writer import write_tracking_log
 
 
-def _compute_thermal_intensity(
-    thermal_np: "np.ndarray | None",
+def _compute_thermal_celsius(
+    thermal_c: "np.ndarray | None",
     x1: float, y1: float, x2: float, y2: float,
-    orig_w: int = 640, orig_h: int = 480,
-    thermal_w: int = 160, thermal_h: int = 120,
+    rgb_w: int, rgb_h: int,
 ) -> "float | None":
-    if thermal_np is None:
+    """bbox（rgb 像素座標）範圍內的平均體表溫度，攝氏。
+
+    兩邊的尺寸都必須是實際值，不能寫死。舊版把 rgb 當成 640x480、熱像當成
+    160x120 硬編在預設參數裡，而實際上 bbox 座標系是 rgb 的 1280x720、傳進來的
+    熱像是擷取端上採樣過的 1280x720：換算係數錯一倍，取樣範圍還被 clamp 在
+    圖的左上角一小塊，於是每一隻豬拿到的都是同一塊背景的值，跟牠在哪無關。
+
+    thermal_c 是攝氏溫度場（zmq_receiver 從 Y16 解出來的），不是上色後的圖。
+    對顏色取平均沒有物理意義——turbo/jet 的亮度不單調，綠色比紅色亮。
+    """
+    if thermal_c is None or rgb_w <= 0 or rgb_h <= 0:
         return None
-    sx = thermal_w / orig_w
-    sy = thermal_h / orig_h
+    th, tw = thermal_c.shape[:2]
+    sx = tw / rgb_w
+    sy = th / rgb_h
     tx1 = int(max(0, x1 * sx))
     ty1 = int(max(0, y1 * sy))
-    tx2 = int(min(thermal_w, x2 * sx))
-    ty2 = int(min(thermal_h, y2 * sy))
+    tx2 = int(min(tw, x2 * sx))
+    ty2 = int(min(th, y2 * sy))
     if tx2 <= tx1 or ty2 <= ty1:
         return None
-    return float(np.mean(thermal_np[ty1:ty2, tx1:tx2]))
+    roi = thermal_c[ty1:ty2, tx1:tx2]
+    if roi.ndim == 3:
+        # 舊擷取端仍在送假色 JPEG：那是圖不是溫度，拒絕給出假的攝氏值。
+        return None
+    return float(np.mean(roi))
 
 
 @dataclass
@@ -332,12 +346,15 @@ class InferencePipeline:
                             x1, y1, x2, y2 = float(t[0]), float(t[1]), float(t[2]), float(t[3])
                             obj_id = int(t[4])
                             conf = float(t[5]) if len(t) > 5 else 0.0
-                            ti = _compute_thermal_intensity(frame_data.thermal_np, x1, y1, x2, y2)
+                            fh, fw = frame_data.rgb_np.shape[:2]
+                            ti = _compute_thermal_celsius(
+                                frame_data.thermal_np, x1, y1, x2, y2, fw, fh
+                            )
                             objects.append({
                                 "object_id": obj_id,
                                 "bbox": [x1, y1, x2 - x1, y2 - y1],
                                 "confidence": conf,
-                                # thermal_intensity is DB-only; not included in live WS payload
+                                # 體溫只進 DB，不進 live WS payload
                             })
                             pool = database.get_pool()
                             if pool is not None:
@@ -353,7 +370,7 @@ class InferencePipeline:
                                         bb_width=x2 - x1,
                                         bb_height=y2 - y1,
                                         confidence=conf,
-                                        thermal_intensity=ti,
+                                        thermal_celsius=ti,
                                     ),
                                     self._event_loop,
                                 )

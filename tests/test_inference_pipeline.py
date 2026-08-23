@@ -317,30 +317,59 @@ def test_process_batch_skips_on_exception():
     p._executor.shutdown(wait=False)
 
 
-def test_compute_thermal_intensity_returns_mean_of_region():
+def test_compute_thermal_celsius_returns_mean_of_region():
     import numpy as np
-    from inference.pipeline import _compute_thermal_intensity
-    thermal = np.zeros((120, 160), dtype=np.uint8)
-    thermal[10:20, 10:20] = 200  # 該區域均值為 200
-    # bbox 在 640×480 空間：x1=40,y1=40,x2=80,y2=80
-    # 縮放到 160×120：tx1=10,ty1=10,tx2=20,ty2=20 (scale=0.25)
-    result = _compute_thermal_intensity(thermal, 40.0, 40.0, 80.0, 80.0)
-    assert result == pytest.approx(200.0)
+    from inference.pipeline import _compute_thermal_celsius
+    thermal = np.zeros((120, 160), dtype=np.float32)
+    thermal[10:20, 10:20] = 38.5
+    # bbox 在 640×480 的 rgb 座標；換算到 160×120 → (10,10)-(20,20)
+    result = _compute_thermal_celsius(thermal, 40.0, 40.0, 80.0, 80.0, 640, 480)
+    assert result == pytest.approx(38.5)
 
 
-def test_compute_thermal_intensity_returns_none_when_no_thermal():
-    from inference.pipeline import _compute_thermal_intensity
-    result = _compute_thermal_intensity(None, 0.0, 0.0, 50.0, 50.0)
+def test_compute_thermal_celsius_uses_real_frame_sizes_not_hardcoded():
+    """回歸：換算係數必須來自實際尺寸，不能寫死。
+
+    正式機的組合是 rgb 1280×720 配熱像 160×120。舊版把兩邊都硬編在預設參數裡
+    （rgb 當 640×480、熱像當 160×120），於是係數錯一倍、取樣還被 clamp 在圖的
+    左上角，每隻豬拿到的都是同一塊背景。舊測試剛好餵 640×480 的 bbox，
+    所以它一直是綠的——這個測試特地用真實尺寸，讓同樣的錯誤再也躲不過去。
+    """
+    import numpy as np
+    from inference.pipeline import _compute_thermal_celsius
+    thermal = np.zeros((120, 160), dtype=np.float32)
+    # 熱像的右下角一塊：對應 rgb 畫面右下角的豬。
+    thermal[90:120, 120:160] = 39.0
+    # rgb 1280×720 上、右下角的 bbox
+    result = _compute_thermal_celsius(thermal, 960.0, 540.0, 1280.0, 720.0, 1280, 720)
+    assert result == pytest.approx(39.0)
+
+
+def test_compute_thermal_celsius_returns_none_when_no_thermal():
+    from inference.pipeline import _compute_thermal_celsius
+    result = _compute_thermal_celsius(None, 0.0, 0.0, 50.0, 50.0, 640, 480)
     assert result is None
 
 
-def test_compute_thermal_intensity_clamps_bbox_to_image_bounds():
+def test_compute_thermal_celsius_rejects_colour_image():
+    """舊擷取端送的是上色後的 BGR 圖，對它取平均得到的是顏色不是溫度。
+
+    turbo/jet 的亮度不單調（綠色比紅色亮），所以那個數字跟溫度連單調關係都
+    沒有。寧可回 None 讓體溫欄位空著，也不要回報一個看起來很像溫度的假數字。
+    """
     import numpy as np
-    from inference.pipeline import _compute_thermal_intensity
-    thermal = np.full((120, 160), 100, dtype=np.uint8)
-    # bbox 超出邊界：x2=800 > 640, y2=600 > 480
-    result = _compute_thermal_intensity(thermal, 0.0, 0.0, 800.0, 600.0)
-    assert result == pytest.approx(100.0)
+    from inference.pipeline import _compute_thermal_celsius
+    bgr = np.full((120, 160, 3), 200, dtype=np.uint8)
+    assert _compute_thermal_celsius(bgr, 0.0, 0.0, 640.0, 480.0, 640, 480) is None
+
+
+def test_compute_thermal_celsius_clamps_bbox_to_image_bounds():
+    import numpy as np
+    from inference.pipeline import _compute_thermal_celsius
+    thermal = np.full((120, 160), 30.0, dtype=np.float32)
+    # bbox 超出 rgb 畫面邊界
+    result = _compute_thermal_celsius(thermal, 0.0, 0.0, 800.0, 600.0, 640, 480)
+    assert result == pytest.approx(30.0)
 
 
 def test_set_active_false_skips_detector():

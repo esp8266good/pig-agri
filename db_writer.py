@@ -17,7 +17,7 @@ async def write_tracking_log(
     bb_width: float,
     bb_height: float,
     confidence: float,
-    thermal_intensity: Optional[float],
+    thermal_celsius: Optional[float],
 ) -> None:
     """Write a single tracking log entry to the database.
 
@@ -32,12 +32,12 @@ async def write_tracking_log(
         bb_width: Bounding box width
         bb_height: Bounding box height
         confidence: Detection confidence score
-        thermal_intensity: Optional thermal intensity value
+        thermal_celsius: Optional mean body-surface temperature (Celsius) inside the bbox
     """
     # timestamp: Unix epoch seconds stored as DOUBLE PRECISION
     sql = """
     INSERT INTO tracking_logs
-    (camera_id, timestamp, frame_id, object_id, bb_left, bb_top, bb_width, bb_height, confidence, thermal_intensity)
+    (camera_id, timestamp, frame_id, object_id, bb_left, bb_top, bb_width, bb_height, confidence, thermal_celsius)
     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
     """
 
@@ -52,7 +52,7 @@ async def write_tracking_log(
         bb_width,
         bb_height,
         confidence,
-        thermal_intensity,
+        thermal_celsius,
     )
 
 

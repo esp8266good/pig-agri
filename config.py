@@ -69,6 +69,20 @@ class Settings(BaseSettings):
     hls_crf: int = 23                  # 調高（如 28）→ 檔案變小、寫入量降，畫質降
     hls_video_codec: str = "libx264"
 
+    # ── 熱像呈現（擷取端送原始 Y16 溫度場時，由 server 上色）──────
+    # 固定的上色範圍，不隨每幀 min/max 浮動：顏色因此對應絕對溫度，畫面之間
+    # 可以比較，H.264 也不必為了整張圖跳色而放棄 P-frame。
+    # 範圍要貼著實際要分辨的溫度，太寬會讓豬跟背景擠在色階的同一端。
+    # 豬舍實測：環境約 27~30°C、豬體表約 33~38°C、發燒 40°C+。取 25~40 之後
+    # 環境落在色階 8~20%、豬體表落在 53~87%，一眼分得出來。超出範圍的像素飽和
+    # （設備熱源會頂到最亮，那不影響看豬）。現場季節差異大的話可以再調。
+    thermal_preview_min_c: float = 25.0
+    thermal_preview_max_c: float = 40.0
+    # 上色後放大到多大再進 HLS。原生是 160x120（4:3），保持比例才不會變形。
+    thermal_preview_width: int = 640
+    thermal_preview_height: int = 480
+    thermal_preview_jpeg_quality: int = 80
+
     # ── 儲存健康監控 ───────────────────────────────────────────
     storage_check_interval_seconds: int = 20
     storage_min_free_gb: float = 10.0

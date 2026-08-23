@@ -9,8 +9,13 @@ CREATE TABLE IF NOT EXISTS tracking_logs (
     bb_width          REAL,
     bb_height         REAL,
     confidence        REAL,
-    thermal_intensity REAL
+    -- 舊欄位：擷取端送假色 preview 圖的時代，這裡存的是那張圖某塊區域的
+    -- 像素平均（0~255），沒有物理意義。保留供考古，新資料一律走下一欄。
+    thermal_intensity REAL,
+    -- 該豬 bbox 範圍內的平均體表溫度（攝氏）。擷取端送原始 Y16 溫度場後才有。
+    thermal_celsius   REAL
 );
+ALTER TABLE tracking_logs ADD COLUMN IF NOT EXISTS thermal_celsius REAL;
 CREATE INDEX IF NOT EXISTS idx_tracking ON tracking_logs (camera_id, timestamp DESC);
 
 CREATE TABLE IF NOT EXISTS health_alerts (

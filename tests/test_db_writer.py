@@ -23,7 +23,7 @@ def test_write_tracking_log_executes_insert(mock_pool):
         bb_width=30.0,
         bb_height=40.0,
         confidence=0.95,
-        thermal_intensity=128.5,
+        thermal_celsius=38.5,
     ))
 
     mock_pool.execute.assert_called_once()
@@ -36,11 +36,11 @@ def test_write_tracking_log_executes_insert(mock_pool):
     assert len(args) == 11  # sql + 10 params
     assert args[1] == "cam_01"     # camera_id
     assert args[2] == 1000.0       # timestamp
-    assert args[-1] == 128.5       # thermal_intensity
+    assert args[-1] == 38.5        # thermal_celsius
 
 
 def test_write_tracking_log_passes_none_thermal(mock_pool):
-    """Verify that thermal_intensity=None is passed correctly."""
+    """Verify that thermal_celsius=None is passed correctly."""
     from db_writer import write_tracking_log
 
     asyncio.run(write_tracking_log(
@@ -54,7 +54,7 @@ def test_write_tracking_log_passes_none_thermal(mock_pool):
         bb_width=30.0,
         bb_height=40.0,
         confidence=0.95,
-        thermal_intensity=None,
+        thermal_celsius=None,
     ))
 
     mock_pool.execute.assert_called_once()
