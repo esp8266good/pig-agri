@@ -166,9 +166,12 @@ export async function refreshFocusList() {
   } catch (_) {}
 }
 
-export function setFocusOnlyBoxes(on) {
-  S.focusOnlyBoxes = !!on;
-  try { localStorage.setItem('focusOnlyBoxes', String(S.focusOnlyBoxes)); } catch (_) {}
+const BOX_DISPLAY_MODES = ['focus', 'ghost', 'all'];
+
+export function setBoxDisplayMode(mode) {
+  if (!BOX_DISPLAY_MODES.includes(mode)) mode = 'focus';
+  S.boxDisplayMode = mode;
+  try { localStorage.setItem('boxDisplayMode', mode); } catch (_) {}
 }
 
 // ── Anomaly map ───────────────────────────────────────────

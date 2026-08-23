@@ -17,10 +17,21 @@ export const S = {
   })(),
   // 關注清單：object_id → 'anomaly'|'lowest'|'reference'，由 /alerts/focus 每輪更新。
   focusLabels: {}, focusItems: [], focusStatus: 'ok',
-  // 只畫關注清單的框。純視覺偏好，每個瀏覽器各自記。
-  focusOnlyBoxes: (() => {
-    try { return localStorage.getItem('focusOnlyBoxes') !== 'false'; }
-    catch (_) { return true; }
+  // 畫面上的框要畫到什麼程度。純視覺偏好，每個瀏覽器各自記。
+  //   'focus' 只畫有意義的框（異常紅框，以及 LIVE 才有的關注清單橘／綠框）
+  //   'ghost' 其餘的豬畫成極淡細線、不加 ID 標籤
+  //   'all'   全部照常畫
+  // 這個開關以前叫 focusOnlyBoxes（布林），而且寫死只在 LIVE 生效：回放沒有關注
+  // 清單，過濾就只剩紅框，當時判斷「整片空白會分不出系統壞了沒」而整個跳過。
+  // 現在改由左下角的計數（已隱藏 N 個正常框／未偵測到豬隻）承擔那件事，回放也
+  // 就能一起套用了。
+  boxDisplayMode: (() => {
+    try {
+      const v = localStorage.getItem('boxDisplayMode');
+      if (v === 'focus' || v === 'ghost' || v === 'all') return v;
+      // 舊版布林開關的值：沒勾就是要看全部。
+      return localStorage.getItem('focusOnlyBoxes') === 'false' ? 'all' : 'focus';
+    } catch (_) { return 'focus'; }
   })(),
   showReadAlerts: false,
   // 通知分頁的 keyset cursor：指向目前最後一個折疊群組裡最舊的那筆告警。
@@ -65,7 +76,7 @@ export const els = {
   alertListEl:  document.getElementById('alert-list'),
   alertLoadMoreBtn: document.getElementById('alert-load-more'),
   focusListEl:  document.getElementById('focus-list'),
-  focusOnlyChk: document.getElementById('focus-only-checkbox'),
+  boxModeSel:   document.getElementById('box-mode-select'),
   transportEl:  document.getElementById('transport'),
   playBtn:      document.getElementById('play-btn'),
   playIconUse:  document.getElementById('play-icon-use'),
