@@ -155,6 +155,12 @@ async function buildTile(root, cam, beforeNode = null, gen = _gridGen) {
     tile.querySelector('.tile-count').textContent = '';
   }
   tile.querySelector('.tile-name').textContent = cam;
+  // 「點格子會切到那台的單畫面」完全看不出來，滑鼠移上去只有邊框變色。
+  // title 給桌機，data-help 給說明模式（tile 是動態產生的，initHelp() 那輪
+  // 還不存在，所以要在這裡自己補上）。
+  const tileHelp = '點一下切到這台攝影機的單畫面，那裡才有豬隻方框、以及保留／刪除影像的功能。';
+  tile.title = tileHelp;
+  tile.dataset.help = tileHelp;
   tile.addEventListener('click', () => _onPickCamera && _onPickCamera(cam));
   root.insertBefore(tile, beforeNode);   // beforeNode=null 時等同 appendChild，保持重試後原位置
   // 該型別無來源（如 thermal 攝影機沒裝）：預期狀態，無訊號佔位、不建播放器、無重試鈕。

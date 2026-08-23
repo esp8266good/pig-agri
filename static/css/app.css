@@ -67,6 +67,15 @@
          而且 computed 值看起來就是 0px，完全看不出是被誰蓋掉的。 */
       padding: 0 0 var(--bottom-inset, 0px);
     }
+    /* hidden 屬性必須真的能藏住東西。瀏覽器預設的 [hidden] { display: none } 是
+       UA 樣式，任何一條作者寫的 display 規則都蓋得過它，而且蓋過去之後
+       `el.hidden = true` 看起來有設、元素卻還在畫面上，非常難查。
+       這個專案已經被咬過兩次：多畫面模式下單畫面的時間軸沒藏起來（畫面上下各
+       一條 24 小時列，上面那條點了不會有反應），以及通知分頁的「載入更多」
+       在沒有更多可載時仍然顯示。改成作者樣式 + !important，一次擋掉整類問題。
+       ⚠ 需要「設了 hidden 卻仍要顯示」的元素不存在，也不該存在；真有這種需求
+       請改用 class 控制，不要放寬這條規則。 */
+    [hidden] { display: none !important; }
     button { cursor: pointer; border: none; background: none; font: inherit; color: inherit; }
     select { font: inherit; }
     :focus-visible {
@@ -1239,6 +1248,8 @@
     #grid-date-btn { display: inline-flex; align-items: center; gap: var(--space-2);
       padding: var(--space-1) var(--space-3); background: var(--surface-2);
       border: 1px solid var(--border); border-radius: var(--radius-full); }
+    #grid-timeline-hint { color: var(--text-muted); font-size: var(--text-xs); }
+    @media (max-width: 640px) { #grid-timeline-hint { display: none; } }
     #grid-timeline-bar { display: grid; grid-template-columns: repeat(24, 1fr); gap: 2px; }
     .grid-slot { height: 32px; display: flex; align-items: center; justify-content: center;
       font-size: var(--text-xs); color: var(--text-faint); background: var(--surface-2);
