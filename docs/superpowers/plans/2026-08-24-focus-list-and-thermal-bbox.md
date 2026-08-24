@@ -1,27 +1,38 @@
 # 關注清單不消退、熱像 bbox 位移，以及一起處理掉的五件小事
 
 **日期**：2026-08-24
-**狀態**：程式碼完成，測試全綠（539 passed）。**尚未部署到正式機**，DB 要先建一張表。
+**狀態**：**已部署到正式機**（commit `b8c05d9`，2026-08-24 傍晚）。測試全綠（539 passed）。
+`camera_thermal_align` 表已建、四台相機的 GET 都回 identity、PUT 的驗證與 round-trip
+都實測過。熱像對位**還沒有人用眼睛校過**，目前是 identity。
 **前一份**：`2026-08-24-thermal-y16-rollout.md`（熱像改送 Y16 溫度場，已驗證通過）
 
 ---
 
 ## 0. 接手的第一件事
 
+部署已完成。要確認現況：
+
 ```
-# 1. 正式機的 DB 建新表（additive，整份 init.sql 都是 IF NOT EXISTS / ON CONFLICT，
-#    重跑不會動到既有資料）
+# 關注快取還剩幾個 object_id（重啟當下是 1063，第一輪分析後應該掉到兩位數）
+ssh pig-agri 'curl -s "localhost:5005/alerts/active?camera_id=rpi5_dual" \
+  | python3 -c "import sys,json;print(len(json.load(sys.stdin)[\"cache\"][\"rpi5_dual\"]))"'
+
+# 逐出有沒有在跑（每輪會 log 清掉幾個）
+ssh pig-agri 'journalctl --user -u pig-agri-tmux.service --since today | grep 關注快取'
+
+# 熱像對位目前的值
+ssh pig-agri 'curl -s localhost:5005/thermal-align/rpi5_dual'
+```
+
+**還沒做的**：熱像對位要用眼睛校一次（見第 3 節）。不校也能跑，只是框會偏。
+
+如果要重建 DB（新機器）：整份 `sql/init.sql` 都是 `IF NOT EXISTS` / `ON CONFLICT
+DO NOTHING`，重跑不會動到既有資料：
+
+```
 ssh pig-agri 'cd ~/lobby/pig-agri && docker exec -i pig-agri-postgres-1 \
-  psql -U pig -d pig_monitoring' < sql/init.sql
-
-# 2. 部署 + 重啟
-ssh pig-agri 'cd ~/lobby/pig-agri && git pull && systemctl --user restart pig-agri-tmux.service'
-
-# 3. 熱像對位要用眼睛校一次（見下面第 3 節），不校也能跑，只是框會偏一點
+  psql -U pig -d pig_monitoring < sql/init.sql'
 ```
-
-沒建表的後果：`/thermal-align/{cam}` 的 GET 會退回 identity（畫面照樣正常），
-PUT 會 500。其餘六項功能完全不碰 DB。
 
 ---
 
@@ -179,7 +190,20 @@ ty = off_y + ny * scale_y
 
 ---
 
-## 5. 這次沒做的
+## 5. 部署時看到的一件事，沒有處理
+
+正式機的 `analysis_window_minutes = 15`，`analysis_interval_minutes = 30`。
+**視窗比間隔短**：每一輪只看最近 15 分鐘，於是每 30 分鐘裡有 15 分鐘的資料
+從來沒有被任何一輪分析看過。
+
+這不是這次改動造成的，也還沒確認是不是刻意的（可能是為了讓活動量反映「現在」
+而不是半小時前的平均）。但它跟 `activity_min_span_seconds = 300` 疊在一起要注意：
+一隻豬的軌跡必須在那 15 分鐘的視窗裡連續跨過 5 分鐘才算數，MOT 一跳號就不合格。
+真要調的話先量「每輪有幾隻豬通過 min_span」，不要憑感覺改。
+
+---
+
+## 6. 這次沒做的
 
 - **自動對位校正**：理由在第 3 節，不要重新推導。
 - **舊體溫回溯修正**：校正參數只影響之後寫入的資料。
