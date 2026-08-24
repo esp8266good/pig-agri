@@ -42,9 +42,16 @@ function hideNoSignal() {
 }
 
 // ── VOD mode ──────────────────────────────────────────────
-export function loadVod(startTs) {
+// seekToWall：要停在哪個真實時刻（unix 秒）。RGB ⇄ Thermal 切換時帶進來，
+// 讓使用者留在原本那一刻，而不是被丟回小時的開頭、或被丟回 LIVE。
+// 不傳就從頭播（點時間軸選時段就是這種）。
+export function loadVod(startTs, seekToWall = null) {
   setTimeout(syncAlignButtonVisibility, 0);
+  const gen = ++S.vodGeneration;
   S.isLive = false;
+  // 換時段時一定要重設，否則「選了新的小時 → 還沒有 timeupdate → 立刻切畫面
+  // 種類」會用到上一個小時的位置，跳到一個完全不相干的時間。
+  S.vodLastWall = seekToWall;
   clearPigSelection();
   S.vodStartTs = startTs;
   S.vodFetching = false;
@@ -88,22 +95,35 @@ export function loadVod(startTs) {
   (async () => {
     try {
       const probe = await fetch(vodUrl);
-      // 競態守衛：探測期間使用者已回 live 或切了別的時段 → 放棄，
-      // 不得在新狀態上覆蓋 S.hls / 佔位。
-      if (S.isLive || S.vodStartTs !== startTs) return;
+      // 競態守衛：探測期間使用者已回 live、切了別的時段、或在同一時段換了畫面
+      // 種類 → 放棄，不得在新狀態上覆蓋 S.hls / 佔位。以 gen 判而不是以
+      // vodStartTs 判：同一個小時被重載時 vodStartTs 沒變，擋不住。
+      if (S.isLive || gen !== S.vodGeneration) return;
       if (probe.status === 404) {
         showNoSignal('無訊號（此時段無錄影）');
         setStatus('該時段無錄影', '');
         return;
       }
     } catch (_) { /* 探測失敗交給 hls.js 原錯誤路徑 */ }
-    if (S.isLive || S.vodStartTs !== startTs) return;
+    if (S.isLive || gen !== S.vodGeneration) return;
     if (Hls.isSupported()) {
       S.hls = new Hls({ lowLatencyMode: false, backBufferLength: 0 });
       S.hls.loadSource(vodUrl);
       S.hls.attachMedia(els.video);
 
       S.hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        if (gen !== S.vodGeneration) return;
+        // 換畫面種類時停回原本那一刻。先用「時刻 − 小時起點」粗定位，
+        // 播起來拿得到 PDT 之後再校一次（見 _armVodResync）：兩條串流的
+        // 同一個小時目錄不保證從整點開始（ffmpeg 中途自癒、相機斷線都會讓
+        // 其中一條晚幾分鐘才有第一段），差幾分鐘的話粗定位會落在別的地方。
+        if (seekToWall) {
+          const dur = els.video.duration;
+          const want = seekToWall - startTs;
+          els.video.currentTime = Math.max(
+            0, isFinite(dur) && dur > 0 ? Math.min(want, dur - 0.5) : want);
+          _armVodResync(gen, seekToWall);
+        }
         els.video.play().catch(() => {});
         setSkeleton(false);
         const dt = new Date(startTs * 1000);
@@ -139,6 +159,7 @@ export function exitVodState() {
   els.vodBanner.hidden = true;
   if (S.isLive) return false;
   S.isLive = true;
+  S.vodLastWall = null;
   els.liveBtn.style.display = 'none';
   detachVodListeners();
   clearTimeout(S.vodDebounceTimer);
@@ -173,12 +194,51 @@ export function switchToLive() {
 function onVodTimeUpdate() { scheduleTrackingFetch(false); }
 function onVodSeeking()    { scheduleTrackingFetch(false); }
 function onVodSeeked()     { scheduleTrackingFetch(true); }
+// 粗定位之後的一次性校正。hls.js 要載入第一段之後才吐得出 playingDate
+// （＝那一幀真實的擷取時刻），拿到之後跟目標比一次，差太多就再跳一次。
+//
+// 只做一次、而且有門檻：反覆校正會跟使用者自己的拖曳打架，而且每次 seek 都要
+// 重新下載一段，畫面會一直卡。差 2 秒以內不動——那已經比人眼分得出來的還小。
+const VOD_RESYNC_TOLERANCE = 2.0;   // 秒
+const VOD_RESYNC_DEADLINE  = 8000;  // 毫秒；這麼久還拿不到 PDT 就放棄，維持粗定位
+
+function _armVodResync(gen, targetWall) {
+  const started = Date.now();
+  let done = false;
+  const tick = () => {
+    if (done || gen !== S.vodGeneration || S.isLive) return;
+    if (Date.now() - started > VOD_RESYNC_DEADLINE) { done = true; return; }
+    const pd = S.hls && S.hls.playingDate;
+    if (!pd || isNaN(pd.getTime())) { setTimeout(tick, 250); return; }
+    done = true;
+    const drift = targetWall - pd.getTime() / 1000;
+    if (Math.abs(drift) <= VOD_RESYNC_TOLERANCE) return;
+    const dur = els.video.duration;
+    const want = (els.video.currentTime || 0) + drift;
+    els.video.currentTime = Math.max(
+      0, isFinite(dur) && dur > 0 ? Math.min(want, dur - 0.5) : want);
+  };
+  setTimeout(tick, 250);
+}
+
+// 播放中持續記下真實時刻。切到一個沒有錄影的畫面種類再切回來時，這是唯一
+// 還問得出「剛剛看到哪」的地方。
+function _rememberVodWall() {
+  if (S.isLive || !S.hls) return;
+  const pd = S.hls.playingDate;
+  S.vodLastWall = (pd && !isNaN(pd.getTime()))
+    ? pd.getTime() / 1000
+    : S.vodStartTs + (els.video.currentTime || 0);
+}
+
 function attachVodListeners() {
+  els.video.addEventListener('timeupdate', _rememberVodWall);
   els.video.addEventListener('timeupdate', onVodTimeUpdate);
   els.video.addEventListener('seeking',   onVodSeeking);
   els.video.addEventListener('seeked',    onVodSeeked);
 }
 export function detachVodListeners() {
+  els.video.removeEventListener('timeupdate', _rememberVodWall);
   els.video.removeEventListener('timeupdate', onVodTimeUpdate);
   els.video.removeEventListener('seeking',   onVodSeeking);
   els.video.removeEventListener('seeked',    onVodSeeked);
@@ -252,7 +312,27 @@ export function setType(type) {
     document.dispatchEvent(new CustomEvent('pigagri:grid-type-change'));
     return;
   }
-  if (!S.isLive) {
+  if (!S.isLive && S.vodStartTs) {
+    // 換的是畫面種類，不是時間。以前這裡直接 switchToLive()，於是在回放中按
+    // Thermal 就被丟回直播，剛找到的那一刻要重新翻一次時間軸。
+    //
+    // 帶著目前的真實時刻重載：PDT 是權威時鐘（＝相機的 capture_ts），拿不到
+    // 才用「小時起點 + 播放進度」估。連播放器都沒有（上一次切過去發現那個時段
+    // 沒有那種錄影）就用記下來的最後位置，否則切回來會掉到整點。
+    const pd = S.hls && S.hls.playingDate;
+    let wall = null;
+    if (pd && !isNaN(pd.getTime())) wall = pd.getTime() / 1000;
+    else if (S.hls) wall = S.vodStartTs + (els.video.currentTime || 0);
+    if (wall != null) S.vodLastWall = wall;
+    // 選取的豬不該因為換了畫面種類就消失：使用者要看的還是同一隻。
+    const keepOid = S.selectedObjectId;
+    const keepSolo = S.soloMode;
+    loadVod(S.vodStartTs, S.vodLastWall);
+    S.selectedObjectId = keepOid;
+    S.soloMode = keepSolo;
+    const soloCb = document.getElementById('solo-checkbox');
+    if (soloCb) soloCb.checked = keepSolo;
+  } else if (!S.isLive) {
     switchToLive();
   } else {
     loadStream();

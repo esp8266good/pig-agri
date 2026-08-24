@@ -2,6 +2,13 @@
 
 export const S = {
   hls: null, ws: null, wsGeneration: 0, wsRetryTimer: null, wsRetryCount: 0,
+  // 每次 loadVod 遞增。探測與 MANIFEST_PARSED 都是非同步的，同一個小時被連續
+  // 載入兩次時（RGB→Thermal 切換就是這種情況）舊的那次還在跑，會把它自己的
+  // Hls 覆蓋上來、播回舊的畫面種類。以 vodStartTs 當守衛擋不住這種同時段重載。
+  vodGeneration: 0,
+  // 回放中最後一次算得出來的真實時刻（unix 秒）。切到一個沒有錄影的畫面種類時
+  // 播放器是空的，currentTime 與 PDT 都問不出東西，切回來要靠它才回得到原地。
+  vodLastWall: null,
   latestBoxes: [], vodStartTs: 0, bboxHistory: [], _dbg: null,
   currentCamera: null, currentType: 'rgb', animFrameId: null, isLive: true,
   currentMonth: null, selectedDay: null, monthHoursSet: new Set(),
