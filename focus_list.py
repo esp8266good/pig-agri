@@ -47,11 +47,18 @@ def select_focus(
     lowest_enabled: bool,
     lowest_n: int,
     top_n: int,
+    camera_state: Optional[dict] = None,
 ) -> dict:
     """entries 是單一 camera 的 anomaly cache：object_id → entry。
 
     回傳 {"status": ..., "items": [...]}，items 已經照顯示順序排好：
     異常（活動量升序）→ 最低（升序）→ 對照（降序）。
+
+    camera_state 是 scheduler 每輪寫下的 per-camera 結論（analyzed / herd_ok）。
+    entries 會被清空——MOT 的 ID 跳號讓舊 object_id 永遠不再出現，scheduler 會
+    把它們逐出，夜間更是整台相機一筆都不剩。這時候光看 entries 分不出「分析過、
+    但全欄都在休息」與「還沒分析過」，兩種都會變成「目前沒有需要注意的豬」，
+    把一個保護講成一份保證。有 camera_state 就照它說的講。
     """
     pairs = list(entries.items())
     anomalies = [
@@ -64,11 +71,17 @@ def select_focus(
                        p[1].get("activity_current") or 0.0)
     )
 
-    # herd_ok 由 scheduler 每輪寫進每個 entry（它是 per-camera 的判斷，
-    # 但 cache 的形狀是 per-object，沿用 activity_mean 的既有做法）。
-    herd_ok = any(e.get("herd_ok") for _, e in pairs) if pairs else True
+    # herd_ok / analyzed 優先聽 camera_state（權威來源）。沒有它時退回舊做法：
+    # 從 per-object 的 entry 裡撈——那是 camera_state 出現之前的形狀，
+    # 現有測試與 DB 不可用的路徑都還走這條。
+    if camera_state:
+        herd_ok = bool(camera_state.get("herd_ok"))
+        analyzed = bool(camera_state.get("analyzed"))
+    else:
+        herd_ok = any(e.get("herd_ok") for _, e in pairs) if pairs else True
+        analyzed = any(e.get("analyzed") for _, e in pairs) if pairs else True
 
-    if pairs and not any(e.get("analyzed") for _, e in pairs):
+    if not analyzed:
         return {"status": STATUS_NOT_ANALYZED, "items": []}
 
     if not anomalies and not herd_ok:

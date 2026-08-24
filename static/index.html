@@ -136,6 +136,9 @@
                 aria-pressed="true">RGB</button>
         <button class="type-btn" id="btn-thermal" data-type="thermal"
                 aria-pressed="false">Thermal</button>
+        <!-- 只在看熱像的 LIVE 畫面時出現：其他畫面沒有對位可言。 -->
+        <button class="type-btn" id="align-toggle-btn" hidden
+                title="校正熱像與 RGB 的對位">校正對位</button>
       </div>
       <button class="icon-btn" id="view-toggle-btn" aria-label="切換多畫面" title="多畫面監看">
         <svg class="icon"><use href="#i-grid"/></svg></button>
@@ -174,6 +177,35 @@
           <div id="no-signal" class="no-signal" hidden aria-hidden="true">
             <svg class="icon"><use href="#i-nosignal"/></svg>
             <span id="no-signal-text">無訊號</span>
+          </div>
+        </div>
+
+        <!-- 熱像對位校正。存下來的數字同時決定框畫在哪、體溫從哪一塊取樣，
+             所以提示裡要講清楚：這不只是把畫面調好看。 -->
+        <div id="align-panel" hidden>
+          <div class="mask-toolbar">
+            <strong>熱像對位校正中</strong>
+            <span class="mask-hint">直接在畫面上拖曳，把框推到豬身上。存檔後體溫的取樣位置也會跟著改。</span>
+          </div>
+          <div class="align-controls">
+            <span class="align-group-label">左右</span>
+            <button data-nudge="off_x:-1" title="框往左">◀</button>
+            <button data-nudge="off_x:1" title="框往右">▶</button>
+            <span class="align-group-label">上下</span>
+            <button data-nudge="off_y:-1" title="框往上">▲</button>
+            <button data-nudge="off_y:1" title="框往下">▼</button>
+            <span class="align-group-label">寬</span>
+            <button data-nudge="scale_x:-1" title="框變窄">－</button>
+            <button data-nudge="scale_x:1" title="框變寬">＋</button>
+            <span class="align-group-label">高</span>
+            <button data-nudge="scale_y:-1" title="框變矮">－</button>
+            <button data-nudge="scale_y:1" title="框變高">＋</button>
+          </div>
+          <div class="align-footer">
+            <code id="align-readout"></code>
+            <button id="align-reset-btn">歸零</button>
+            <button id="align-save-btn" class="mask-save">儲存並套用</button>
+            <button id="align-cancel-btn">取消</button>
           </div>
         </div>
 
@@ -305,6 +337,9 @@
             </select>
           </div>
           <label class="solo-toggle">
+            <input type="checkbox" id="show-ids-toggle"> 每個框都標編號
+          </label>
+          <label class="solo-toggle">
             <input type="checkbox" id="solo-checkbox"> 只顯示選取的豬
             <span id="solo-hint" class="solo-hint" hidden>← 需先點選下方豬隻列（僅 LIVE 生效）</span>
           </label>
@@ -393,8 +428,11 @@
             </select>
           </div>
           <div class="settings-field">
-            <label for="set-anomaly-threshold">異常閾值（σ，≥ 1.0）</label>
+            <!-- 這個數字只作用在體溫。活動量走的是另一套：跟同一欄豬的活動量
+                 中位數比，低於中位數的某個比例才標記，跟 σ 完全無關。 -->
+            <label for="set-anomaly-threshold">體溫異常閾值（σ，≥ 1.0）</label>
             <input type="number" id="set-anomaly-threshold" min="1.0" step="0.1">
+            <span class="settings-hint">只作用在體溫。活動量偏低是拿同一欄豬的中位數當基準，不用這個值。</span>
           </div>
         </div>
       </section>

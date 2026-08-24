@@ -322,10 +322,29 @@ function _fmtAlertTime(unixTs) {
   });
 }
 
+// 兩種告警的判準完全不同，所以旁邊那行數字也不能共用同一種寫法。
+//   體溫：跟這隻豬自己的近期平均比，看差幾個標準差（設定裡的「體溫異常閾值」）。
+//   活動量：跟同一欄豬的活動量中位數比，看只剩幾成。它根本沒有標準差可言，
+//           write_health_alert 對活動量一律寫 std_value=0。
+// 以前兩種都硬套「偏差 Nσ」，於是每一條活動量告警旁邊都掛著「偏差 —σ」——
+// 一個永遠算不出來的數字，看起來像壞掉，而且暗示活動量也是用 σ 判的。
+function _alertDetail(group) {
+  if (group.metric === 'activity') {
+    const cur = group.current_value;
+    const median = group.mean_value;
+    if (median > 0 && cur != null) {
+      return `${cur.toFixed(1)} px/s，只有同欄中位數的 ${Math.round(cur / median * 100)}%`;
+    }
+    return cur != null ? `${cur.toFixed(1)} px/s` : '';
+  }
+  if (group.std_value > 0) {
+    const sigma = ((group.current_value - group.mean_value) / group.std_value).toFixed(1);
+    return `偏差 ${sigma}σ`;
+  }
+  return group.current_value != null ? `${group.current_value.toFixed(1)}°C` : '';
+}
+
 function _buildAlertItem(group) {
-  const sigma = group.std_value > 0
-    ? ((group.current_value - group.mean_value) / group.std_value).toFixed(1)
-    : '—';
   const metricLabel = group.metric === 'activity' ? '活動量偏低' : '體溫異常';
   const li = document.createElement('li');
   li.className = 'alert-item' + (group.is_read ? '' : ' unread');
@@ -341,10 +360,10 @@ function _buildAlertItem(group) {
   const timeSpan = document.createElement('span');
   timeSpan.className = 'alert-time';
   timeSpan.textContent = _fmtAlertTime(group.triggered_at_unix);
-  const sigmaSpan = document.createElement('span');
-  sigmaSpan.className = 'alert-sigma';
-  sigmaSpan.textContent = `偏差 ${sigma}σ`;
-  infoDiv.append(camSpan, metricSpan, timeSpan, sigmaSpan);
+  const detailSpan = document.createElement('span');
+  detailSpan.className = 'alert-sigma';
+  detailSpan.textContent = _alertDetail(group);
+  infoDiv.append(camSpan, metricSpan, timeSpan, detailSpan);
 
   const count = group.count || 1;
   if (count > 1) {

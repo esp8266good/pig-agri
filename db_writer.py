@@ -282,6 +282,54 @@ async def replace_camera_masks(
     return len(regions)
 
 
+async def query_thermal_aligns(
+    pool: asyncpg.Pool,
+    camera_id: Optional[str] = None,
+) -> dict[str, dict]:
+    """熱像對位參數，camera_id → {off_x, off_y, scale_x, scale_y}。
+
+    沒有列的相機不會出現在結果裡；呼叫端該把「不存在」當成 identity，
+    不要當成錯誤——絕大多數相機一輩子都不會有這一列。
+    """
+    if camera_id is None:
+        rows = await pool.fetch(
+            "SELECT camera_id, off_x, off_y, scale_x, scale_y "
+            "FROM camera_thermal_align"
+        )
+    else:
+        rows = await pool.fetch(
+            "SELECT camera_id, off_x, off_y, scale_x, scale_y "
+            "FROM camera_thermal_align WHERE camera_id=$1",
+            camera_id,
+        )
+    return {
+        r["camera_id"]: {
+            "off_x": float(r["off_x"]), "off_y": float(r["off_y"]),
+            "scale_x": float(r["scale_x"]), "scale_y": float(r["scale_y"]),
+        }
+        for r in rows
+    }
+
+
+async def upsert_thermal_align(
+    pool: asyncpg.Pool,
+    camera_id: str,
+    align: dict,
+) -> None:
+    await pool.execute(
+        "INSERT INTO camera_thermal_align "
+        "  (camera_id, off_x, off_y, scale_x, scale_y, updated_at) "
+        "VALUES ($1, $2, $3, $4, $5, NOW()) "
+        "ON CONFLICT (camera_id) DO UPDATE SET "
+        "  off_x=EXCLUDED.off_x, off_y=EXCLUDED.off_y, "
+        "  scale_x=EXCLUDED.scale_x, scale_y=EXCLUDED.scale_y, "
+        "  updated_at=NOW()",
+        camera_id,
+        float(align["off_x"]), float(align["off_y"]),
+        float(align["scale_x"]), float(align["scale_y"]),
+    )
+
+
 async def mark_alerts_read(pool: asyncpg.Pool, ids: list[int]) -> int:
     """整組標記已讀。回傳實際更新筆數（從 'UPDATE N' 末尾解析，asyncpg 慣例）。"""
     if not ids:

@@ -345,6 +345,95 @@ def test_compute_thermal_celsius_uses_real_frame_sizes_not_hardcoded():
     assert result == pytest.approx(39.0)
 
 
+def test_compute_thermal_celsius_applies_alignment():
+    """對位參數要真的改變取樣的位置。
+
+    熱像與 rgb 是兩顆分開的鏡頭，等比例換算過去還是會偏。這裡把 bbox 往右下
+    推 1/4 張圖，取到的就該是被推到的那一塊，不是原來那一塊。
+    """
+    import numpy as np
+    from inference.pipeline import _compute_thermal_celsius
+    thermal = np.zeros((120, 160), dtype=np.float32)
+    thermal[30:60, 40:80] = 39.0     # 熱像上 y 25~50%、x 25~50% 的那一塊
+
+    # rgb 1280x720 上左上角 1/4 的 bbox：不校正時對到熱像的左上角 1/4（全 0）
+    assert _compute_thermal_celsius(
+        thermal, 0.0, 0.0, 320.0, 180.0, 1280, 720
+    ) == pytest.approx(0.0)
+
+    # 往右下各推 1/4 張圖之後，正好落在那塊 39.0 上
+    aligned = _compute_thermal_celsius(
+        thermal, 0.0, 0.0, 320.0, 180.0, 1280, 720,
+        {"off_x": 0.25, "off_y": 0.25, "scale_x": 1.0, "scale_y": 1.0},
+    )
+    assert aligned == pytest.approx(39.0)
+
+
+def test_compute_thermal_celsius_returns_none_when_alignment_pushes_out_of_view():
+    """校正把這隻豬推出熱像視野時回 None，不要夾回邊界。
+
+    夾回去等於把一塊牆壁的溫度當成牠的體溫報上去——那正是舊 bug 的形狀，
+    數字有、範圍也合理，只是跟那隻豬無關。
+    """
+    import numpy as np
+    from inference.pipeline import _compute_thermal_celsius
+    thermal = np.full((120, 160), 30.0, dtype=np.float32)
+    result = _compute_thermal_celsius(
+        thermal, 1200.0, 700.0, 1280.0, 720.0, 1280, 720,
+        {"off_x": 0.5, "off_y": 0.5, "scale_x": 1.0, "scale_y": 1.0},
+    )
+    assert result is None
+
+
+def test_payload_carries_source_frame_size():
+    """WS payload 要帶 bbox 的座標系尺寸。
+
+    前端不能拿 <video> 的 videoWidth 當分母：熱像那條串流是 640x480 而 bbox 是
+    rgb 1280x720 的座標，除錯了框會整片位移（這就是熱像 bbox 位移的根因）。
+    """
+    from inference.pipeline import FrameData, InferencePipeline
+    import numpy as np
+    p = InferencePipeline()
+    sent = []
+
+    async def fake_broadcast(cam, payload):
+        sent.append((cam, payload))
+
+    mock_detector = MagicMock()
+    mock_detector.test_size = (736, 1280)
+    mock_detector.infer.return_value = [np.ones((1, 7), dtype=np.float32)]
+    p._detector = mock_detector
+    p._reid = MagicMock()
+    p._reid.extract.return_value = None
+    p._tracker_pool = MagicMock()
+    p._tracker_pool.update.return_value = []
+    from concurrent.futures import ThreadPoolExecutor
+    p._executor = ThreadPoolExecutor(max_workers=1)
+    p._event_loop = asyncio.new_event_loop()
+    p._broadcast_fn = fake_broadcast
+
+    rgb = np.zeros((720, 1280, 3), dtype=np.uint8)
+    p._process_batch({"cam_01": FrameData(rgb_np=rgb, thermal_np=None,
+                                          ts=1.0, frame_id=1)})
+    # broadcast 是 run_coroutine_threadsafe 丟進 loop 的，要讓 loop 跑一下才會執行。
+    p._event_loop.run_until_complete(asyncio.sleep(0.05))
+    p._event_loop.close()
+    p._executor.shutdown(wait=False)
+
+    assert sent, "沒有送出任何 payload"
+    _, payload = sent[0]
+    assert payload["frame_width"] == 1280
+    assert payload["frame_height"] == 720
+
+
+def test_update_frame_records_source_frame_size():
+    from inference.pipeline import InferencePipeline
+    import numpy as np
+    p = InferencePipeline()
+    p.update_frame("cam_01", np.zeros((720, 1280, 3), dtype=np.uint8), None, 1.0, 1)
+    assert p.frame_sizes()["cam_01"] == [1280, 720]
+
+
 def test_compute_thermal_celsius_returns_none_when_no_thermal():
     from inference.pipeline import _compute_thermal_celsius
     result = _compute_thermal_celsius(None, 0.0, 0.0, 50.0, 50.0, 640, 480)

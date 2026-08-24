@@ -129,3 +129,38 @@ def test_one_analyzed_entry_is_enough_to_leave_the_not_analyzed_state():
     entries = {1: _entry(2.0, analyzed=True), 2: _entry(None, analyzed=False)}
     assert select_focus(entries, lowest_enabled=True, lowest_n=1,
                         top_n=0)["status"] == "ok"
+
+
+# ── entries 被清空之後 ───────────────────────────────────────────────
+# MOT 的 ID 會跳號：同一隻豬遮擋一次出來就換一個新號碼，舊號碼從此不再出現。
+# scheduler 會把那些死掉的 object_id 逐出，夜間更是整台相機一筆都不剩。
+# 這時光看 entries 分不出「分析過、但全欄都在休息」與「還沒分析過」，
+# 兩種都會變成「目前沒有需要注意的豬」——把一個保護講成一份保證。
+
+def test_empty_entries_with_camera_state_says_herd_low():
+    r = select_focus({}, lowest_enabled=True, lowest_n=3, top_n=3,
+                     camera_state={"analyzed": True, "herd_ok": False})
+    assert r["status"] == "herd_low"
+    assert r["items"] == []
+
+
+def test_empty_entries_before_first_analysis_says_not_analyzed():
+    r = select_focus({}, lowest_enabled=True, lowest_n=3, top_n=3,
+                     camera_state={"analyzed": False, "herd_ok": False})
+    assert r["status"] == "not_analyzed"
+
+
+def test_camera_state_overrides_stale_per_entry_flags():
+    """camera_state 是權威來源。entry 裡的 herd_ok 是上一輪寫進去的殘影，
+    兩邊不一致時要聽相機的，不是聽某一隻豬的。"""
+    entries = {1: _entry(2.0, herd_ok=True), 2: _entry(30.0, herd_ok=True)}
+    r = select_focus(entries, lowest_enabled=True, lowest_n=3, top_n=3,
+                     camera_state={"analyzed": True, "herd_ok": False})
+    assert r["status"] == "herd_low"
+
+
+def test_without_camera_state_behaviour_is_unchanged():
+    """沒有 camera_state 時走舊路徑（DB 不可用、既有測試都在這條）。"""
+    entries = {1: _entry(2.0), 2: _entry(30.0)}
+    assert select_focus(entries, lowest_enabled=True, lowest_n=1,
+                        top_n=1)["status"] == "ok"

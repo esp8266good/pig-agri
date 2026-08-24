@@ -17,6 +17,21 @@ export const S = {
   })(),
   // 關注清單：object_id → 'anomaly'|'lowest'|'reference'，由 /alerts/focus 每輪更新。
   focusLabels: {}, focusItems: [], focusStatus: 'ok',
+  // bbox 的座標系尺寸：camera_id → [w, h]（rgb 原始解析度，後端 /cameras 給）。
+  // ⚠ 不能拿 <video> 的 videoWidth 當分母。rgb 那條串流剛好同尺寸所以看不出來，
+  // 熱像改成原生 640x480 之後就露餡了：bbox 是 1280x720 的座標，除以 640
+  // 等於把每個框放大一倍再往右下推，整片位移。
+  cameraFrameSize: {},
+  // 目前相機的熱像對位參數（見後端 thermal_align.py）。兩顆鏡頭視角不同，
+  // 等比例換算過去還是會偏，這四個數字把它推回去。
+  thermalAlign: { off_x: 0, off_y: 0, scale_x: 1, scale_y: 1 },
+  // 熱像對位校正模式：在熱像畫面上拖曳移動、用按鈕縮放。
+  alignEditing: false,
+  // 每個框都標上 #ID。預設關：一堆色塊比框本身還吵。需要一眼對上豬隻編號時開。
+  showAllIds: (() => {
+    try { return localStorage.getItem('showAllIds') === 'true'; }
+    catch (_) { return false; }
+  })(),
   // 畫面上的框要畫到什麼程度。純視覺偏好，每個瀏覽器各自記。
   //   'focus' 只畫有意義的框（異常紅框，以及 LIVE 才有的關注清單橘／綠框）
   //   'ghost' 其餘的豬畫成極淡細線、不加 ID 標籤
@@ -77,6 +92,10 @@ export const els = {
   alertLoadMoreBtn: document.getElementById('alert-load-more'),
   focusListEl:  document.getElementById('focus-list'),
   boxModeSel:   document.getElementById('box-mode-select'),
+  showIdsChk:   document.getElementById('show-ids-toggle'),
+  alignPanel:   document.getElementById('align-panel'),
+  alignToggleBtn: document.getElementById('align-toggle-btn'),
+  alignReadout: document.getElementById('align-readout'),
   transportEl:  document.getElementById('transport'),
   playBtn:      document.getElementById('play-btn'),
   playIconUse:  document.getElementById('play-icon-use'),

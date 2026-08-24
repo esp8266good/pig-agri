@@ -60,6 +60,7 @@ export async function enterGrid() {
     cameras = data.cameras;
     _cams = cameras;
     S.cameraActiveTypes = data.active_types || {};
+    S.cameraFrameSize = data.frame_sizes || S.cameraFrameSize;
   } catch (e) {
     if (gen !== _gridGen) return;   // 已被 leaveGrid/另一次 enterGrid 取代，不再顯示過期的錯誤畫面
     renderGridError(root);

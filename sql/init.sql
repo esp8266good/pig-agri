@@ -57,6 +57,18 @@ CREATE TABLE IF NOT EXISTS camera_masks (
 );
 CREATE INDEX IF NOT EXISTS idx_camera_masks_cam ON camera_masks(camera_id);
 
+-- 熱像對 RGB 的對位參數。熱像與 RGB 是兩顆分開的鏡頭，視角與位置都不同，
+-- bbox 直接等比例套到熱像上會偏掉。一台相機一列，沒有列＝identity（不校正）。
+-- 這組參數同時決定「熱像畫面上框畫在哪」與「體溫從熱像的哪一塊取樣」。
+CREATE TABLE IF NOT EXISTS camera_thermal_align (
+    camera_id  VARCHAR(16) PRIMARY KEY,
+    off_x      DOUBLE PRECISION NOT NULL DEFAULT 0,
+    off_y      DOUBLE PRECISION NOT NULL DEFAULT 0,
+    scale_x    DOUBLE PRECISION NOT NULL DEFAULT 1,
+    scale_y    DOUBLE PRECISION NOT NULL DEFAULT 1,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS saved_segments (
     id         BIGSERIAL PRIMARY KEY,
     camera_id  VARCHAR(16) NOT NULL,

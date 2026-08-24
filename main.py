@@ -17,10 +17,11 @@ from config import settings as app_settings
 from hls_manager import hls_manager
 from hls_retention import effective_retention_days, purge_expired_hls
 from db_writer import (get_all_settings, get_protected_hours,
-                       query_camera_masks, write_health_alert)
+                       query_camera_masks, query_thermal_aligns,
+                       write_health_alert)
 from auth_middleware import AuthMiddleware
 from inference.pipeline import inference_pipeline
-from routers import (alerts, auth, manual, masks, notes, stream,
+from routers import (alerts, auth, manual, masks, notes, stream, thermal,
                      storage, tracking)
 from routers import settings as settings_router
 from zmq_receiver import zmq_receiver
@@ -234,6 +235,26 @@ async def _load_masks_into_pipeline() -> None:
         logger.exception("遮罩載入失敗，本次啟動不套用遮罩")
 
 
+async def _load_thermal_aligns_into_pipeline() -> None:
+    """啟動時把熱像對位參數灌進 pipeline。
+
+    跟遮罩同樣的理由：平時靠 routers/thermal 在存檔時 push，重啟後沒人 push。
+    不載入的話症狀是「體溫悄悄退回未校正的取樣位置」——數字照常有、範圍也合理，
+    只是取自隔壁那塊，完全不會報錯。
+    """
+    pool = database.get_pool()
+    if pool is None:
+        return
+    try:
+        aligns = await query_thermal_aligns(pool)
+        for cam, align in aligns.items():
+            inference_pipeline.set_thermal_align(cam, align)
+        if aligns:
+            logger.info(f"熱像對位載入完成：{len(aligns)} 台相機")
+    except Exception:
+        logger.exception("熱像對位載入失敗，本次啟動一律當作未校正")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     auth.check_auth_config()
@@ -243,6 +264,7 @@ async def lifespan(app: FastAPI):
     app.state.scheduler = scheduler
     loop = asyncio.get_event_loop()
     await _load_masks_into_pipeline()
+    await _load_thermal_aligns_into_pipeline()
     inference_pipeline.start(loop)
     zmq_receiver.start()
     retention_task = asyncio.create_task(_retention_loop())
@@ -285,8 +307,12 @@ async def health():
 @app.get("/cameras", tags=["system"])
 async def list_cameras():
     cameras = [s.label for s in app_settings.zmq_sources]
+    # frame_sizes 是 bbox 的座標系尺寸（rgb 原始解析度）。前端拿它當分母，
+    # 不能用 <video> 的 videoWidth：熱像串流是 640x480 而 bbox 是 1280x720
+    # 的座標，除錯了框會整片位移。還沒收到幀的相機不會出現在裡面。
     return {"cameras": cameras,
-            "active_types": hls_manager.active_types_map(cameras)}
+            "active_types": hls_manager.active_types_map(cameras),
+            "frame_sizes": inference_pipeline.frame_sizes()}
 
 
 app.include_router(auth.router)
@@ -294,6 +320,7 @@ app.include_router(stream.router)
 app.include_router(tracking.router)
 app.include_router(alerts.router)
 app.include_router(masks.router)
+app.include_router(thermal.router)
 app.include_router(manual.router)
 app.include_router(settings_router.router)
 app.include_router(notes.router)

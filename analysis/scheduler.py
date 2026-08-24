@@ -11,9 +11,19 @@ from db_writer import write_health_alert
 
 _anomaly_cache: dict[str, dict[int, dict]] = {}
 
+# 每台相機最近一輪分析的結論。以前這兩個旗標只寫在 per-object 的 entry 裡，
+# 於是「這台相機的 entry 被清光了」與「這台相機從來沒被分析過」在下游長得
+# 一模一樣——清掉過期 object_id 之後，夜間本來該說「豬群活動量普遍偏低」
+# 就會變成「目前沒有需要注意的豬」，把一個保護講成了一份保證。
+_camera_state: dict[str, dict] = {}
+
 
 def get_anomaly_cache() -> dict:
     return _anomaly_cache
+
+
+def get_camera_state() -> dict:
+    return _camera_state
 
 
 def _default_entry() -> dict:
@@ -29,6 +39,10 @@ def _default_entry() -> dict:
         # analysis_interval 才有第一筆結果；沒有這個旗標就分不出「全欄安靜」
         # 與「還沒算過」，關注清單會在重啟後誤報。
         "analyzed": False,
+        # 這個 object_id 最後一次出現在分析視窗裡的時刻（unix 秒）。
+        # None = 從沒出現過（重啟時由 _rebuild_cache 從歷史告警建的骨架）。
+        # 這是逐出的依據，見 _prune_stale。
+        "last_seen": None,
     }
 
 
@@ -99,6 +113,35 @@ class Scheduler:
             self._window_minutes = int(s["analysis_window_minutes"])
         if not self._temp_enabled:
             self._clear_all_temp_flags()
+
+    @staticmethod
+    def _prune_stale(window_start: float) -> int:
+        """清掉「已經不存在的 object_id」。回傳清掉幾筆。
+
+        MOT 的 ID 會跳號：同一隻豬遮擋一次出來就換一個新號碼，舊號碼從此再也
+        不會出現在任何一筆 tracking_log 裡。但 _anomaly_cache 只會長不會縮，
+        於是關注清單上那些 id 永遠不消退——畫面上根本沒有那隻豬，清單卻一直
+        指著牠，愈積愈長，把真正該看的擠到看不見的地方。
+
+        逐出的判準用「活動量評估窗口」而不是定時整批清空：
+          · 定時清空會連遲滯狀態機一起重置（`activity_state` 回到 normal），
+            真正持續低活動的豬每一輪都會被當成新的異常重新告警、推播一直響。
+          · 分析本來就只看得到視窗內出現過的 object_id，視窗外的那些不管留多久
+            都不可能再被更新一次。所以「視窗內沒出現過」＝「這個 id 已經死了」，
+            清掉它不會丟掉任何還在更新的判斷。
+
+        last_seen 是 None 的是重啟時從歷史告警建的骨架（見 _rebuild_cache），
+        它們的用途只到「第一輪分析跑完之前讓關注清單說得出 not_analyzed」為止，
+        跑完就該讓位給真實資料。
+        """
+        removed = 0
+        for cam, objs in list(_anomaly_cache.items()):
+            for oid, entry in list(objs.items()):
+                last_seen = entry.get("last_seen")
+                if last_seen is None or last_seen < window_start:
+                    del objs[oid]
+                    removed += 1
+        return removed
 
     @staticmethod
     def _clear_all_temp_flags() -> None:
@@ -182,6 +225,15 @@ class Scheduler:
         for r in rows:
             by_cam[r["camera_id"]].append(r["object_id"])
 
+        # 這一輪視窗內完全沒有偵測資料的相機（夜間全黑、相機斷線）也要記狀態，
+        # 否則 _camera_state 會停在上一次有資料時的結論，關注清單會拿一份幾小時
+        # 前的「一切正常」當成現在的判斷。
+        for camera_id in set(_camera_state) | set(_anomaly_cache):
+            if camera_id not in by_cam:
+                _camera_state[camera_id] = {
+                    "analyzed": True, "herd_ok": False, "updated_at": now,
+                }
+
         for camera_id, object_ids in by_cam.items():
             rates: dict[int, float] = {}
             logs_by_obj: dict[int, list] = {}
@@ -200,6 +252,8 @@ class Scheduler:
                 entry = _anomaly_cache.setdefault(camera_id, {}).setdefault(
                     object_id, _default_entry()
                 )
+                # 這一輪視窗裡有這個 id 的資料，牠還活著。
+                entry["last_seen"] = now
                 rate = _activity_rate(logs, self._min_span_seconds)
                 entry["activity_current"] = rate
                 if rate is not None:
@@ -209,6 +263,9 @@ class Scheduler:
                 float(np.median(list(rates.values()))) if len(rates) >= 2 else None
             )
             herd_ok = median_rate is not None and median_rate >= self._abs_floor
+            _camera_state[camera_id] = {
+                "analyzed": True, "herd_ok": herd_ok, "updated_at": now,
+            }
 
             for object_id in object_ids:
                 entry = _anomaly_cache[camera_id][object_id]
@@ -267,3 +324,7 @@ class Scheduler:
                 else:
                     entry["temp_anomaly"] = False
                     entry["temp_state"] = "normal"
+
+        removed = self._prune_stale(window_start)
+        if removed:
+            logger.info(f"關注快取清掉 {removed} 個已消失的 object_id（ID 跳號的殘留）")

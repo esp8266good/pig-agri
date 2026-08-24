@@ -3,6 +3,7 @@ import { S, els, setStatus, setSkeleton } from './state.js';
 import { loadStream, loadVod, startLiveTimers, stopLiveTimers, detachVodListeners, exitVodState } from './player.js';
 import { loadTimeline, clearSelection, closeSlotActionMenu, closeDeleteModal, localDayStart } from './timeline.js';
 import { initMaskEditor, loadMaskRegions } from './mask.js';
+import { initAlignEditor, loadThermalAlign, syncAlignButtonVisibility } from './align.js';
 import { initHelp } from './help.js';
 import { switchTab, onSortHeaderClick, refreshAnomalyMap, refreshNotifications, loadMoreNotifications, refreshFocusList, setBoxDisplayMode, loadSettings, loadBookmarks, closeBookmarkEditModal, openSettingsDrawer, closeSettingsDrawer, initSettingsDrawer, updateSoloHint } from './panels.js';
 import { enterGrid, leaveGrid, bindGridPick, getGridPlaybackHour } from './grid.js';
@@ -147,8 +148,9 @@ async function init() {
   try {
     const res = await fetch('/cameras');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const { cameras, active_types } = await res.json();
+    const { cameras, active_types, frame_sizes } = await res.json();
     S.cameraActiveTypes = active_types || {};
+    S.cameraFrameSize = frame_sizes || {};
     if (cameras.length === 0) throw new Error('no cameras');
 
     cameras.forEach(cam => {
@@ -162,6 +164,7 @@ async function init() {
     S.currentCamera = (cachedCam && cameras.includes(cachedCam)) ? cachedCam : cameras[0];
     els.camSelect.value = S.currentCamera;
     loadMaskRegions();
+    loadThermalAlign();
     loadStream();
     const today = new Date();
     S.currentMonth = new Date(today.getFullYear(), today.getMonth(), 1);
@@ -200,6 +203,16 @@ async function init() {
     els.boxModeSel.value = S.boxDisplayMode;
     els.boxModeSel.addEventListener('change', e => setBoxDisplayMode(e.target.value));
   }
+  if (els.showIdsChk) {
+    // 同上：值存在 localStorage，要從 S 反向同步到 DOM。
+    els.showIdsChk.checked = S.showAllIds;
+    els.showIdsChk.addEventListener('change', e => {
+      S.showAllIds = e.target.checked;
+      try { localStorage.setItem('showAllIds', String(S.showAllIds)); } catch (_) {}
+    });
+  }
+  initAlignEditor();
+  syncAlignButtonVisibility();
 }
 
 els.camSelect.addEventListener('change', () => {
@@ -207,6 +220,7 @@ els.camSelect.addEventListener('change', () => {
   try { localStorage.setItem('lastCamera', S.currentCamera); } catch (_) {}
   resetCameraState();
   loadMaskRegions();
+  loadThermalAlign();
   loadStream();
   loadTimeline();
   startLiveTimers();

@@ -7,7 +7,7 @@ import database
 from alert_grouping import fold_alerts, page_groups
 from config import settings as app_settings
 from focus_list import select_focus
-from analysis.scheduler import get_anomaly_cache
+from analysis.scheduler import get_anomaly_cache, get_camera_state
 from db_writer import (
     count_unread_alerts,
     get_all_settings,
@@ -77,6 +77,7 @@ async def get_focus_list(camera_id: str):
                                 app_settings.focus_lowest_enabled),
         lowest_n=_as_int(db.get("focus_lowest_n"), app_settings.focus_lowest_n),
         top_n=_as_int(db.get("focus_top_n"), app_settings.focus_top_n),
+        camera_state=get_camera_state().get(camera_id),
     )
     return {"camera_id": camera_id, **result}
 

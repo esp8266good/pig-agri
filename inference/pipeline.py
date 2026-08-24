@@ -7,6 +7,7 @@ from typing import Callable
 
 import numpy as np
 
+import thermal_align
 from mask_filter import filter_detections, rasterize
 from loguru import logger
 
@@ -19,6 +20,7 @@ def _compute_thermal_celsius(
     thermal_c: "np.ndarray | None",
     x1: float, y1: float, x2: float, y2: float,
     rgb_w: int, rgb_h: int,
+    align: "dict | None" = None,
 ) -> "float | None":
     """bbox（rgb 像素座標）範圍內的平均體表溫度，攝氏。
 
@@ -27,19 +29,26 @@ def _compute_thermal_celsius(
     熱像是擷取端上採樣過的 1280x720：換算係數錯一倍，取樣範圍還被 clamp 在
     圖的左上角一小塊，於是每一隻豬拿到的都是同一塊背景的值，跟牠在哪無關。
 
+    `align` 是這台相機的熱像對位參數（見 thermal_align）。兩顆鏡頭視角不同、
+    位置差幾公分，等比例換算過去還是會偏；沒有校正過就是 identity，行為與
+    校正功能出現之前完全相同。
+
     thermal_c 是攝氏溫度場（zmq_receiver 從 Y16 解出來的），不是上色後的圖。
-    對顏色取平均沒有物理意義——turbo/jet 的亮度不單調，綠色比紅色亮。
+    對顏色取平均沒有物理意義：turbo/jet 的亮度不單調，綠色比紅色亮。
     """
     if thermal_c is None or rgb_w <= 0 or rgb_h <= 0:
         return None
     th, tw = thermal_c.shape[:2]
-    sx = tw / rgb_w
-    sy = th / rgb_h
-    tx1 = int(max(0, x1 * sx))
-    ty1 = int(max(0, y1 * sy))
-    tx2 = int(min(tw, x2 * sx))
-    ty2 = int(min(th, y2 * sy))
+    fx1, fy1, fx2, fy2 = thermal_align.map_box(
+        x1, y1, x2, y2, rgb_w, rgb_h, tw, th, align
+    )
+    tx1 = int(max(0, fx1))
+    ty1 = int(max(0, fy1))
+    tx2 = int(min(tw, fx2))
+    ty2 = int(min(th, fy2))
     if tx2 <= tx1 or ty2 <= ty1:
+        # 校正把這隻豬推到熱像視野之外（邊緣的豬在窄視角的熱像上本來就看不到）。
+        # 回 None 而不是夾回邊界：夾回去等於報告一塊牆壁的溫度當作牠的體溫。
         return None
     roi = thermal_c[ty1:ty2, tx1:tx2]
     if roi.ndim == 3:
@@ -96,6 +105,14 @@ class InferencePipeline:
         # 遮罩：camera_id → 區域列表。由 routers/masks 在存檔時 push 進來
         # （pipeline 在自己的 thread，查不了 async 的 DB pool）。
         self._masks: dict[str, list[dict]] = {}
+        # 熱像對位參數：camera_id → {off_x, off_y, scale_x, scale_y}。
+        # 跟遮罩同一條路徑（存檔時由 router push 進來），理由也一樣：
+        # pipeline 跑在自己的 thread，查不了 async 的 DB pool。
+        self._thermal_align: dict[str, dict] = {}
+        # 每支 camera 最近一幀 rgb 的實際尺寸。bbox 就是在這個座標系裡算的，
+        # 前端要靠它才知道該除以多少——不能拿 <video> 的 videoWidth 當分母，
+        # 熱像那條串流是 640x480 而 bbox 是 1280x720 的座標。
+        self._frame_sizes: dict[str, tuple[int, int]] = {}
         # 遮罩總開關。關掉＝完全不過濾，是遮罩把真的豬吃掉時的一鍵復原。
         self._mask_enabled: bool = True
         # rasterize 每次都要填多邊形，不能每幀重畫。快取 key 帶 version，
@@ -173,6 +190,9 @@ class InferencePipeline:
             self._latest[camera_id] = FrameData(
                 rgb_np=rgb_np, thermal_np=thermal_np, ts=ts, frame_id=frame_id
             )
+            if rgb_np is not None and rgb_np.ndim >= 2:
+                h, w = rgb_np.shape[:2]
+                self._frame_sizes[camera_id] = (int(w), int(h))
 
     def set_masks(self, camera_id: str, regions: list[dict]) -> None:
         """換掉某台相機的遮罩，立即生效（下一幀就套用）。"""
@@ -181,6 +201,22 @@ class InferencePipeline:
 
     def set_mask_enabled(self, enabled: bool) -> None:
         self._mask_enabled = bool(enabled)
+
+    def set_thermal_align(self, camera_id: str, align: dict | None) -> None:
+        """換掉某台相機的熱像對位參數，下一幀就生效。"""
+        self._thermal_align[camera_id] = thermal_align.normalize(align)
+
+    def get_thermal_align(self, camera_id: str) -> dict:
+        return thermal_align.normalize(self._thermal_align.get(camera_id))
+
+    def frame_sizes(self) -> dict[str, list[int]]:
+        """每支 camera 最近一幀 rgb 的實際尺寸（bbox 的座標系）。
+
+        前端拿它當 bbox 的分母。沒有這個資訊時前端會退回 <video> 的
+        videoWidth/videoHeight——那對 rgb 剛好正確（同尺寸），對熱像則整個錯位。
+        """
+        with self._lock:
+            return {cam: [w, h] for cam, (w, h) in self._frame_sizes.items()}
 
     def _mask_for(self, camera_id: str, width: int, height: int):
         """取這台相機在這個解析度下的遮罩圖，沒有遮罩回 None。"""
@@ -348,7 +384,8 @@ class InferencePipeline:
                             conf = float(t[5]) if len(t) > 5 else 0.0
                             fh, fw = frame_data.rgb_np.shape[:2]
                             ti = _compute_thermal_celsius(
-                                frame_data.thermal_np, x1, y1, x2, y2, fw, fh
+                                frame_data.thermal_np, x1, y1, x2, y2, fw, fh,
+                                self._thermal_align.get(cam),
                             )
                             objects.append({
                                 "object_id": obj_id,
@@ -374,10 +411,16 @@ class InferencePipeline:
                                     ),
                                     self._event_loop,
                                 )
+                        _fh, _fw = frame_data.rgb_np.shape[:2]
                         payload = {
                             "frame_id": frame_data.frame_id,
                             "timestamp": frame_data.ts,
                             "objects": objects,
+                            # bbox 的座標系尺寸。前端不能拿 <video> 的
+                            # videoWidth 當分母：熱像那條串流是 640x480，
+                            # 而 bbox 是 rgb 1280x720 的座標，除錯了框就整片位移。
+                            "frame_width": int(_fw),
+                            "frame_height": int(_fh),
                         }
                         asyncio.run_coroutine_threadsafe(
                             self._broadcast_fn(cam, payload), self._event_loop

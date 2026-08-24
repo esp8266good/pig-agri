@@ -357,12 +357,17 @@ def _stale_entry(temp_anomaly: bool, temp_state: str) -> dict:
         "activity_state": "normal", "temp_state": temp_state,
         "activity_current": None, "activity_mean": None, "activity_std": None,
         "temp_current": None, "temp_mean": None, "temp_std": None,
+        "last_seen": None,
     }
 
 
-def test_disabled_temp_clears_stale_cache_entry_outside_window():
-    """根因 A：temp 停用時，連『不在當前分析視窗』的殘留 object_id 也要清掉
-    temp 旗標（否則 /alerts/active 會持續回傳舊紅框）。"""
+def test_disabled_temp_evicts_stale_cache_entry_outside_window():
+    """根因 A：temp 停用時，不在當前分析視窗的殘留 object_id 不得繼續回傳舊紅框。
+
+    以前的做法是把它的 temp 旗標清掉、entry 留著；現在整個 entry 會被逐出
+    （視窗內沒出現過＝這個 id 已經不存在了，見 _prune_stale）。逐出比清旗更強，
+    要驗的那件事——/alerts/active 不再帶著它——照樣成立。
+    """
     from analysis.scheduler import Scheduler, get_anomaly_cache
     import analysis.scheduler as sched_mod
     s = FakeSettings()
@@ -377,8 +382,73 @@ def test_disabled_temp_clears_stale_cache_entry_outside_window():
     asyncio.run(Scheduler(pool, s)._run_analysis())
 
     cache = get_anomaly_cache()
-    assert cache["cam_01"][99]["temp_anomaly"] is False
-    assert cache["cam_01"][99]["temp_state"] == "normal"
+    assert 99 not in cache["cam_01"]
+
+
+def test_prune_evicts_vanished_object_ids_but_keeps_live_ones():
+    """MOT 的 ID 跳號會讓舊 object_id 永遠不再出現。留著它們的話關注清單
+    只會長不會縮，畫面上沒有那隻豬、清單卻一直指著牠。"""
+    from analysis.scheduler import Scheduler, get_anomaly_cache
+    import analysis.scheduler as sched_mod
+    sched_mod._anomaly_cache.clear()
+    # 7 是這一輪視窗裡真的有資料的豬；99 是上一輪留下來、已經消失的舊 id。
+    sched_mod._anomaly_cache.setdefault("cam_01", {})[99] = _stale_entry(True, "alerted")
+    pool = AsyncMock()
+    pool.fetch.side_effect = [
+        [{"camera_id": "cam_01", "object_id": 7}],
+        _track(600.0),
+    ]
+
+    asyncio.run(Scheduler(pool, FakeSettings())._run_analysis())
+
+    cache = get_anomaly_cache()
+    assert 7 in cache["cam_01"]
+    assert 99 not in cache["cam_01"]
+
+
+def test_prune_does_not_reset_state_of_still_present_pig():
+    """逐出的判準是『這個 id 還在不在』，不是『時間到了就整批清空』。
+
+    定時清空會把遲滯狀態機一起重置：真正持續低活動的豬每一輪都會被當成新的
+    異常重新告警，推播一直響。所以還出現在視窗裡的豬，狀態必須原封不動。
+    """
+    from analysis.scheduler import Scheduler, get_anomaly_cache
+    import analysis.scheduler as sched_mod
+    sched_mod._anomaly_cache.clear()
+    entry = _stale_entry(False, "normal")
+    entry["activity_state"] = "alerted"
+    entry["activity_anomaly"] = True
+    sched_mod._anomaly_cache.setdefault("cam_01", {})[7] = entry
+    pool = AsyncMock()
+    pool.fetch.side_effect = [
+        [{"camera_id": "cam_01", "object_id": 7}],
+        _track(600.0),
+    ]
+
+    asyncio.run(Scheduler(pool, FakeSettings())._run_analysis())
+
+    # 只有一隻豬 → median 算不出來 → herd_ok False → 狀態機整段跳過，維持 alerted。
+    assert get_anomaly_cache()["cam_01"][7]["activity_state"] == "alerted"
+
+
+def test_camera_state_records_no_data_round():
+    """視窗內一筆偵測都沒有的相機（夜間全黑、相機斷線）也要記下狀態。
+
+    entry 會被逐出到一個不剩，這時光看 cache 分不出『分析過但全欄休息』與
+    『還沒分析過』，關注清單會把一個保護講成一份保證。"""
+    from analysis.scheduler import Scheduler, get_camera_state
+    import analysis.scheduler as sched_mod
+    sched_mod._anomaly_cache.clear()
+    sched_mod._camera_state.clear()
+    sched_mod._anomaly_cache["cam_01"] = {5: _stale_entry(False, "normal")}
+    pool = AsyncMock()
+    pool.fetch.side_effect = [[]]      # 視窗內沒有任何 tracking_logs
+
+    asyncio.run(Scheduler(pool, FakeSettings())._run_analysis())
+
+    state = get_camera_state()["cam_01"]
+    assert state["analyzed"] is True
+    assert state["herd_ok"] is False
 
 
 def test_reload_disable_temp_clears_all_cache_flags():

@@ -2,6 +2,7 @@
 import { drawMaskRegions } from './mask.js';
 import { S, els, MAX_WS_RETRY, WS_RETRY_BASE_MS, setStatus, showToast, setSkeleton, fmtClock, hasActiveType } from './state.js';
 import { clearPigSelection, renderPigStatus, updateVodAnomalyMap, refreshAnomalyMap, refreshNotifications } from './panels.js';
+import { syncAlignButtonVisibility } from './align.js';
 
 // 允許採用「擷取時間略晚於畫面時間」的 bbox（PDT 內插與 WS 抵達的抖動）。
 const BBOX_MATCH_TOLERANCE = 0.5;
@@ -42,6 +43,7 @@ function hideNoSignal() {
 
 // ── VOD mode ──────────────────────────────────────────────
 export function loadVod(startTs) {
+  setTimeout(syncAlignButtonVisibility, 0);
   S.isLive = false;
   clearPigSelection();
   S.vodStartTs = startTs;
@@ -158,6 +160,8 @@ export function exitVodState() {
 }
 
 export function switchToLive() {
+  // 校正只在熱像的 LIVE 畫面有意義，進出回放都要重判一次入口鈕。
+  setTimeout(syncAlignButtonVisibility, 0);
   if (!exitVodState()) return;   // 已是 live：僅隱藏 banner（exitVodState 內已處理），不重連
   loadStream();
   startLiveTimers();
@@ -235,6 +239,7 @@ function pickClosestFrame(logs, ts) {
 // ── Type toggle ───────────────────────────────────────────
 export function setType(type) {
   S.currentType = type;
+  syncAlignButtonVisibility();
   const btnRgb     = document.getElementById('btn-rgb');
   const btnThermal = document.getElementById('btn-thermal');
   btnRgb.classList.toggle('active', type === 'rgb');
@@ -275,6 +280,11 @@ function connectWS(cameraId) {
     try {
       const data = JSON.parse(e.data);
       const objs = data.objects || [];
+      // bbox 的座標系尺寸。/cameras 也給，但那是開頁時的一次快照；
+      // 這裡每一幀都帶著，擷取端改解析度時前端立刻跟上。
+      if (data.frame_width > 0 && data.frame_height > 0) {
+        S.cameraFrameSize[cameraId] = [data.frame_width, data.frame_height];
+      }
       const ts = data.timestamp || Date.now() / 1000;
       if (data.timestamp) {
         const delay = Date.now() - data.timestamp * 1000;
@@ -356,6 +366,35 @@ export function syncVideoAspect() {
 }
 els.video.addEventListener('loadedmetadata', syncVideoAspect);
 els.video.addEventListener('resize', syncVideoAspect);   // 換相機/換 rendition 時比例可能變
+
+// bbox 是在 rgb 原始畫面（1280x720）上算出來的座標。後端 /cameras 會給每台
+// 相機的實際尺寸，拿不到才退回 <video> 自己的尺寸。
+//
+// ⚠ 這裡以前直接用 videoWidth/videoHeight。rgb 那條串流剛好就是 1280x720，
+// 所以一直看起來是對的；熱像改成原生 640x480 之後，同一組 bbox 被除以 640
+// 再乘回畫面寬度，等於整片框放大一倍往右下推。症狀是「熱像的框全部位移」，
+// 但根因不在熱像，在這個分母。
+function sourceFrameSize() {
+  const fs = S.cameraFrameSize[S.currentCamera];
+  if (Array.isArray(fs) && fs[0] > 0 && fs[1] > 0) return fs;
+  return [els.video.videoWidth || 0, els.video.videoHeight || 0];
+}
+
+// 把一個 bbox 從 rgb 座標系換算成 0..1 的畫面比例。看熱像時再套上對位參數
+// （兩顆鏡頭視角不同，等比例換算過去還是會偏，見後端 thermal_align.py）。
+function boxToNormalized(bbox, srcW, srcH) {
+  let [x, y, w, h] = bbox;
+  let nx = x / srcW, ny = y / srcH, nw = w / srcW, nh = h / srcH;
+  if (S.currentType === 'thermal') {
+    const a = S.thermalAlign || {};
+    const sx = a.scale_x ?? 1, sy = a.scale_y ?? 1;
+    nx = (a.off_x ?? 0) + nx * sx;
+    ny = (a.off_y ?? 0) + ny * sy;
+    nw *= sx;
+    nh *= sy;
+  }
+  return [nx, ny, nw, nh];
+}
 
 function drawBoxes() {
   updateTransport();
@@ -468,17 +507,23 @@ function drawBoxes() {
   // 遮罩疊圖畫在 bbox 之前，才不會蓋住框。預設關閉，除錯時才開。
   drawMaskRegions(ctx, { elW, elH, scale, offX, offY,
                          renderW, renderH });
+  const [srcW, srcH] = sourceFrameSize();
+  if (!srcW || !srcH) {
+    drawDbgHud();
+    S.animFrameId = requestAnimationFrame(drawBoxes);
+    return;
+  }
   ctx.font = 'bold 11px "DM Sans", monospace';
   // 被 'focus' 濾掉、與被 'ghost' 淡化的一般框各數幾個。零異常時畫面會整片
   // 空白，這個數字是「偵測還活著」的唯一證據（見下方 drawBoxCountChip）。
   let plainCount = 0;
 
   for (const o of displayBoxes) {
-    const [x, y, w, h] = o.bbox;
-    const px = offX + x * scale;
-    const py = offY + y * scale;
-    const pw = w * scale;
-    const ph = h * scale;
+    const [nx, ny, nw, nh] = boxToNormalized(o.bbox, srcW, srcH);
+    const px = offX + nx * renderW;
+    const py = offY + ny * renderH;
+    const pw = nw * renderW;
+    const ph = nh * renderH;
     const anomaly     = S.anomalyMap[o.object_id];
     const isAnomalous = anomaly && (anomaly.activity_anomaly || anomaly.temp_anomaly);
     // 關注清單的三種標籤各有顏色。零異常時畫面上仍然有橘框與綠框，
@@ -489,13 +534,16 @@ function drawBoxes() {
     const dimmed = S.selectedObjectId != null && !isSel;
     // 使用者親手點選的那一隻永遠照畫：他要找的就是牠，被顯示模式濾掉會像壞了。
     const isKey  = isAnomalous || !!focusLabel || isSel;
+    // 校正對位時一律畫全部：沒有框就沒有東西可以對，而回放沒有關注清單、
+    // 'focus' 模式下畫面上很可能一個框都不剩。這是暫時的覆寫，不動使用者的設定。
+    const boxMode = S.alignEditing ? 'all' : S.boxDisplayMode;
     if (!isKey) {
       plainCount++;
       // 'focus' 直接不畫；'ghost' 畫但極淡；'all' 照常。VOD 沒有關注清單，
       // 所以在回放這條等於「只留異常的紅框」，也就是預設看到的樣子。
-      if (S.boxDisplayMode === 'focus') continue;
+      if (boxMode === 'focus') continue;
     }
-    const ghosted = !isKey && S.boxDisplayMode === 'ghost';
+    const ghosted = !isKey && boxMode === 'ghost';
     const color = isAnomalous ? '#ff4444'
                 : focusLabel === 'lowest'    ? '#ff9a3c'
                 : focusLabel === 'reference' ? '#3ecf8e'
@@ -526,9 +574,12 @@ function drawBoxes() {
     ctx.fillStyle   = color;
     ctx.stroke();
 
-    // 豬隻 ID 標籤。只有重點框才畫：每個框頂一塊實心色塊，在小螢幕上比框本身
-    // 還吵。想知道某隻一般豬的 ID 就點右邊清單選取牠，選取的框一定會帶標籤。
-    if (isKey) {
+    // 豬隻 ID 標籤。預設只有重點框才畫：每個框頂一塊實心色塊，在小螢幕上比框
+    // 本身還吵。想知道某隻一般豬的 ID，可以點右邊清單選取牠（選取的框一定帶
+    // 標籤），或是打開「每個框都標編號」一次全部顯示——要對照畫面上哪個框
+    // 是哪一隻豬時，一個一個點太慢。淡框（ghost）不標：那個模式的用意就是
+    // 讓它們退到背景，加上標籤等於白淡化。
+    if (isKey || (S.showAllIds && !ghosted)) {
       const label = `#${o.object_id}`;
       const tw = ctx.measureText(label).width;
       ctx.fillStyle = BOX_HALO_COLOR;
@@ -560,6 +611,7 @@ function drawBoxes() {
 // 畫在 canvas 而不是另做 DOM：它要跟著影片實際的畫面區域走，而且左上角已經被
 // bbox 同步診斷 HUD 佔住了。
 function drawBoxCountChip(ctx, elH, totalBoxes, plainCount) {
+  if (S.alignEditing) return;                 // 校正時強制畫全部，沒有東西被藏起來
   if (S.boxDisplayMode !== 'focus') return;   // 其餘模式框都看得見，不必再說
   // 「只顯示選取的豬」是使用者自己把畫面清空的，這時數字只會誤導。
   if (S.soloMode && S.selectedObjectId != null) return;
@@ -678,6 +730,7 @@ export async function loadStream() {
       if (res.ok) {
         const data = await res.json();
         S.cameraActiveTypes = data.active_types || {};
+        if (data.frame_sizes) S.cameraFrameSize = data.frame_sizes;
       }
     } catch (_) { /* 刷新失敗：維持原快照，走下面既有判定 */ }
     // 刷新期間使用者已切走攝影機/型別：放棄，交給新一輪 loadStream() 處理。
@@ -917,7 +970,9 @@ export function onLiveBtnClick() {
 }
 
 // ── onclick 綁定（原 index.html inline onclick，改用 addEventListener） ──
-document.querySelectorAll('.type-btn').forEach(btn => {
+// 選擇器帶 [data-type]：校正對位鈕沿用同一組樣式（也是 .type-btn），
+// 但它不是型別切換，掃進來會變成 setType(undefined)、整條串流被清掉。
+document.querySelectorAll('.type-btn[data-type]').forEach(btn => {
   btn.addEventListener('click', () => setType(btn.dataset.type));
 });
 els.liveBtn.addEventListener('click', switchToLive);

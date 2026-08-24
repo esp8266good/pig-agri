@@ -1104,12 +1104,31 @@
       border: 1px solid var(--border); border-radius: var(--radius-sm);
       cursor: pointer;
     }
-    #focus-list { list-style: none; margin: 0; padding: 0; }
+    /* 最多顯示 5 列，超過捲動。MOT 的 ID 會跳號，清單長度不受控——不夾住的話
+       它會一路往下長，把豬隻狀態表與底下所有東西全推出畫面外。
+       max-height 用 em 而不是寫死 px：字級是變數，跟著一起變才不會夾到第 4.5 列。 */
+    #focus-list {
+      list-style: none; margin: 0; padding: 0;
+      /* 高度直接從一列的組成算出來，不寫死 px：字級（--text-xs）是隨視窗
+         縮放的 clamp()，寫死的話大螢幕會夾在第 4.5 列、小螢幕又多留一截空白。
+         .focus-item 的 line-height 固定成 1.4 就是為了讓這條算式跟實際相符。 */
+      max-height: calc(5 * (var(--text-xs) * 1.4 + var(--space-1) * 2));
+      overflow-y: auto;
+      /* 捲動容器要看得出「下面還有」，否則會以為清單就這麼長。 */
+      scrollbar-width: thin;
+    }
+    #focus-list::-webkit-scrollbar { width: 6px; }
+    #focus-list::-webkit-scrollbar-thumb {
+      background: var(--border); border-radius: 3px;
+    }
     .focus-item {
       display: flex; align-items: center; gap: var(--space-2);
       padding: var(--space-1) var(--space-2);
       border-radius: var(--radius-sm);
       font-size: var(--text-xs);
+      /* 固定值，不用預設的 normal：#focus-list 的 max-height 是照這個數字
+         算出來的，兩邊要一起改。 */
+      line-height: 1.4;
       cursor: pointer;
     }
     .focus-item:hover { background: var(--surface-2); }
@@ -1129,6 +1148,29 @@
       border-top: 1px dashed var(--border);
       font-size: var(--text-xs); color: var(--text-faint);
     }
+        /* 熱像對位校正面板。沿用遮罩編輯器那組工具列樣式，多一排微調鈕。 */
+    #align-panel {
+      border: 1px solid var(--border); border-radius: var(--radius-sm);
+      padding: var(--space-2); margin-top: var(--space-2);
+      display: flex; flex-direction: column; gap: var(--space-2);
+    }
+    .align-controls, .align-footer {
+      display: flex; align-items: center; gap: var(--space-1);
+      flex-wrap: wrap;
+    }
+    .align-controls button {
+      min-width: 2rem; padding: 2px var(--space-1);
+    }
+    .align-group-label {
+      font-size: var(--text-xs); color: var(--text-faint);
+      margin-left: var(--space-2);
+    }
+    #align-readout {
+      font-size: var(--text-xs); color: var(--text-faint);
+      margin-right: auto;
+    }
+    /* 校正模式下整個畫框變成拖曳把手。游標是唯一的提示，沒有它會不知道能拖。 */
+    #video-wrap.align-editing { cursor: move; touch-action: none; }
     .focus-status {
       padding: var(--space-2); text-align: center;
       font-size: var(--text-xs); color: var(--text-faint); font-style: italic;
@@ -1205,6 +1247,11 @@
     .settings-group { margin-bottom: var(--space-6); }
     .settings-group h3 { font-size: var(--text-sm); margin-bottom: var(--space-1); }
     .group-desc { font-size: var(--text-xs); color: var(--text-muted); margin-bottom: var(--space-3); }
+    /* 欄位底下的一句話補充。用在「這個設定的作用範圍比名字看起來窄」的地方。 */
+    .settings-hint {
+      display: block; font-size: var(--text-xs); color: var(--text-faint);
+      margin-top: var(--space-1); line-height: 1.4;
+    }
     .settings-field.disabled { opacity: 0.45; pointer-events: none; }
     .settings-field input.invalid { border-color: var(--error); }
     .field-error { color: var(--error); font-size: var(--text-xs); }
