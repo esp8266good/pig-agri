@@ -17,4 +17,10 @@ echo
 echo "=== 3. scheduler 每輪的落差 log ==="
 # 「快取 N 個編號，畫面上 K 個」。兩個數字貼近＝這次改版有效。
 # app 的 stdout 只在 tmux pane 裡，沒有落地成檔案。
-ssh "$HOST" "tmux capture-pane -p -t pig-agri -S -8000 2>/dev/null | grep -a '關注快取' | tail -10 || echo '（抓不到 tmux pane）'"
+out=$(ssh "$HOST" "tmux capture-pane -p -t pig-agri -S -8000 2>/dev/null | grep -a '關注快取' | tail -10")
+if [ -z "$out" ]; then
+  echo "（還沒有這行。第一輪分析要等 analysis_interval_minutes＝30 分鐘，"
+  echo "  重啟後也要重新等一輪；夜間沒有偵測資料時也不會有。）"
+else
+  printf '%s\n' "$out"
+fi
