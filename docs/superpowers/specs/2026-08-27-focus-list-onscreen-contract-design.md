@@ -1,0 +1,95 @@
+# 關注清單改成「現在畫面上該看哪幾隻」
+
+2026-08-27。分支 `fix/focus-list-onscreen`。
+
+## 症狀
+
+使用者的原話：「關注清單和對照組都有 ID，但是畫面上完全不顯示這些 bbox，
+只能靠週期性 reset 取得短暫的救贖。」
+
+起因被歸給 MOT：HybridSORT 配 YOLOX 太容易跟丟，ID 暴增。負責 MOT 的成員
+要一段時間才會更新演算法，在那之前問有沒有別的辦法。
+
+## 量到的數字
+
+本機歷史資料（`pig-agri-postgres-1`，cam_03，2026-08-15 忙碌時段，三個時間點）：
+
+| 量測 | 數字 |
+|---|---|
+| 60 分鐘分析視窗裡出現過的 `object_id` | 79 / 80 / 77 |
+| 同一瞬間畫面上真的有偵測框的 `object_id` | 27 / 33 / 1 |
+| 視窗內但當下不在畫面上的比例 | 約 60~65% |
+| tracklet 存活時間中位數 | 1541 秒 |
+
+⚠ 這份資料只到 2026-08-17 搬機為止，正式機的數字可能更差。
+
+## 根因
+
+不在 MOT，在**兩個範圍對不起來**：
+
+- 關注清單的挑選範圍是「過去一小時出現過的 `object_id`」（`_anomaly_cache`）
+- 畫框的比對範圍是「這一幀 WS 送來的 `object_id`」
+
+清單只列 6 個名字，從 80 個裡挑，其中約 62% 在畫面上不存在。平均會有 4 個
+名字點下去畫面上一個框都不會亮。這不是偶發，是結構性的。
+
+tracklet 存活中位數 26 分鐘其實不算短，所以「調 tracker 參數」不是施力點。
+
+兩個放大器：
+
+1. `analysis/scheduler.py` 的 `entry["last_seen"] = now` 寫的是分析當下的牆鐘，
+   不是這個編號最後一次真的出現的時間。於是死掉的編號要多撐 1~2 輪才逐得掉，
+   實際壽命 `window + 2×interval` ≈ 120 分鐘。使用者說的「週期性的短暫救贖」
+   就是這一輪逐出。
+2. `player.js` 的 `focus` 顯示模式下，沒配對到就完全不畫，一般框又被濾掉，
+   於是整片空白。
+
+## 詞彙上的根
+
+`CONTEXT.md` 把關注清單定義成「一份豬隻列表」，但成員是 `object_id`，而
+`object_id` 是 tracklet 不是豬。整份設計把兩者當成同一件事。已補上 tracklet /
+在畫面上 / 離開畫面三個詞條。
+
+## 定案
+
+清單的合約改成「**現在畫面上**該去看哪幾隻」。使用者拿到名字之後的下一個動作
+是走進豬舍找那隻豬，一個指不到任何框的編號對他沒有用處。
+
+- lowest 與 reference 的排名只在畫面上的豬裡面做
+- 異常離開畫面就退到「最近消失」（10 分鐘內、最多 5 個、預設收合）
+- 但它仍然算「還沒解除的警報」，不會因為編號死了就改列「最低」那三隻
+- 採血的權威紀錄是 `health_alerts`（通知中心），不因編號跳號而消失
+
+## 實作（四個 commit）
+
+1. `last_seen` 改記「最後一次真的出現」（`logs[-1]["timestamp"]`）。
+   測試的 `_track`／`_thermal_track` 一併改到真實 unix 時間軸上：舊的 0~120
+   假時間戳配上真實的 `window_start`，會讓每隻豬在寫進 cache 的同一輪就被逐出。
+2. `presence.py`：由 pipeline 每一幀寫入 `camera_id → {object_id: capture_ts}`。
+   「在畫面上」給 10 秒容忍。
+3. `select_focus` 多收 `on_screen` / `gone_seconds`，回傳 `recent` 與
+   `on_screen_count`；`routers/alerts.py` 接線；scheduler 每輪 log 一行
+   「快取 N 個編號、畫面上 K 個」。
+4. 前端兩段清單、兩種空清單文案、debug HUD 多一行 `focus=N/K gone=M`。
+
+## 否掉的做法
+
+- **調 tracker 參數止血**：tracklet 中位數已經 26 分鐘，不是瓶頸。
+  `reid_revive_thresh` 調鬆更會把兩隻長得像的豬合併成同一個編號（見 CLAUDE.md）。
+- **在 app 層縫合 tracklet 成「豬隻 session」**：這是根治，但 MOT 團隊改架構時
+  很可能會一起處理，現在做一份之後大概率要拆掉。等真的要決定時值得一份 ADR。
+- **縮短分析視窗到 20~30 分鐘**：`activity_min_span_seconds=300` 的合格門檻下
+  合格豬會變少，`len(rates) >= 2` 撐不住就整台相機掉進 `herd_low`，清單反而
+  更常一片空白。
+- **前端自己記「最後看到這個編號」**：`bboxHistory` 是 1000 筆上限而且重整頁面
+  就歸零，使用者一按 F5「最近消失」就無從算起。
+- **讓 `/alerts/focus` 每次查 `tracking_logs` 的 `max(timestamp)`**：那張表一億筆，
+  而清單是輪詢的。
+
+## 還沒做的
+
+- 正式機沒有量過命中率。改完之後看 `[cam] 關注快取 N 個編號，畫面上 K 個`
+  那行 log，或按 `d` 看 HUD 的 `focus=N/K`。
+- 「最近消失」點下去只是切到通知中心，沒有捲到那一筆。
+- 10 秒容忍與 10 分鐘保留都是模組常數，不是 DB-backed 設定。要調就改
+  `presence.DEFAULT_HOLD_SECONDS` 與 `focus_list.RECENT_GONE_SECONDS`。
