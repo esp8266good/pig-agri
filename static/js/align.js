@@ -13,7 +13,7 @@
 // 只有 160x120、豬體在上面是一團沒有內部紋理的均勻亮區，而夜間 RGB 全黑根本沒
 // 有影像可配。鏡頭是鎖死的，校正一次可以用很久，不值得養一條會安靜給出錯誤結果
 // 的自動流程。
-import { S, els, showToast } from './state.js';
+import { S, els, showToast, goToLiveEdge } from './state.js';
 
 const IDENTITY = { off_x: 0, off_y: 0, scale_x: 1, scale_y: 1 };
 // 一次按鈕點擊調整多少。0.01 的平移在 640 寬的畫面上約 6px，看得出來又不會過頭。
@@ -29,6 +29,9 @@ let _dragging = false;
 let _dragStart = null;
 // 對位底圖：半透明疊在熱像上的那張 RGB 影像。只在校正模式存在。
 let _underlay = null;
+// 進校正模式前畫面在不在播。底圖是一張靜止的 RGB 快照，熱像卻還在動，
+// 兩邊對不起來：一邊在推參數一邊畫面在跳，根本看不出推對了沒。
+let _wasPlaying = false;
 // 固定 0.35，不做成滑桿。多一顆旋鈕就多一個「怎麼調都對不準」的干擾變因，
 // 而遮罩的雙線本來就是比底圖更精確的判準，底圖只是給眼睛一個粗略的錨。
 const UNDERLAY_ALPHA = 0.35;
@@ -178,6 +181,9 @@ export function openAlignEditor() {
   wrap?.addEventListener('pointerup', onPointerUp);
   wrap?.addEventListener('pointercancel', onPointerUp);
   renderReadout();
+  // 停格。底圖是靜止的一張圖，熱像也停下來，兩邊才比得起來。
+  _wasPlaying = !els.video.paused;
+  els.video.pause();
   loadUnderlay();
 }
 
@@ -192,6 +198,12 @@ function closeAlignEditor() {
   wrap?.removeEventListener('pointermove', onPointerMove);
   wrap?.removeEventListener('pointerup', onPointerUp);
   wrap?.removeEventListener('pointercancel', onPointerUp);
+  if (_wasPlaying) {
+    _wasPlaying = false;
+    // LIVE 停了一段時間就落後了一段時間，直接 play() 會從停格處往下播。
+    // 回放則相反：使用者本來就停在那一幀，原地接著播才對。
+    if (S.isLive) goToLiveEdge(); else els.video.play().catch(() => {});
+  }
 }
 
 async function saveAlign() {

@@ -139,6 +139,19 @@ export function setSkeleton(visible) {
   els.skeleton.classList.toggle('visible', visible);
 }
 
+// ── 回到即時邊緣 ──────────────────────────────────────────
+// player.js（「回到即時」鈕）與 align.js（校正結束後恢復播放）都要用。
+// 放在這裡而不是 player.js：align.js 反過來 import player.js 會與
+// player.js → align.js 形成環，而這支只用得到 S 與 els。
+export function goToLiveEdge() {
+  if (S.hls && isFinite(S.hls.liveSyncPosition)) {
+    try { els.video.currentTime = S.hls.liveSyncPosition; } catch (_) {}
+  } else if (els.video.seekable && els.video.seekable.length) {
+    try { els.video.currentTime = els.video.seekable.end(els.video.seekable.length - 1) - 0.5; } catch (_) {}
+  }
+  els.video.play().catch(() => {});
+}
+
 // ── Transport / scrubber ──────────────────────────────────
 export function fmtClock(sec) {
   if (!isFinite(sec) || sec < 0) sec = 0;

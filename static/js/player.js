@@ -1,7 +1,7 @@
 // static/js/player.js — HLS 播放（live / VOD）、WS 追蹤連線、canvas bbox 疊圖、transport scrubber。
 import { drawMaskRegions } from './mask.js';
 import { drawAlignUnderlay } from './align.js';
-import { S, els, MAX_WS_RETRY, WS_RETRY_BASE_MS, setStatus, showToast, setSkeleton, fmtClock, hasActiveType } from './state.js';
+import { S, els, MAX_WS_RETRY, WS_RETRY_BASE_MS, setStatus, showToast, setSkeleton, fmtClock, hasActiveType, goToLiveEdge } from './state.js';
 import { clearPigSelection, renderPigStatus, updateVodAnomalyMap, refreshAnomalyMap, refreshNotifications } from './panels.js';
 import { syncAlignButtonVisibility } from './align.js';
 
@@ -845,7 +845,16 @@ export async function loadStream() {
         // ── 穩定播放（與後端 stable FPS 設計一致） ──
         lowLatencyMode: false,         // 不需要極低延遲
         liveSyncDurationCount: 3,      // buffer 3 個 segment（12s）讓播放更穩
-        liveMaxLatencyDurationCount: 20,// 容忍較大延遲 → 使用者可往回拖約 80s 不被拉回
+        // ⛔ 不要改成有限值。hls.js 的 latency controller 只要看到
+        //    currentTime < edge - (這個數 × segment 長度) 就把播放頭搬回即時邊緣
+        //    （console 會印 "located too far from the end of live sliding playlist"）。
+        //    以前這裡是 20，segment 是 4 秒，於是往回拖超過 80 秒就會被強制拉回，
+        //    而時間軸讓人拖的範圍是整個小時（錄影模式 -hls_list_size 0，playlist
+        //    留整小時的 segment）。Infinity 是 hls.js 自己的預設值，我們原本設的
+        //    20 比預設更嚴。真的拖到 playlist 之外時，hls.js 另一條守衛
+        //    （!withinSlidingWindow && readyState < 4）照樣會把人帶回來，所以
+        //    ephemeral 滾動模式（只留 8 段 ≈ 32 秒）不會因此拖到不存在的地方。
+        liveMaxLatencyDurationCount: Infinity,
         maxBufferLength: 40,
         maxMaxBufferLength: 80,
         backBufferLength: 90,          // 保留 90s 已播放 buffer（給「回到幾分鐘前」用）
@@ -1039,15 +1048,6 @@ els.seekTrack.addEventListener('keydown', (ev) => {
 els.playBtn.addEventListener('click', () => {
   if (els.video.paused) els.video.play().catch(() => {}); else els.video.pause();
 });
-
-function goToLiveEdge() {
-  if (S.hls && isFinite(S.hls.liveSyncPosition)) {
-    try { els.video.currentTime = S.hls.liveSyncPosition; } catch (_) {}
-  } else if (els.video.seekable && els.video.seekable.length) {
-    try { els.video.currentTime = els.video.seekable.end(els.video.seekable.length - 1) - 0.5; } catch (_) {}
-  }
-  els.video.play().catch(() => {});
-}
 
 export function onLiveBtnClick() {
   if (!S.isLive) { switchToLive(); return; }
