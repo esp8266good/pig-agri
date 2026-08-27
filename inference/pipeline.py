@@ -7,6 +7,7 @@ from typing import Callable
 
 import numpy as np
 
+import presence
 import thermal_align
 from mask_filter import filter_detections, rasterize
 from loguru import logger
@@ -411,6 +412,13 @@ class InferencePipeline:
                                     ),
                                     self._event_loop,
                                 )
+                        # 「這個編號最後一次被看到」的權威來源。要在這裡記而不是
+                        # 讓前端自己算：前端重整頁面就失憶，關注清單的「最近消失」
+                        # 會空掉。用 frame_data.ts（擷取時間）而不是 time.time()，
+                        # 跟 tracking_logs 的 timestamp 同源。
+                        presence.mark_seen(
+                            cam, [o["object_id"] for o in objects], frame_data.ts
+                        )
                         _fh, _fw = frame_data.rgb_np.shape[:2]
                         payload = {
                             "frame_id": frame_data.frame_id,

@@ -568,3 +568,21 @@ def test_no_mask_configured_returns_none():
     assert p._mask_for("cam_01", 100, 100) is None
     p.set_masks("cam_01", [])
     assert p._mask_for("cam_01", 100, 100) is None
+
+
+def test_process_batch_marks_presence_with_capture_time():
+    """關注清單靠 presence 判斷「這個編號還在不在畫面上」。記的時間要用擷取時間
+    （frame_data.ts，與 tracking_logs 同源），不是伺服器的 time.time()。"""
+    import presence
+    from inference.pipeline import FrameData
+    presence.clear()
+    try:
+        p, _, _, _ = _make_processing_pipeline()
+        rgb = np.zeros((480, 640, 3), dtype=np.uint8)
+        p._process_batch({
+            "cam_01": FrameData(rgb_np=rgb, thermal_np=None, ts=1234.5, frame_id=1)
+        })
+        p._executor.shutdown(wait=True)
+        assert presence.last_seen_map("cam_01") == {1: 1234.5}
+    finally:
+        presence.clear()
