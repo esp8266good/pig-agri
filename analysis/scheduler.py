@@ -252,8 +252,13 @@ class Scheduler:
                 entry = _anomaly_cache.setdefault(camera_id, {}).setdefault(
                     object_id, _default_entry()
                 )
-                # 這一輪視窗裡有這個 id 的資料，牠還活著。
-                entry["last_seen"] = now
+                # 這個 id 最後一次「真的出現」的時刻，不是「最後一次被分析到」。
+                # 寫 now 的話，視窗最前緣出現一次就死掉的 id 在下一輪仍然落在
+                # [window_start, now] 裡面，要多撐 1~2 輪才逐得掉；而且 last_seen
+                # 這個欄位就沒辦法回答「牠離開畫面多久了」。
+                entry["last_seen"] = (
+                    float(logs[-1]["timestamp"]) if logs else now
+                )
                 rate = _activity_rate(logs, self._min_span_seconds)
                 entry["activity_current"] = rate
                 if rate is not None:

@@ -1,5 +1,6 @@
 import asyncio
 import sys
+import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -42,11 +43,33 @@ def _log(bb_left, ts, bb_top=0.0, thermal=None):
     }
 
 
-def _track(total_px, n=5, span=120.0, thermal=None):
-    """產生 n 個點、總位移 total_px、時間跨度 span 的軌跡。"""
+def _track(total_px, n=5, span=120.0, thermal=None, end_ts=None):
+    """產生 n 個點、總位移 total_px、時間跨度 span 的軌跡。
+
+    時間戳要落在真實的 unix 時間軸上、而且結束於 end_ts（預設「現在」）：
+    _run_analysis 拿 logs 最後一筆的 timestamp 當 last_seen，再用同一輪的
+    window_start 逐出。用 0~120 這種假時間的話，每隻豬都會在寫進 cache 的
+    同一輪被判定成「早就消失」而立刻被逐出。
+    """
+    if end_ts is None:
+        end_ts = time.time()
     step_px = total_px / (n - 1)
     step_t = span / (n - 1)
-    return [_log(i * step_px, i * step_t, thermal=thermal) for i in range(n)]
+    start_ts = end_ts - span
+    return [
+        _log(i * step_px, start_ts + i * step_t, thermal=thermal)
+        for i in range(n)
+    ]
+
+
+def _thermal_track(temps, span=120.0, end_ts=None):
+    """原地不動、只有體溫變化的軌跡。時間戳同樣要落在真實時間軸上，
+    理由見 _track。"""
+    if end_ts is None:
+        end_ts = time.time()
+    step_t = span / (len(temps) - 1)
+    start_ts = end_ts - span
+    return [_log(0.0, start_ts + i * step_t, thermal=t) for i, t in enumerate(temps)]
 
 
 def test_low_activity_pig_triggers_alert():
@@ -219,11 +242,7 @@ def test_temp_anomaly_triggers_when_enabled():
     """thermal 末值大幅偏離 → 體溫 alert（temp_anomaly_enabled 預設 True）。"""
     from analysis.scheduler import Scheduler, get_anomaly_cache
     pool = AsyncMock()
-    logs = [
-        _log(0.0, 0.0, thermal=50.0), _log(0.0, 30.0, thermal=50.0),
-        _log(0.0, 60.0, thermal=50.0), _log(0.0, 90.0, thermal=50.0),
-        _log(0.0, 120.0, thermal=100.0),
-    ]
+    logs = _thermal_track([50.0, 50.0, 50.0, 50.0, 100.0])
     pool.fetch.side_effect = [
         [{"camera_id": "cam_01", "object_id": 1},
          {"camera_id": "cam_01", "object_id": 5}],
@@ -244,11 +263,7 @@ def test_temp_detection_skipped_when_disabled():
     s = FakeSettings()
     s.temp_anomaly_enabled = False
     pool = AsyncMock()
-    logs = [
-        _log(0.0, 0.0, thermal=50.0), _log(0.0, 30.0, thermal=50.0),
-        _log(0.0, 60.0, thermal=50.0), _log(0.0, 90.0, thermal=50.0),
-        _log(0.0, 120.0, thermal=100.0),
-    ]
+    logs = _thermal_track([50.0, 50.0, 50.0, 50.0, 100.0])
     pool.fetch.side_effect = [
         [{"camera_id": "cam_01", "object_id": 1},
          {"camera_id": "cam_01", "object_id": 5}],
@@ -320,16 +335,8 @@ def test_temp_state_recovers_to_normal():
     """体溫 alerted → 第二輪數值平穩 → temp_state 回 normal、temp_anomaly False。"""
     from analysis.scheduler import Scheduler, get_anomaly_cache
     pool = AsyncMock()
-    logs_anomalous = [
-        _log(0.0, 0.0, thermal=50.0), _log(0.0, 30.0, thermal=50.0),
-        _log(0.0, 60.0, thermal=50.0), _log(0.0, 90.0, thermal=50.0),
-        _log(0.0, 120.0, thermal=100.0),
-    ]
-    logs_steady = [
-        _log(0.0, 0.0, thermal=50.0), _log(0.0, 30.0, thermal=50.0),
-        _log(0.0, 60.0, thermal=50.0), _log(0.0, 90.0, thermal=50.0),
-        _log(0.0, 120.0, thermal=50.0),
-    ]
+    logs_anomalous = _thermal_track([50.0, 50.0, 50.0, 50.0, 100.0])
+    logs_steady = _thermal_track([50.0, 50.0, 50.0, 50.0, 50.0])
     distinct_rows = [
         {"camera_id": "cam_01", "object_id": 1},
         {"camera_id": "cam_01", "object_id": 5},
@@ -517,3 +524,33 @@ def test_alerted_pig_stays_flagged_when_herd_unmeasurable():
     assert cache["cam_01"][3]["activity_state"] == "alerted"
     assert cache["cam_01"][3]["activity_anomaly"] is True
     assert pool.fetchrow.call_count == 1  # 第二輪不寫新 alert
+
+
+def test_last_seen_records_actual_last_appearance_not_analysis_time():
+    """last_seen 要寫「這個 id 最後一次真的出現」，不是「最後一次被分析到」。
+
+    寫分析當下的時間的話，一個在視窗最前緣出現一次就死掉的 id，下一輪仍然
+    落在 [window_start, now] 裡面，要多撐 1~2 輪才逐得掉；而且這個欄位就
+    沒辦法回答「牠離開畫面多久了」——關注清單要靠它把死掉的編號降級。
+    """
+    from analysis.scheduler import Scheduler, get_anomaly_cache
+    import analysis.scheduler as sched_mod
+    sched_mod._anomaly_cache.clear()
+    now = time.time()
+    # 兩隻都在 120s 視窗內，但 8 號的軌跡在 30 秒前就結束了。
+    fresh = _track(600.0, end_ts=now)
+    gone  = _track(480.0, end_ts=now - 30.0)
+    pool = AsyncMock()
+    pool.fetch.side_effect = [
+        [{"camera_id": "cam_01", "object_id": 7},
+         {"camera_id": "cam_01", "object_id": 8}],
+        fresh, gone,
+    ]
+
+    asyncio.run(Scheduler(pool, FakeSettings())._run_analysis())
+
+    cache = get_anomaly_cache()["cam_01"]
+    assert cache[7]["last_seen"] == pytest.approx(fresh[-1]["timestamp"])
+    assert cache[8]["last_seen"] == pytest.approx(gone[-1]["timestamp"])
+    # 兩者相差就是那 30 秒；寫 now 的舊做法會讓它們一模一樣。
+    assert cache[7]["last_seen"] - cache[8]["last_seen"] == pytest.approx(30.0)
