@@ -180,6 +180,14 @@ class HLSStream:
         self._emit_log: deque[tuple[int, float]] = deque(maxlen=_FED_LOG_MAX)
         self._writer_last_frame: Optional[tuple[bytes, Optional[float]]] = None
 
+        # 最後一張「餵進來」的幀，給對位底圖的快照端點用。
+        # ⚠ 不能改用 _frame_buffer 的最後一筆：那個 deque 由 writer 每 tick
+        # popleft 抽乾，writer 跟得上時它幾乎永遠是空的。也不能用
+        # _writer_last_frame：那個只在 writer thread 有在跑時才更新，ffmpeg 死掉
+        # 或進 drop 模式時會停在幾小時前的畫面，而快照看起來一樣正常。
+        self._last_frame: Optional[bytes] = None
+        self._last_frame_ts: float = 0.0
+
         # 序列化 writer._emit_frame 的 stdin 寫入 vs _restart/_restart_in_place 的
         # proc swap：避免 writer 寫到剛被 close 的 stdin 觸發 BrokenPipeError → 過去
         # 這是 race 殺死 writer thread、造成 8 小時 segment 空檔的根因。
@@ -216,6 +224,10 @@ class HLSStream:
     ) -> None:
         """把新幀放入 buffer。依 target_mode 切換輸出目標：drop→丟幀；
         ephemeral/record 目標目錄變更→_restart。capture_ts 為真實擷取牆鐘。"""
+        # 先記快照再看 mode：drop 代表磁碟壞了，不代表相機沒在拍。
+        # 對位底圖只是「這台相機現在看到什麼」，跟落不落地無關。
+        self._last_frame = jpeg_bytes
+        self._last_frame_ts = time.time()
         mode, target = self._desired_target()
         if mode == "drop":
             # drop = 錄影碟與 ephemeral 碟同時不可寫（雙重故障）。丟幀且刻意不更新
@@ -232,6 +244,12 @@ class HLSStream:
         self.last_feed_time = time.time()
         self._frame_buffer.append((jpeg_bytes, capture_ts))
         self._buffer_event.set()
+
+    def latest_frame(self) -> Optional[tuple[bytes, float]]:
+        """最後餵進來的一張 JPEG 與它的接收時刻。從沒收過幀時回 None。"""
+        if self._last_frame is None:
+            return None
+        return self._last_frame, self._last_frame_ts
 
     def _scan_new_segments(self) -> None:
         """偵測 out_dir 新出現的 seg_*.ts，用 _emit_log 推該段首幀真實
@@ -641,6 +659,24 @@ class HLSManager:
             logger.debug(
                 f"[{camera_id}/{stream_type}] feed() called but stream not started, dropping frame"
             )
+
+    def latest_frame(
+        self, camera_id: str, stream_type: str, max_age: float = 15.0,
+    ) -> Optional[bytes]:
+        """這條串流最後收到的那張 JPEG。沒有串流、從沒收過幀、或那張幀已經
+        比 max_age 舊（相機斷線）都回 None：回一張幾小時前的畫面比回不出來
+        更難察覺，而對位底圖對錯了會被存進體溫取樣位置。"""
+        with self._lock:
+            stream = self._streams.get((camera_id, stream_type))
+        if stream is None:
+            return None
+        latest = stream.latest_frame()
+        if latest is None:
+            return None
+        frame, ts = latest
+        if time.time() - ts > max_age:
+            return None
+        return frame
 
     def corrected_m3u8(
         self, camera_id: str, stream_type: str, date_hour: str

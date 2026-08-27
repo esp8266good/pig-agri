@@ -2,10 +2,10 @@
 import { S, els, setStatus, setSkeleton } from './state.js';
 import { loadStream, loadVod, startLiveTimers, stopLiveTimers, detachVodListeners, exitVodState } from './player.js';
 import { loadTimeline, clearSelection, closeSlotActionMenu, closeDeleteModal, localDayStart } from './timeline.js';
-import { initMaskEditor, loadMaskRegions } from './mask.js';
-import { initAlignEditor, loadThermalAlign, syncAlignButtonVisibility } from './align.js';
+import { initMaskEditor, loadMaskRegions, clearMaskRegions, canLeaveMaskEditor } from './mask.js';
+import { initAlignEditor, loadThermalAlign, clearThermalAlign, syncAlignButtonVisibility } from './align.js';
 import { initHelp } from './help.js';
-import { switchTab, onSortHeaderClick, refreshAnomalyMap, refreshNotifications, loadMoreNotifications, refreshFocusList, setBoxDisplayMode, loadSettings, loadBookmarks, closeBookmarkEditModal, openSettingsDrawer, closeSettingsDrawer, initSettingsDrawer, updateSoloHint } from './panels.js';
+import { switchTab, onSortHeaderClick, refreshAnomalyMap, refreshNotifications, loadMoreNotifications, refreshFocusList, setBoxDisplayMode, loadSettings, loadBookmarks, closeBookmarkEditModal, openSettingsDrawer, closeSettingsDrawer, initSettingsDrawer, updateSoloHint, bindCameraSwitch } from './panels.js';
 import { enterGrid, leaveGrid, bindGridPick, getGridPlaybackHour } from './grid.js';
 import { ensureAuth } from './auth.js';
 
@@ -97,21 +97,49 @@ function resetCameraState() {
   if (typeof closeSlotActionMenu === 'function') closeSlotActionMenu();
 }
 
-bindGridPick(cam => {
+// 換相機的唯一入口。以前有三條各自為政的路徑（下拉選單、grid 點磚、點通知跳過
+// 去），只有下拉那條記得重載遮罩與對位參數，另外兩條把上一台相機的遮罩留在畫面
+// 上、把上一台的對位參數套到這一台的熱像。新增第四個入口時走這裡就不會再漏。
+//
+// 回傳 false = 使用者在「遮罩有未儲存的改動」的確認視窗按了取消，沒有換成。
+// opts.loadMedia=false 給「呼叫端自己會載入畫面」的路徑用（grid 點磚交給
+// setViewMode、點通知交給 loadVod），避免同一秒載入兩次。
+function switchCamera(cam, { loadMedia = true, resetState = true } = {}) {
+  if (cam === S.currentCamera) return true;
+  if (!canLeaveMaskEditor()) return false;
   S.currentCamera = cam;
   els.camSelect.value = cam;
   try { localStorage.setItem('lastCamera', cam); } catch (_) {}
-  resetCameraState();
-  // setViewMode('single') 內部已呼叫 loadStream()/loadTimeline()/startLiveTimers()
-  // （或帶 vodStartTs 時改呼叫 loadVod()/loadTimeline()），這裡不重複呼叫；
-  // 離開 grid、還原單畫面 UI 都在其中完成。
-  const hourTs = getGridPlaybackHour();
-  setViewMode('single', hourTs != null ? { vodStartTs: hourTs } : {});
-  // 與 camSelect change handler 對齊：立即刷新一次，不等 30s 輪詢。
+  // 先清空再去 fetch。這兩支 fetch 是非同步的，不先清的話空窗期間畫面上畫的
+  // 是前一台相機的遮罩與對位。
+  clearMaskRegions();
+  clearThermalAlign();
+  if (resetState) resetCameraState();
+  loadMaskRegions();
+  loadThermalAlign();
+  if (loadMedia) {
+    loadStream();
+    loadTimeline();
+    startLiveTimers();
+  }
   refreshAnomalyMap();
   refreshNotifications();
   if (typeof loadBookmarks === 'function') loadBookmarks();
+  return true;
+}
+
+bindGridPick(cam => {
+  // setViewMode('single') 內部已呼叫 loadStream()/loadTimeline()/startLiveTimers()
+  // （或帶 vodStartTs 時改呼叫 loadVod()/loadTimeline()），所以這裡 loadMedia=false；
+  // 離開 grid、還原單畫面 UI 都在其中完成。
+  if (!switchCamera(cam, { loadMedia: false })) return;
+  const hourTs = getGridPlaybackHour();
+  setViewMode('single', hourTs != null ? { vodStartTs: hourTs } : {});
 });
+
+// 點通知跳到另一台相機：畫面由 loadVod 載，而且不能 resetCameraState
+// （那會把 isLive 拉回 true、拆掉剛要用的回放狀態）。
+bindCameraSwitch(cam => switchCamera(cam, { loadMedia: false, resetState: false }));
 
 // grid 模式下切 RGB/Thermal：重建所有 tile（enterGrid 內建 _gridGen 守衛與
 // /cameras 重抓——順便刷新 active_types）。
@@ -216,17 +244,8 @@ async function init() {
 }
 
 els.camSelect.addEventListener('change', () => {
-  S.currentCamera = els.camSelect.value;
-  try { localStorage.setItem('lastCamera', S.currentCamera); } catch (_) {}
-  resetCameraState();
-  loadMaskRegions();
-  loadThermalAlign();
-  loadStream();
-  loadTimeline();
-  startLiveTimers();
-  refreshAnomalyMap();
-  refreshNotifications();
-  if (typeof loadBookmarks === 'function') loadBookmarks();
+  // 使用者反悔（遮罩有未存改動）時，select 已經跳到新的值了，要自己推回去。
+  if (!switchCamera(els.camSelect.value)) els.camSelect.value = S.currentCamera;
 });
 
 // pig 列表：可點欄頭排序 + 「只顯示選取」開關（一次性綁定）

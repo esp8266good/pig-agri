@@ -246,3 +246,29 @@ def test_serve_hls_serves_ts_from_active_ephemeral_dir(tmp_path, monkeypatch):
             resp = c.get("/stream/hls/cam_01/rgb/_live/seg_005.ts")
     assert resp.status_code == 200
     assert resp.content == b"TSDATA"
+
+
+# ── 對位底圖的快照端點 ────────────────────────────────────────
+def test_snapshot_returns_latest_jpeg(client):
+    with patch("hls_manager.hls_manager.latest_frame", return_value=b"\xff\xd8jpeg"):
+        resp = client.get("/stream/cam_01/snapshot?type=rgb")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "image/jpeg"
+    assert resp.content == b"\xff\xd8jpeg"
+
+
+def test_snapshot_404_when_no_recent_frame(client):
+    """相機斷線時要回 404，不能回一張舊畫面：對位底圖對錯了會被存進體溫取樣位置。"""
+    with patch("hls_manager.hls_manager.latest_frame", return_value=None):
+        resp = client.get("/stream/cam_01/snapshot?type=rgb")
+    assert resp.status_code == 404
+
+
+def test_snapshot_404_for_unknown_camera(client):
+    resp = client.get("/stream/unknown_cam/snapshot?type=rgb")
+    assert resp.status_code == 404
+
+
+def test_snapshot_rejects_bad_type(client):
+    resp = client.get("/stream/cam_01/snapshot?type=depth")
+    assert resp.status_code == 400

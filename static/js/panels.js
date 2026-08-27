@@ -7,6 +7,11 @@ import { loadTimeline } from './timeline.js';
 // 所以每一頁都是滿的，不會因為折疊率高就回一個半空的頁。
 const ALERT_PAGE_SIZE = 50;
 
+// 換相機的實作在 main.js（它是唯一看得到所有子系統的模組）。直接 import 會與
+// main.js → panels.js 形成循環，所以沿用 grid.js 的 bindGridPick 同一套注入法。
+let _onSwitchCamera = null;
+export function bindCameraSwitch(fn) { _onSwitchCamera = fn; }
+
 export async function loadBookmarks() {
   const ul = document.getElementById('bookmark-list');
   if (!ul || !S.currentCamera) return;
@@ -388,9 +393,10 @@ function _buildAlertItem(group) {
   deleteBtn.addEventListener('click', () => onDeleteGroupClick(group, deleteBtn));
   li.addEventListener('click', e => {
     if (e.target.classList.contains('mark-read-btn')) return;
-    if (group.camera_id !== S.currentCamera) {
-      els.camSelect.value = group.camera_id;
-      S.currentCamera = group.camera_id;
+    // 只改 S.currentCamera 不夠：遮罩與熱像對位參數會留在前一台相機上，
+    // 於是別台的遮罩被畫在這台的畫面上、別台的對位被套到這台的熱像。
+    if (group.camera_id !== S.currentCamera && _onSwitchCamera) {
+      if (!_onSwitchCamera(group.camera_id)) return;
     }
     loadVod(group.triggered_at_unix - 1800);
   });

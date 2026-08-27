@@ -767,3 +767,54 @@ def test_has_stream_reflects_streams(manager):
     with patch("hls_manager._start_ffmpeg", return_value=fake_proc):
         m.ensure_started("cam_01", "rgb")
     assert m.has_stream("cam_01", "rgb") is True
+
+
+# ── 對位底圖：最後餵進來的那張幀 ──────────────────────────────
+def _bare_stream():
+    """繞過 __init__ 的 ffmpeg/thread 啟動，只測 feed→latest_frame 這條路徑。"""
+    import hls_manager as m
+    s = m.HLSStream.__new__(m.HLSStream)
+    s._last_frame = None
+    s._last_frame_ts = 0.0
+    return s
+
+
+def test_latest_frame_none_before_any_feed():
+    assert _bare_stream().latest_frame() is None
+
+
+def test_latest_frame_survives_writer_draining_the_buffer():
+    """_frame_buffer 被 writer popleft 抽乾之後，latest_frame 仍要拿得到畫面。
+    這正是不能拿 _frame_buffer 最後一筆當快照來源的原因。"""
+    import time as _t
+    s = _bare_stream()
+    s._last_frame = b"\xff\xd8one"
+    s._last_frame_ts = _t.time()
+    frame, ts = s.latest_frame()
+    assert frame == b"\xff\xd8one"
+    assert ts > 0
+
+
+def test_manager_latest_frame_rejects_stale_frame():
+    """幀太舊（相機斷線）要當作沒有，而不是回一張幾小時前的畫面。"""
+    import time as _t
+    from unittest.mock import patch as _patch
+    import hls_manager as m
+    mgr = m.HLSManager.__new__(m.HLSManager)
+    mgr._streams = {}
+    mgr._lock = __import__("threading").Lock()
+    s = _bare_stream()
+    s._last_frame = b"\xff\xd8old"
+    s._last_frame_ts = _t.time() - 3600
+    mgr._streams[("cam_01", "rgb")] = s
+    assert mgr.latest_frame("cam_01", "rgb") is None
+    s._last_frame_ts = _t.time()
+    assert mgr.latest_frame("cam_01", "rgb") == b"\xff\xd8old"
+
+
+def test_manager_latest_frame_none_for_unknown_stream():
+    import hls_manager as m
+    mgr = m.HLSManager.__new__(m.HLSManager)
+    mgr._streams = {}
+    mgr._lock = __import__("threading").Lock()
+    assert mgr.latest_frame("nope", "rgb") is None

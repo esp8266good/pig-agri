@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse, Response
 
 from config import settings
 from hls_manager import hls_manager
@@ -76,6 +76,33 @@ async def get_live_stream(
         raise HTTPException(status_code=404, detail="Camera not found")
     out_dir = hls_manager.ensure_started(camera_id, stream_type)
     return {"url": f"/stream/hls/{camera_id}/{stream_type}/{out_dir.name}/index.m3u8"}
+
+
+@router.get("/{camera_id}/snapshot")
+async def get_snapshot(
+    camera_id: str,
+    stream_type: str = Query("rgb", alias="type"),
+):
+    """這台相機此刻最新的一張 JPEG，給熱像對位校正當底圖用。
+
+    只取 live，不支援「回放中的某個時間點」。鏡頭是鎖死的，所以今天的 live RGB
+    跟上週的熱像錄影拍到的是同一片固定背景；校正的是一組幾何關係，兩張圖不必
+    同時間。要支援任意時間點就得為單一幀另開一支 ffmpeg 去解 .ts（VOD 目前只是
+    把既有 segment 列成 m3u8，整條路徑上沒有任何解碼），代價與收益不成比例。
+
+    ⛔ 它會失效的情況只有兩種：相機此刻斷線，或現在是夜間（rgb 全黑）。
+    兩種都回得出「這招現在沒用」——404 或一張黑圖——比回一張舊畫面好。
+    """
+    if stream_type not in ("rgb", "thermal"):
+        raise HTTPException(status_code=400, detail="type must be 'rgb' or 'thermal'")
+    if camera_id not in [s.label for s in settings.zmq_sources]:
+        raise HTTPException(status_code=404, detail="Camera not found")
+    frame = hls_manager.latest_frame(camera_id, stream_type)
+    if frame is None:
+        raise HTTPException(status_code=404, detail="No recent frame for this camera")
+    # 不快取：這是「現在」的畫面，隔一秒重抓要拿到新的。
+    return Response(content=frame, media_type="image/jpeg",
+                    headers={"Cache-Control": "no-store"})
 
 
 @router.get("/{camera_id}/vod")

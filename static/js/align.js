@@ -27,8 +27,20 @@ const SCALE_MIN = 0.2, SCALE_MAX = 3.0;
 let _snapshot = null;
 let _dragging = false;
 let _dragStart = null;
+// 對位底圖：半透明疊在熱像上的那張 RGB 影像。只在校正模式存在。
+let _underlay = null;
+// 固定 0.35，不做成滑桿。多一顆旋鈕就多一個「怎麼調都對不準」的干擾變因，
+// 而遮罩的雙線本來就是比底圖更精確的判準，底圖只是給眼睛一個粗略的錨。
+const UNDERLAY_ALPHA = 0.35;
 
 function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
+
+// 換相機的當下就丟掉上一台的對位參數，不等 fetch 回來（同 mask.js 的理由）。
+// 拿 A 相機的參數去畫 B 相機的熱像，框會整批偏掉而且看起來像是校正沒做好。
+export function clearThermalAlign() {
+  S.thermalAlign = { ...IDENTITY };
+  renderReadout();
+}
 
 export async function loadThermalAlign() {
   if (!S.currentCamera) return;
@@ -95,6 +107,56 @@ function onPointerMove(e) {
 
 function onPointerUp() { _dragging = false; _dragStart = null; }
 
+// ── 對位底圖 ────────────────────────────────────────────────
+// 取的是「現在」的 live RGB，不是回放中那個時間點的畫面。鏡頭鎖死不會動，
+// 所以今天的 live 跟上週的錄影拍到的是同一片固定背景；校正的是一組幾何關係，
+// 兩張圖不必同時間。要對到任意時間點就得為一張幀另開 ffmpeg 解 .ts。
+function loadUnderlay() {
+  const cam = S.currentCamera;
+  fetch(`/stream/${cam}/snapshot?type=rgb`)
+    .then(r => {
+      if (!r.ok) throw new Error(String(r.status));
+      return r.blob();
+    })
+    .then(blob => {
+      if (!S.alignEditing || S.currentCamera !== cam) return;   // 已經離開了
+      const img = new Image();
+      const url = URL.createObjectURL(blob);
+      img.onload = () => {
+        if (!S.alignEditing || S.currentCamera !== cam) { URL.revokeObjectURL(url); return; }
+        _underlay = { img, url };
+      };
+      img.onerror = () => URL.revokeObjectURL(url);
+      img.src = url;
+    })
+    .catch(() => {
+      // 相機斷線或夜間 rgb 全黑，這招現在沒用。講出來，讓人改用遮罩對位，
+      // 而不是對著一片黑硬推。
+      showToast('現在取不到 RGB 畫面（相機斷線或夜間），請改用遮罩對位');
+    });
+}
+
+function dropUnderlay() {
+  if (_underlay) { URL.revokeObjectURL(_underlay.url); _underlay = null; }
+}
+
+// 底圖畫在哪，就是這四個參數說了算：所見即所存。
+// 這跟後端 thermal_align.map_box 是同一條換算，只是把整張圖當成一個 bbox 來推。
+export function drawAlignUnderlay(ctx, g) {
+  if (!S.alignEditing || !_underlay) return;
+  const a = S.thermalAlign;
+  ctx.save();
+  ctx.globalAlpha = UNDERLAY_ALPHA;
+  ctx.drawImage(
+    _underlay.img,
+    g.offX + a.off_x * g.renderW,
+    g.offY + a.off_y * g.renderH,
+    a.scale_x * g.renderW,
+    a.scale_y * g.renderH,
+  );
+  ctx.restore();
+}
+
 // ── 開關 ────────────────────────────────────────────────────
 export function openAlignEditor() {
   if (!S.currentCamera) return;
@@ -116,12 +178,14 @@ export function openAlignEditor() {
   wrap?.addEventListener('pointerup', onPointerUp);
   wrap?.addEventListener('pointercancel', onPointerUp);
   renderReadout();
+  loadUnderlay();
 }
 
 function closeAlignEditor() {
   const wrap = document.getElementById('video-wrap');
   S.alignEditing = false;
   _dragging = false;
+  dropUnderlay();
   els.alignPanel?.setAttribute('hidden', '');
   wrap?.classList.remove('align-editing');
   wrap?.removeEventListener('pointerdown', onPointerDown);

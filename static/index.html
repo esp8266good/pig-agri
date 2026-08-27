@@ -185,7 +185,7 @@
         <div id="align-panel" hidden>
           <div class="mask-toolbar">
             <strong>熱像對位校正中</strong>
-            <span class="mask-hint">直接在畫面上拖曳，把框推到豬身上。存檔後體溫的取樣位置也會跟著改。</span>
+            <span class="mask-hint">直接在畫面上拖曳。畫面上會浮出半透明的一般畫面當底圖，遮罩則畫成兩條線（虛線＝一般畫面上的位置，實線＝套過對位的位置）：把它們對到同一個不會動的東西（飼料槽、柱子、牆角）就對好了。豬會走動，不適合當基準。存檔後體溫的取樣位置也會跟著改。</span>
           </div>
           <div class="align-controls">
             <span class="align-group-label">左右</span>
@@ -212,7 +212,7 @@
         <div id="mask-editor" hidden>
           <div class="mask-toolbar">
             <strong>遮罩編輯中</strong>
-            <span class="mask-hint">在畫面上點出邊界（至少三個點），再按「完成這一塊」。</span>
+            <span class="mask-hint">在畫面上點出邊界（至少三個點），再按「完成這一塊」。取消勾選的區域不會擋掉任何偵測框，但仍然留著、看得見，可以拿來當熱像對位的基準（它蓋住的通常是不會動的背景物件）。</span>
             <button id="mask-commit-btn">完成這一塊</button>
             <button id="mask-undo-btn">退回上一點</button>
             <button id="mask-save-btn" class="mask-save">儲存並套用</button>

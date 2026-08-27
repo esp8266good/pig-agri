@@ -1,5 +1,6 @@
 // static/js/player.js — HLS 播放（live / VOD）、WS 追蹤連線、canvas bbox 疊圖、transport scrubber。
 import { drawMaskRegions } from './mask.js';
+import { drawAlignUnderlay } from './align.js';
 import { S, els, MAX_WS_RETRY, WS_RETRY_BASE_MS, setStatus, showToast, setSkeleton, fmtClock, hasActiveType } from './state.js';
 import { clearPigSelection, renderPigStatus, updateVodAnomalyMap, refreshAnomalyMap, refreshNotifications } from './panels.js';
 import { syncAlignButtonVisibility } from './align.js';
@@ -573,20 +574,24 @@ function drawBoxes() {
     S.animFrameId = requestAnimationFrame(drawBoxes);
     return;
   }
+  const scale   = Math.min(elW / vidW, elH / vidH);
+  const renderW = vidW * scale;
+  const renderH = vidH * scale;
+  const offX = (elW - renderW) / 2;
+  const offY = (elH - renderH) / 2;
+  const geo = { elW, elH, scale, offX, offY, renderW, renderH };
+  // 對位底圖與遮罩疊圖都畫在 bbox 之前，才不會蓋住框。
+  // ⚠ 這兩行一定要在「零偵測框」的早退之前：夜間、或相機剛接上時畫面上一隻豬
+  // 都沒有，而那正是最需要對著固定背景物件校正對位的時候。以前這兩件事排在早退
+  // 之後，等於「沒有豬就看不到遮罩」。
+  drawAlignUnderlay(ctx, geo);
+  drawMaskRegions(ctx, geo);
   if (!displayBoxes.length) {
     drawBoxCountChip(ctx, elH, 0, 0);
     drawDbgHud();
     S.animFrameId = requestAnimationFrame(drawBoxes);
     return;
   }
-  const scale   = Math.min(elW / vidW, elH / vidH);
-  const renderW = vidW * scale;
-  const renderH = vidH * scale;
-  const offX = (elW - renderW) / 2;
-  const offY = (elH - renderH) / 2;
-  // 遮罩疊圖畫在 bbox 之前，才不會蓋住框。預設關閉，除錯時才開。
-  drawMaskRegions(ctx, { elW, elH, scale, offX, offY,
-                         renderW, renderH });
   const [srcW, srcH] = sourceFrameSize();
   if (!srcW || !srcH) {
     drawDbgHud();
