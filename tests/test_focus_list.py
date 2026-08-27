@@ -228,3 +228,21 @@ def test_no_presence_data_falls_back_to_listing_everything():
     r = select_focus(entries, lowest_enabled=True, lowest_n=1, top_n=1)
     assert [i["object_id"] for i in r["items"]] == [1, 2]
     assert all(i["on_screen"] for i in r["items"])
+
+
+def test_on_screen_count_counts_pigs_not_cache_hits():
+    """重啟後畫面上有 21 隻、快取裡一個都還沒有，這時回 0 會讓前端說
+    「畫面上沒有偵測到豬」，把使用者指向相機斷線那個方向。"""
+    r = select_focus({}, lowest_enabled=True, lowest_n=3, top_n=3,
+                     on_screen={101, 102, 103}, gone_seconds={})
+    assert r["on_screen_count"] == 3
+
+
+def test_not_analyzed_survives_the_on_screen_filter():
+    """重啟後 cache 裡全是上一代的編號、一個都不在畫面上。這時候仍然要說
+    「首次分析尚未完成」，不能因為過濾完是空的就講成「一切正常」。"""
+    entries = {1: _entry(None, analyzed=False), 2: _entry(None, analyzed=False)}
+    r = select_focus(entries, lowest_enabled=True, lowest_n=3, top_n=3,
+                     on_screen={101, 102}, gone_seconds={})
+    assert r["status"] == "not_analyzed"
+    assert r["on_screen_count"] == 2

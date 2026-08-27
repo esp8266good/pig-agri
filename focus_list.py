@@ -129,10 +129,18 @@ def select_focus(
         herd_ok = bool(camera_state.get("herd_ok"))
         analyzed = bool(camera_state.get("analyzed"))
     else:
-        herd_ok = any(e.get("herd_ok") for _, e in pairs) if pairs else True
-        analyzed = any(e.get("analyzed") for _, e in pairs) if pairs else True
+        # ⚠ 這裡要看 all_pairs 不是 pairs：herd_ok 與 analyzed 是「這台相機」的
+        # 結論，只是借 per-object 的 entry 存放。用過濾後的 pairs 的話，重啟後
+        # cache 裡全是上一代的舊編號、一個都不在畫面上，pairs 會是空的，
+        # `if pairs else True` 就把 analyzed 判成 True，"首次分析尚未完成" 這個
+        # 保護整個失效。
+        herd_ok = any(e.get("herd_ok") for _, e in all_pairs) if all_pairs else True
+        analyzed = any(e.get("analyzed") for _, e in all_pairs) if all_pairs else True
 
-    on_screen_count = len(pairs)
+    # 「畫面上有幾隻豬」問的是 presence，不是「快取裡有幾隻在畫面上」。
+    # 用後者的話，重啟後畫面上明明有 21 隻、卻因為一個都還沒進快取而回 0，
+    # 前端就會說「畫面上沒有偵測到豬」——正好是這兩句話要避免的那種指錯方向。
+    on_screen_count = len(on_screen) if on_screen is not None else len(all_pairs)
 
     if not analyzed:
         return {"status": STATUS_NOT_ANALYZED, "items": [], "recent": [],
