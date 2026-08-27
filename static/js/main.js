@@ -79,6 +79,7 @@ function resetCameraState() {
   S.wsRetryCount = 0;
   S.latestBoxes = [];
   S.bboxHistory = [];
+  S.liveRewind = null;
   els.countBadge.textContent = '—';
   if (!S.isLive) {
     S.isLive = true;

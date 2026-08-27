@@ -10,6 +10,10 @@ export const S = {
   // 播放器是空的，currentTime 與 PDT 都問不出東西，切回來要靠它才回得到原地。
   vodLastWall: null,
   latestBoxes: [], vodStartTs: 0, bboxHistory: [], _dbg: null,
+  // LIVE 往回拖超過 bboxHistory 範圍時，從 REST /tracking 補回來的那一幀。
+  // bboxHistory 是「筆數」上限（1000 筆），換算成時間長度會隨相機 fps 變動：
+  // 10fps 約 100 秒，1fps 就有 1000 秒。所以不能靠它涵蓋使用者拖得到的範圍。
+  liveRewind: null,
   currentCamera: null, currentType: 'rgb', animFrameId: null, isLive: true,
   currentMonth: null, selectedDay: null, monthHoursSet: new Set(),
   vodDebounceTimer: null, vodFetching: false, anomalyMap: {}, vodAlerts: [],

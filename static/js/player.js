@@ -57,6 +57,7 @@ export function loadVod(startTs, seekToWall = null) {
   S.vodStartTs = startTs;
   S.vodFetching = false;
   S.bboxHistory = [];
+  S.liveRewind = null;
   _lastNonEmptyTs = 0;
   els.liveBtn.style.display = '';
   S.latestBoxes = [];
@@ -173,6 +174,7 @@ export function exitVodState() {
   S.vodAlerts  = [];
   S.latestBoxes = [];
   S.bboxHistory = [];
+  S.liveRewind = null;
   _lastNonEmptyTs = 0;
   S.currentObjectIds.clear();
   document.querySelectorAll('.timeline-slot.selected')
@@ -273,6 +275,37 @@ function scheduleTrackingFetch(immediate = false) {
     S.vodFetching = false;
   };
   if (immediate) run(); else S.trackingFetchTimer = setTimeout(run, 100);
+}
+
+// LIVE 往回拖超過 WS 歷史範圍時的補框。跟回放走同一支 REST /tracking、
+// 同一個 S.trackingCache，差別只在結果放哪：回放覆蓋 S.latestBoxes，LIVE 不能
+// （那個由 WS 每則訊息更新，寫進去下一則就被蓋掉），所以另外放 S.liveRewind。
+let _rewindFetching = false;
+let _rewindLastAttempt = 0;
+function scheduleLiveRewindFetch(targetTs) {
+  if (!S.currentCamera) return;
+  const key = S.currentCamera + '|' + Math.round(targetTs * 2);
+  if (S.trackingCache.has(key)) {
+    S.liveRewind = { ts: targetTs, boxes: S.trackingCache.get(key) };
+    return;
+  }
+  // drawBoxes 每一幀都會走到這裡（60fps），靠這兩個閘門壓成最多每 250ms 一發。
+  // 只用 _rewindFetching 不夠：端點失敗時不會寫進 cache，下一幀又是 cache miss，
+  // 於是變成對著壞掉的端點每秒打 60 發。
+  if (_rewindFetching || Date.now() - _rewindLastAttempt < 250) return;
+  _rewindLastAttempt = Date.now();
+  _rewindFetching = true;
+  fetch(`/tracking/${S.currentCamera}?start=${targetTs - 2}&end=${targetTs + 2}`)
+    .then(r => (r.ok ? r.json() : null))
+    .then(d => {
+      if (!d) return;
+      const boxes = pickClosestFrame(d.logs || [], targetTs);
+      S.trackingCache.set(key, boxes);
+      if (S.trackingCache.size > 400) S.trackingCache.delete(S.trackingCache.keys().next().value);
+      S.liveRewind = { ts: targetTs, boxes };
+    })
+    .catch(() => {})
+    .finally(() => { _rewindFetching = false; });
 }
 
 function applyVodBoxes(boxes, ts) {
@@ -523,31 +556,48 @@ function drawBoxes() {
         if (entry.ts > targetTs + BBOX_MATCH_TOLERANCE) continue;
         if (!cur || entry.ts > cur.ts) cur = entry;
       }
-      // targetTs 比整段歷史都舊（剛切攝影機／剛連上）→ 用最舊的一筆墊著。
-      if (!cur) cur = S.bboxHistory[0];
-      displayBoxes = cur.boxes;
-      chosenTs = cur.ts;
+      // targetTs 比整段歷史都舊，有兩種完全不同的情況：
+      //   剛切攝影機／剛連上 WS——歷史只有幾筆、涵蓋不到眼前這一幀。用最舊的
+      //     一筆墊著是對的，差距只有幾秒。
+      //   使用者把 LIVE 進度條往回拖出了歷史範圍——差距是好幾分鐘。墊上去等於
+      //     把幾分鐘前的框釘在畫面上不動，看起來像追蹤掛了。bboxHistory 是
+      //     「筆數」上限（1000 筆），換算成時間會隨相機 fps 變動（10fps 約
+      //     100 秒），本來就不可能涵蓋整條時間軸；這一段要的東西跟回放一模
+      //     一樣，所以走回放那支 REST /tracking。
+      if (!cur && targetTs < S.bboxHistory[0].ts - BBOX_MATCH_TOLERANCE) {
+        scheduleLiveRewindFetch(targetTs);
+        const rw = S.liveRewind;
+        // 容忍 2 秒：REST 是非同步的，正在飛的那一發還沒回來時先用上一發。
+        // 差太多就寧可不畫，畫在錯的位置比不畫更難發現。
+        displayBoxes = (rw && Math.abs(rw.ts - targetTs) <= 2) ? rw.boxes : [];
+        chosenTs = targetTs;
+        dbgSrc = 'rewind';
+      } else {
+        if (!cur) cur = S.bboxHistory[0];
+        displayBoxes = cur.boxes;
+        chosenTs = cur.ts;
 
-      // 該幀 tracker 沒吐出任何已確認軌跡（低 fps 下 min_hits 難達成，見
-      // docs 的追蹤缺口交接）。往回找最近一筆非空的沿用並淡化——這一段是
-      // 推測而非觀測，跟上面的零階保持性質不同，所以要在視覺上區分開。
-      if (!displayBoxes.length) {
-        let held = null;
-        for (const entry of S.bboxHistory) {
-          if (!entry.boxes.length) continue;
-          if (entry.ts > cur.ts) continue;
-          // 一律以「畫面時間」量距離，與下面淡化用的 heldAgeSec 同一把尺；
-          // 用 cur.ts 量會在長時間沒有新觀測時和淡化脫節（切掉的時機與淡到
-          // 底的時機對不上）。
-          if (targetTs - entry.ts > BBOX_EMPTY_HOLD_SECONDS) continue;
-          if (!held || entry.ts > held.ts) held = entry;
-        }
-        if (held) {
-          displayBoxes = held.boxes;
-          chosenTs = held.ts;
-          // 用畫面時間而非 cur.ts 量沿用時長：使用者實際感受到的「這批框放
-          // 多久了」是相對於眼前的畫面，不是相對於最後一筆空觀測。
-          heldAgeSec = Math.max(0, targetTs - held.ts);
+        // 該幀 tracker 沒吐出任何已確認軌跡（低 fps 下 min_hits 難達成，見
+        // docs 的追蹤缺口交接）。往回找最近一筆非空的沿用並淡化——這一段是
+        // 推測而非觀測，跟上面的零階保持性質不同，所以要在視覺上區分開。
+        if (!displayBoxes.length) {
+          let held = null;
+          for (const entry of S.bboxHistory) {
+            if (!entry.boxes.length) continue;
+            if (entry.ts > cur.ts) continue;
+            // 一律以「畫面時間」量距離，與下面淡化用的 heldAgeSec 同一把尺；
+            // 用 cur.ts 量會在長時間沒有新觀測時和淡化脫節（切掉的時機與淡到
+            // 底的時機對不上）。
+            if (targetTs - entry.ts > BBOX_EMPTY_HOLD_SECONDS) continue;
+            if (!held || entry.ts > held.ts) held = entry;
+          }
+          if (held) {
+            displayBoxes = held.boxes;
+            chosenTs = held.ts;
+            // 用畫面時間而非 cur.ts 量沿用時長：使用者實際感受到的「這批框放
+            // 多久了」是相對於眼前的畫面，不是相對於最後一筆空觀測。
+            heldAgeSec = Math.max(0, targetTs - held.ts);
+          }
         }
       }
     }
