@@ -5,6 +5,8 @@ from collections import defaultdict
 from typing import Optional
 
 import numpy as np
+
+import presence
 from loguru import logger
 
 from db_writer import write_health_alert
@@ -333,3 +335,12 @@ class Scheduler:
         removed = self._prune_stale(window_start)
         if removed:
             logger.info(f"關注快取清掉 {removed} 個已消失的 object_id（ID 跳號的殘留）")
+
+        # 「快取裡有幾個編號、其中幾個現在真的還在畫面上」。這兩個數字的落差就是
+        # 關注清單失準的程度（實測 80 比 30），退化了翻 log 就看得到。
+        for camera_id in by_cam:
+            cached = len(_anomaly_cache.get(camera_id, {}))
+            on_screen = len(presence.on_screen_ids(camera_id, now=now))
+            logger.info(
+                f"[{camera_id}] 關注快取 {cached} 個編號，畫面上 {on_screen} 個"
+            )

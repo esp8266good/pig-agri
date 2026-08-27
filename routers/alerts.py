@@ -1,9 +1,11 @@
+import time
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 import database
+import presence
 from alert_grouping import fold_alerts, page_groups
 from config import settings as app_settings
 from focus_list import select_focus
@@ -63,6 +65,13 @@ async def get_focus_list(camera_id: str):
     DB 不可用時退回 app_settings 的預設值，清單少幾隻總比整個掛掉好。
     """
     cache = get_anomaly_cache().get(camera_id, {})
+    now = time.time()
+    seen = presence.last_seen_map(camera_id)
+    # presence 一筆都沒有＝這台相機從 app 啟動到現在沒送過任何偵測（剛開機、
+    # 相機斷線、夜間全黑）。這時給一個空集合會讓清單一律空掉，分不出「沒有豬
+    # 需要注意」與「還不知道」，所以退回舊行為：把每一筆都當成在畫面上。
+    on_screen = presence.on_screen_ids(camera_id, now=now) if seen else None
+    gone = {oid: max(0.0, now - ts) for oid, ts in seen.items()}
     pool = database.get_pool()
     if pool is None:
         db = {}
@@ -78,6 +87,8 @@ async def get_focus_list(camera_id: str):
         lowest_n=_as_int(db.get("focus_lowest_n"), app_settings.focus_lowest_n),
         top_n=_as_int(db.get("focus_top_n"), app_settings.focus_top_n),
         camera_state=get_camera_state().get(camera_id),
+        on_screen=on_screen,
+        gone_seconds=gone,
     )
     return {"camera_id": camera_id, **result}
 

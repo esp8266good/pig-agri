@@ -164,3 +164,67 @@ def test_without_camera_state_behaviour_is_unchanged():
     entries = {1: _entry(2.0), 2: _entry(30.0)}
     assert select_focus(entries, lowest_enabled=True, lowest_n=1,
                         top_n=1)["status"] == "ok"
+
+
+# ── 只列在畫面上的豬 ───────────────────────────────────────
+def test_ranking_only_considers_pigs_on_screen():
+    """lowest/reference 是排名，從已經死掉的編號裡挑出來的名次點下去畫面沒反應。"""
+    entries = {1: _entry(1.0), 2: _entry(5.0), 3: _entry(9.0)}
+    r = select_focus(entries, lowest_enabled=True, lowest_n=1, top_n=1,
+                     on_screen={2, 3}, gone_seconds={1: 12.0})
+    oids = [i["object_id"] for i in r["items"]]
+    assert 1 not in oids                      # 活動量最低但不在畫面上
+    assert [i["label"] for i in r["items"]] == ["lowest", "reference"]
+    assert oids == [2, 3]
+    assert r["on_screen_count"] == 2
+
+
+def test_anomaly_that_left_screen_moves_to_recent():
+    entries = {7: _entry(0.5, act_anom=True), 8: _entry(9.0)}
+    r = select_focus(entries, lowest_enabled=True, lowest_n=1, top_n=0,
+                     on_screen={8}, gone_seconds={7: 45.0})
+    assert r["items"] == []
+    assert [i["object_id"] for i in r["recent"]] == [7]
+    assert r["recent"][0]["on_screen"] is False
+    assert r["recent"][0]["gone_seconds"] == 45.0
+
+
+def test_recent_drops_anomalies_gone_too_long():
+    entries = {7: _entry(0.5, act_anom=True)}
+    r = select_focus(entries, lowest_enabled=True, lowest_n=1, top_n=0,
+                     on_screen=set(), gone_seconds={7: 601.0},
+                     recent_gone_seconds=600.0)
+    assert r["recent"] == []
+
+
+def test_recent_is_capped_and_sorted_by_freshness():
+    entries = {i: _entry(0.5, act_anom=True) for i in range(1, 8)}
+    gone = {i: float(i * 10) for i in range(1, 8)}
+    r = select_focus(entries, lowest_enabled=True, lowest_n=1, top_n=0,
+                     on_screen=set(), gone_seconds=gone, recent_gone_max=3)
+    assert [i["object_id"] for i in r["recent"]] == [1, 2, 3]
+
+
+def test_recent_holds_only_anomalies():
+    """lowest/reference 是排名，編號一死就沒有意義，不進「最近消失」。"""
+    entries = {1: _entry(1.0), 2: _entry(9.0)}
+    r = select_focus(entries, lowest_enabled=True, lowest_n=1, top_n=1,
+                     on_screen=set(), gone_seconds={1: 5.0, 2: 5.0})
+    assert r["recent"] == []
+
+
+def test_offscreen_anomaly_still_suppresses_lowest():
+    """還沒解除的警報就是還沒解除，不因為編號死了就改列「最低」那三隻。"""
+    entries = {7: _entry(0.5, act_anom=True), 8: _entry(9.0), 9: _entry(3.0)}
+    r = select_focus(entries, lowest_enabled=True, lowest_n=1, top_n=0,
+                     on_screen={8, 9}, gone_seconds={7: 5.0})
+    assert r["items"] == []
+    assert [i["object_id"] for i in r["recent"]] == [7]
+
+
+def test_no_presence_data_falls_back_to_listing_everything():
+    """app 剛起來、presence 還沒有資料時，寧可多列幾隻也不要給一份空清單。"""
+    entries = {1: _entry(1.0), 2: _entry(9.0)}
+    r = select_focus(entries, lowest_enabled=True, lowest_n=1, top_n=1)
+    assert [i["object_id"] for i in r["items"]] == [1, 2]
+    assert all(i["on_screen"] for i in r["items"])

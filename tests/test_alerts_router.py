@@ -318,3 +318,51 @@ def test_focus_reports_herd_low(alert_client):
                return_value={}):
         resp = alert_client.get("/alerts/focus?camera_id=cam_01")
     assert resp.json()["status"] == "herd_low"
+
+
+def _focus_entry(activity, anomaly=False):
+    return {
+        "activity_current": activity, "activity_mean": 10.0, "activity_std": 0.0,
+        "activity_anomaly": anomaly, "temp_anomaly": False,
+        "temp_current": None, "temp_mean": None, "temp_std": None,
+        "herd_ok": True, "analyzed": True,
+    }
+
+
+def test_focus_lists_only_pigs_on_screen(alert_client):
+    """/alerts/focus 要用 presence 過濾。清單上一個點下去畫面不會亮任何框的
+    編號，在使用者眼裡跟系統壞掉沒有分別。"""
+    import time
+    import presence
+    presence.clear()
+    try:
+        now = time.time()
+        presence.mark_seen("cam_01", [2, 3], now)
+        presence.mark_seen("cam_01", [1], now - 45.0)     # 45 秒前就不見了
+        fake_cache = {"cam_01": {1: _focus_entry(1.0, anomaly=True),
+                                 2: _focus_entry(5.0),
+                                 3: _focus_entry(9.0)}}
+        with patch("routers.alerts.get_anomaly_cache", return_value=fake_cache), \
+             patch("routers.alerts.get_camera_state",
+                   return_value={"cam_01": {"analyzed": True, "herd_ok": True}}):
+            resp = alert_client.get("/alerts/focus?camera_id=cam_01")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert 1 not in [i["object_id"] for i in data["items"]]
+        assert [i["object_id"] for i in data["recent"]] == [1]
+        assert data["recent"][0]["gone_seconds"] == pytest.approx(45.0, abs=1.0)
+        assert data["on_screen_count"] == 2
+    finally:
+        presence.clear()
+
+
+def test_focus_without_presence_data_lists_everything(alert_client):
+    """app 剛起來、相機還沒送過任何偵測時，空清單會被誤讀成「沒有豬需要注意」。"""
+    import presence
+    presence.clear()
+    fake_cache = {"cam_01": {1: _focus_entry(1.0), 2: _focus_entry(9.0)}}
+    with patch("routers.alerts.get_anomaly_cache", return_value=fake_cache), \
+         patch("routers.alerts.get_camera_state",
+               return_value={"cam_01": {"analyzed": True, "herd_ok": True}}):
+        resp = alert_client.get("/alerts/focus?camera_id=cam_01")
+    assert sorted(i["object_id"] for i in resp.json()["items"]) == [1, 2]
