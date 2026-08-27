@@ -27,7 +27,11 @@ export const S = {
     catch (_) { return false; }
   })(),
   // 關注清單：object_id → 'anomaly'|'lowest'|'reference'，由 /alerts/focus 每輪更新。
+  // focusItems 只含現在畫面上的豬；離開畫面的異常在 focusRecent（「最近消失」）。
+  // focusOnScreenCount 是後端數的「畫面上有幾隻」，清單空掉時要靠它分辨
+  // 「都沒事」與「根本沒偵測到豬」，那兩種情況該去查的方向完全不同。
   focusLabels: {}, focusItems: [], focusStatus: 'ok',
+  focusRecent: [], focusOnScreenCount: 0,
   // bbox 的座標系尺寸：camera_id → [w, h]（rgb 原始解析度，後端 /cameras 給）。
   // ⚠ 不能拿 <video> 的 videoWidth 當分母。rgb 那條串流剛好同尺寸所以看不出來，
   // 熱像改成原生 640x480 之後就露餡了：bbox 是 1280x720 的座標，除以 640

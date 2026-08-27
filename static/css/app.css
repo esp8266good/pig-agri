@@ -1148,6 +1148,22 @@
       border-top: 1px dashed var(--border);
       font-size: var(--text-xs); color: var(--text-faint);
     }
+    /* 「最近消失」：編號已經死掉、畫面上點不到的異常。預設收合，
+       整段刻意壓低對比——它不是要人現在去看的東西，只是不要讓剛剛
+       還在的警報無聲無息消失。 */
+    .focus-recent { margin-top: var(--space-1); border-top: 1px dashed var(--border); }
+    .focus-recent summary {
+      padding: var(--space-1) var(--space-2); cursor: pointer;
+      font-size: var(--text-xs); color: var(--text-faint);
+    }
+    .focus-recent ul { list-style: none; margin: 0; padding: 0; }
+    .focus-recent-item {
+      display: flex; gap: var(--space-2); align-items: center; cursor: pointer;
+      padding: var(--space-1) var(--space-2);
+      font-size: var(--text-xs); color: var(--text-muted);
+    }
+    .focus-recent-item:hover { background: var(--surface-hover, rgba(127,127,127,0.12)); }
+    .focus-gone { margin-left: auto; font-variant-numeric: tabular-nums; }
         /* 熱像對位校正面板。沿用遮罩編輯器那組工具列樣式，多一排微調鈕。 */
     #align-panel {
       border: 1px solid var(--border); border-radius: var(--radius-sm);

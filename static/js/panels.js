@@ -111,6 +111,44 @@ const FOCUS_STATUS_TEXT = {
   vod: '回放中不評估關注清單',
 };
 
+// 離開畫面多久。秒數精確到秒沒有意義，但「48 秒前」與「6 分鐘前」
+// 是兩種不同的處置，所以在 90 秒切換單位。
+function _fmtGone(sec) {
+  if (sec == null) return '';
+  return sec < 90 ? `${Math.round(sec)} 秒前` : `${Math.round(sec / 60)} 分鐘前`;
+}
+
+// 「最近消失」：剛剛還是異常、但 tracklet 已經死掉的編號。預設收合，
+// 用 <details> 而不是自己做開合，省掉一份要跟著重繪同步的狀態。
+// ⚠ 它不是採血名單：採血的權威紀錄是通知分頁，點下去就是跳過去。
+function _appendRecentSection() {
+  if (!S.focusRecent.length) return;
+  const li = document.createElement('li');
+  li.className = 'focus-recent';
+  const det = document.createElement('details');
+  const sum = document.createElement('summary');
+  sum.textContent = `最近消失 ${S.focusRecent.length}`;
+  det.appendChild(sum);
+  const ul = document.createElement('ul');
+  for (const item of S.focusRecent) {
+    const row = document.createElement('li');
+    row.className = 'focus-recent-item';
+    const oid = document.createElement('span');
+    oid.className = 'focus-oid';
+    oid.textContent = `#${item.object_id}`;
+    const when = document.createElement('span');
+    when.className = 'focus-gone';
+    when.textContent = _fmtGone(item.gone_seconds);
+    row.append(oid, when);
+    row.title = '這個編號已經不在畫面上了。點一下到通知看紀錄。';
+    row.addEventListener('click', () => switchTab('notifications'));
+    ul.appendChild(row);
+  }
+  det.appendChild(ul);
+  li.appendChild(det);
+  els.focusListEl.appendChild(li);
+}
+
 function renderFocusList() {
   if (!els.focusListEl) return;
   els.focusListEl.innerHTML = '';
@@ -120,7 +158,17 @@ function renderFocusList() {
     return;
   }
   if (!S.focusItems.length) {
-    els.focusListEl.innerHTML = '<li class="focus-status">目前沒有需要注意的豬</li>';
+    // 這兩句話指向的排除方向完全不同：前者是偵測在數豬、只是沒事，
+    // 後者是畫面上根本沒東西（夜間全黑、相機斷線、遮罩把整片蓋掉）。
+    // 混成一句「目前沒有需要注意的豬」等於把後者講成前者。
+    const msg = S.focusOnScreenCount > 0
+      ? `畫面上 ${S.focusOnScreenCount} 隻，都沒有異常`
+      : '畫面上沒有偵測到豬';
+    const li = document.createElement('li');
+    li.className = 'focus-status';
+    li.textContent = msg;
+    els.focusListEl.appendChild(li);
+    _appendRecentSection();
     return;
   }
   let refSeparatorDone = false;
@@ -156,6 +204,7 @@ function renderFocusList() {
     li.addEventListener('click', () => togglePigSelection(item.object_id));
     els.focusListEl.appendChild(li);
   }
+  _appendRecentSection();
 }
 
 export async function refreshFocusList() {
@@ -164,6 +213,8 @@ export async function refreshFocusList() {
     const d = await fetch(`/alerts/focus?camera_id=${S.currentCamera}`)
       .then(r => r.json());
     S.focusItems  = d.items || [];
+    S.focusRecent = d.recent || [];
+    S.focusOnScreenCount = d.on_screen_count ?? 0;
     S.focusStatus = d.status || 'ok';
     S.focusLabels = {};
     for (const item of S.focusItems) S.focusLabels[item.object_id] = item.label;
@@ -201,6 +252,8 @@ export async function refreshAnomalyMap() {
 export function updateVodAnomalyMap(currentTs) {
   S.anomalyMap = {};
   S.focusItems = [];
+  S.focusRecent = [];
+  S.focusOnScreenCount = 0;
   S.focusLabels = {};
   S.focusStatus = 'vod';
   renderFocusList();

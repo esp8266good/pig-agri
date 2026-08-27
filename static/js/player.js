@@ -788,6 +788,9 @@ function drawDbgHud() {
     `newestBbox.ts=${fmt(d.newestTs)}`,
     `chosen-target=${fmt(leadTarget)}s`,
     `newest-target=${fmt(leadNewest)}s`,
+    // 關注清單命中率：畫面上 K 隻裡列了 N 隻，另有 M 個編號剛死掉。
+    // K 與 N 的落差就是 ID 跳號讓清單失準的程度。
+    `focus=${S.focusItems.length}/${S.focusOnScreenCount} gone=${S.focusRecent.length}`,
   ].join('\n');
   _hudEl.classList.add('visible');
 }
