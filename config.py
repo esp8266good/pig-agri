@@ -218,6 +218,20 @@ class Settings(BaseSettings):
         # JSON 解碼」的行為，而非重新以 settings_cls 預設 env_file(".env") 建構
         # ——否則 `_env_file=None` 會被無視，測試永遠讀到真實 .env。
         dotenv_settings.__class__ = _NonJsonDotEnvSource
+        # ⚠ env_settings 不在回傳值裡是刻意的：**設定只從 .env 檔讀，
+        # 不吃 process 的環境變數**。要改設定就改 .env，`FOO=bar uvicorn ...`
+        # 或 systemd 的 `Environment=` 都不會有任何作用。
+        #
+        # 這件事很容易讓人白花一小時：CI 曾經掛著一個 job 層級的
+        # `env: DATABASE_URL: ...`，看起來設好了，其實一路沒被讀到
+        # （見 .github/workflows/ci.yml 現在改成 `cp .env.example .env`）。
+        #
+        # 2026-08-28 重新評估過，決定維持現狀。加回去要付的代價是：62 個欄位
+        # 裡 DATABASE_URL / LOG_LEVEL / DEVICE 這三個名字夠通用，正式機上只要
+        # 有人為了別的工具 export 過 DATABASE_URL，app 就會靜靜連到另一個資料庫。
+        # 而收益是零——全專案沒有任何一處 os.environ/os.getenv，部署文件也沒有
+        # 叫人用環境變數設定 app。真的需要時再加，並想清楚要放在 dotenv 前面
+        # （環境變數贏）還是後面（.env 贏，只補沒設的欄位）。
         return (init_settings, dotenv_settings, file_secret_settings)
 
 
