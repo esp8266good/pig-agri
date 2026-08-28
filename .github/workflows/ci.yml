@@ -25,9 +25,6 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-    env:
-      DATABASE_URL: postgresql://pig:pig_password@localhost:15432/pig_monitoring
-
     steps:
       - uses: actions/checkout@v4
 
@@ -42,16 +39,21 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev
 
-      - name: Run core test suite
-        run: >-
-          uv run pytest
-          tests/test_alerts_router.py
-          tests/test_analysis_scheduler.py
-          tests/test_config.py
-          tests/test_database.py
-          tests/test_db_writer.py
-          tests/test_hls_manager.py
-          tests/test_hls_retention.py
-          tests/test_storage_monitor.py
-          tests/test_vod_generator.py
-          -q
+      # ⚠ 設定只從 .env 檔讀，不吃 process 的環境變數：config.py 的
+      # settings_customise_sources 回傳 (init, dotenv, file_secret)，
+      # env_settings 不在裡面。以前這裡是一個 job 層級的
+      # `env: DATABASE_URL: ...`，那個值其實一路沒有被讀到（白名單裡那 9 個
+      # 測試都用 AsyncMock、不碰真 DB，所以看起來像有效）。
+      # .env.example 的 DATABASE_URL 本來就指向下面那個 postgres service。
+      # 沒有這個檔的話 zmq_receiver.py 的模組級 singleton 會在 import 期丟
+      # 「ZMQ_SOURCES 未設定」，test_main / test_zmq_receiver{,_hardening}
+      # 連 collect 都做不到——那才是舊版逐檔白名單真正在繞開的東西。
+      - name: Provide .env for tests
+        run: cp .env.example .env
+
+      # 全套件，不是逐檔白名單：白名單的問題是新增的測試檔不會自動被跑到
+      # （tests/test_thermal_render.py 就是這樣差點沒進 CI），而且看不出來
+      # 少跑了什麼。ref/ 與 uv.lock 沒有進 repo，但全套件在那個條件下實測
+      # 590 passed——需要推論模型的測試都自己 mock 掉 yolox/trackers/fast_reid。
+      - name: Run test suite
+        run: uv run pytest -q
