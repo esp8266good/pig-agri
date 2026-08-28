@@ -39,6 +39,7 @@ real-time and recorded video to a single-page web UI, with bboxes aligned to the
 
 - Real-time multi-object tracking tuned for long-occlusion robustness (ReID lost-track pool)
 - Activity-based health anomaly detection with hysteresis to avoid alert flapping
+- Focus list scoped to pigs currently on screen, so every listed id points at a visible box
 - Optional thermal-camera temperature anomaly detection (toggleable)
 - HLS live streaming + VOD playback with capture-time-aligned bounding boxes
 - Notification center, bookmarks, segment protection, calendar timeline
@@ -55,7 +56,7 @@ YOLOX detector · HybridSORT-ReID tracker · uv · pytest
 Actively developed, **pre-publication research** (this system is the basis of the author's
 thesis). The codebase is built spec-first: every feature has a design spec and an
 implementation plan under [`docs/superpowers/specs`](docs/superpowers/specs) and
-[`docs/superpowers/plans`](docs/superpowers/plans). The suite has **380 tests**; CI runs
+[`docs/superpowers/plans`](docs/superpowers/plans). The suite has **571 tests**; CI runs
 the external-dependency-free core subset on every push.
 
 ## Getting started

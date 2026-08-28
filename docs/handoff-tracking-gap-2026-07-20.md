@@ -1,5 +1,17 @@
 # 交接：只有 rpi5_dual 有 tracking 資料，其餘三支掛零（2026-07-20）
 
+> **2026-08-28：這件事整個結案，底下是當時的調查過程，不用再重跑。**
+>
+> | 當時的待辦 | 結果 |
+> |---|---|
+> | 凍結幀重灌 `tracking_logs` 的修正有沒有效 | ✅ commit `6571035` 已在 master；正式機近 24h 單一 `(camera_id, frame_id)` 最多 34 列，就是那一幀畫面上的豬數 |
+> | 去重排程跑完要確認、新表應 ~45.8M 列 | ✅ 跑成功了。2026-08-28 全表掃：正式機 83,290,173 列 **0 個** dupes、本機舊部署 108,854,202 列 21,622 個（0.02%）。「~45.8M」只是當時的估計，估錯了但不影響結論 |
+> | `tracking_logs_old` 確認無誤後 DROP | ✅ 兩台都已不在，`pig-dedup-tracking.timer` 也移除了 |
+>
+> ⚠ 另外，「其餘三支掛零」現在有一個**新的、無關的原因**：`cam_02`/`cam_03`/`rpi_sensors`
+> 掛的 Tailscale 節點 `nycu`（`100.67.51.73`）從 2026-08-18 起 offline，ping 不到、
+> 5555 連不上。那是硬體/網路問題，不是這份文件查的那個程式問題。
+
 ## 任務
 
 查明 inference/tracker_pool 為什麼只為 `rpi5_dual` 產出 tracking 資料，其餘攝影機
@@ -38,7 +50,7 @@
   已查明三條 VOD 路徑共用同一套 `loadVod()` 機制，差別只在該 camera×時段
   `/tracking` 有無資料（通知本身由 tracking 算出 → 必然有資料）。
 
-## 建議的下一步（尚未做）
+## 建議的下一步（當時寫的，後來都做完了，見文件開頭）
 
 1. `inference/pipeline.py` 的 `_process_batch`：確認 `cameras`/`snapshot` 每輪實際涵蓋哪幾支
    （`pipeline.py:130` `frames = [snapshot[c] for c in cameras]`、`:149` 的 zip 迴圈）。
