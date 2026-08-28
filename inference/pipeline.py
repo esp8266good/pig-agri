@@ -379,6 +379,9 @@ class InferencePipeline:
                     try:
                         online_targets = fut.result()
                         objects = []
+                        # pool 在整批 target 之間不會變，取一次就好；放在迴圈裡
+                        # 等於每隻豬每一幀都查一次模組全域。
+                        pool = database.get_pool()
                         for t in online_targets:
                             x1, y1, x2, y2 = float(t[0]), float(t[1]), float(t[2]), float(t[3])
                             obj_id = int(t[4])
@@ -394,7 +397,6 @@ class InferencePipeline:
                                 "confidence": conf,
                                 # 體溫只進 DB，不進 live WS payload
                             })
-                            pool = database.get_pool()
                             if pool is not None:
                                 asyncio.run_coroutine_threadsafe(
                                     write_tracking_log(

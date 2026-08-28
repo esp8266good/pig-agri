@@ -137,7 +137,7 @@ class Scheduler:
         跑完就該讓位給真實資料。
         """
         removed = 0
-        for cam, objs in list(_anomaly_cache.items()):
+        for objs in list(_anomaly_cache.values()):
             for oid, entry in list(objs.items()):
                 last_seen = entry.get("last_seen")
                 if last_seen is None or last_seen < window_start:

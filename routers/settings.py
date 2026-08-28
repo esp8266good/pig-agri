@@ -132,9 +132,9 @@ def validate_setting(key: str, value: str) -> None:
         caster, lo, hi = _NUMERIC_BOUNDS[key]
         try:
             n = caster(raw)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as e:
             kind = "整數" if caster is int else "數字"
-            raise ValueError(f"{key} 必須是{kind}（收到 '{value}'）")
+            raise ValueError(f"{key} 必須是{kind}（收到 '{value}'）") from e
         if not (lo <= n <= hi):
             raise ValueError(f"{key} 必須介於 {lo} 與 {hi} 之間（收到 '{value}'）")
     elif key in _BOOL_KEYS:
@@ -207,7 +207,7 @@ async def update_settings(request: Request, body: dict[str, str]):
         try:
             validate_setting(k, v)
         except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+            raise HTTPException(status_code=400, detail=str(e)) from e
         updates[k] = v
     if not updates:
         raise HTTPException(status_code=400, detail="No valid keys provided")

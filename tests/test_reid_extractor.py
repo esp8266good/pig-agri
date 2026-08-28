@@ -1,6 +1,6 @@
 import sys
 import numpy as np
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 for _mod in [
     "fast_reid", "fast_reid.fast_reid_interfece",

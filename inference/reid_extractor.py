@@ -7,7 +7,6 @@ from loguru import logger
 import inference  # triggers sys.path setup
 from fast_reid.fast_reid_interfece import FastReIDInterface
 
-from config import settings
 
 _PROJECT_ROOT = Path(__file__).parent.parent
 

@@ -183,7 +183,7 @@ def test_long_window_does_not_require_window_proportional_span():
 
 def test_no_duplicate_alert_while_still_low():
     """持續低活動：第二輪不再寫新 alert。"""
-    from analysis.scheduler import Scheduler, get_anomaly_cache
+    from analysis.scheduler import Scheduler
     pool = AsyncMock()
     pool.fetch.side_effect = [
         [{"camera_id": "cam_01", "object_id": 1},

@@ -41,8 +41,10 @@ class ZmqSource:
         name, host, port_str, topic, label = parts
         try:
             port = int(port_str)
-        except ValueError:
-            raise ValueError(f"ZMQ_SOURCES port 必須是整數，收到：'{port_str}'")
+        except ValueError as e:
+            raise ValueError(
+                f"ZMQ_SOURCES port 必須是整數，收到：'{port_str}'"
+            ) from e
         return cls(name=name, src_host=host, src_port=port, src_topic=topic, label=label)
 
 

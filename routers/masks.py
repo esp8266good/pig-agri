@@ -4,8 +4,6 @@
 因為它是唯一碰推論路徑的功能，這裡的驗證刻意寫嚴：座標超出畫面、頂點太少、
 區域數量灌爆，任何一項漏掉都會直接影響偵測結果。
 """
-from typing import Optional
-
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 

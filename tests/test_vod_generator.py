@@ -2,7 +2,6 @@
 from datetime import datetime
 from pathlib import Path
 import re
-import pytest
 
 HOUR_TS = 1746403200  # 2026-05-05 00:00:00 UTC
 

@@ -1,9 +1,8 @@
 import sys
 import asyncio
-import threading
 import numpy as np
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import MagicMock, AsyncMock
 
 for _mod in [
     "yolox", "yolox.exp", "yolox.utils", "yolox.data", "yolox.data.data_augment",
@@ -26,7 +25,6 @@ def _make_pipeline():
 
 
 def test_update_frame_stores_latest():
-    from inference.pipeline import FrameData
     p = _make_pipeline()
     rgb = np.zeros((480, 640, 3), dtype=np.uint8)
     p.update_frame("cam_01", rgb, None, 1.0, 438190)
@@ -45,7 +43,7 @@ def test_update_frame_uses_camera_frame_id():
 
 
 def test_process_batch_calls_broadcast():
-    from inference.pipeline import FrameData, InferencePipeline
+    from inference.pipeline import FrameData
     p = _make_pipeline()
 
     mock_detector = MagicMock()

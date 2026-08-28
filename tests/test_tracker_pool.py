@@ -58,7 +58,6 @@ def _make_pool():
 
 
 def test_update_lazy_creates_tracker_on_first_call():
-    from inference.tracker_pool import TrackerPool
     pool = _make_pool()
     mock_tracker = MagicMock()
     mock_tracker.update.return_value = []
@@ -73,7 +72,6 @@ def test_update_lazy_creates_tracker_on_first_call():
 
 
 def test_update_reuses_existing_tracker():
-    from inference.tracker_pool import TrackerPool
     pool = _make_pool()
     mock_tracker = MagicMock()
     mock_tracker.update.return_value = []
@@ -87,7 +85,6 @@ def test_update_reuses_existing_tracker():
 
 
 def test_update_passes_empty_dets_when_none():
-    from inference.tracker_pool import TrackerPool
     pool = _make_pool()
     mock_tracker = MagicMock()
     mock_tracker.update.return_value = []

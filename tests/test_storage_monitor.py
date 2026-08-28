@@ -67,7 +67,6 @@ def test_write_probe_success_and_cleanup(tmp_path):
 
 
 def test_write_probe_fails_on_nonexistent_unwritable(tmp_path):
-    bad = tmp_path / "nope" / "deep"
     f = tmp_path / "afile"
     f.write_text("x")
     assert sm.write_probe(f / "sub") is False

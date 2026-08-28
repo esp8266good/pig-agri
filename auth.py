@@ -26,7 +26,6 @@ import hashlib
 import hmac
 import json
 import os
-import secrets
 import time
 
 # scrypt 參數。n=2^14 在一般 CPU 上單次約數十毫秒——慢到讓線上暴力破解不划算，

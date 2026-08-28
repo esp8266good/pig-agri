@@ -1,10 +1,8 @@
 # tests/test_hls_manager.py
-import json
 import pytest
 import threading
 import time
 from datetime import datetime
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from hls_manager import _make_ffmpeg_cmd, _HLS_TIME
@@ -99,7 +97,6 @@ def test_corrected_m3u8_none_when_missing_or_dir_mismatch(tmp_path, monkeypatch)
 def test_scan_new_segments_records_last_capture_ts(tmp_path, monkeypatch):
     """_scan_new_segments 用 _emit_log 推每段首幀真實擷取時間（Task 2 改版）。
     同名不覆寫；_emit_log 為空時不記。"""
-    from hls_manager import TARGET_FPS, _HLS_TIME
     stream, _ = _make_stream(tmp_path, monkeypatch)
     stream._stopped = True
     # 準備 emit_log 讓 seg_000 能被錨定到 1_700_000_123.5
@@ -798,7 +795,6 @@ def test_latest_frame_survives_writer_draining_the_buffer():
 def test_manager_latest_frame_rejects_stale_frame():
     """幀太舊（相機斷線）要當作沒有，而不是回一張幾小時前的畫面。"""
     import time as _t
-    from unittest.mock import patch as _patch
     import hls_manager as m
     mgr = m.HLSManager.__new__(m.HLSManager)
     mgr._streams = {}
