@@ -281,6 +281,180 @@ class InferencePipeline:
                 continue
             self._process_batch(snapshot)
 
+    def _submit_stale_ageouts(
+        self,
+        stale_cams: list[str],
+        snapshot: dict[str, FrameData],
+        now_m: float,
+        test_size,
+    ) -> list:
+        """停滯 camera 的 age-out 更新，回傳已送出的 future。
+
+        停滯超過 STALE_SECONDS_BEFORE_AGING 秒才開始餵空偵測，讓 tracker 內部殘留
+        track 正常 age out（避免送幀恢復時舊 track 殘留跳位）；且兩次之間至少隔
+        STALE_AGE_OUT_INTERVAL 秒。未達門檻完全跳過 tracker，不擾動健康軌跡的
+        hit_streak／frame_count——慢速相機的常態就是停滯，餵空偵測會讓它永遠達不到
+        min_hits。全程不重跑 detector／不寫 DB／不重播 WS。
+        """
+        stale_futures = []
+        for cam in stale_cams:
+            self._stale_ticks[cam] = self._stale_ticks.get(cam, 0) + 1
+            # 沒有 last_fresh 紀錄（剛啟動就看到這支）→ 以現在起算，先不 age out
+            since_fresh = now_m - self._last_fresh_mono.get(cam, now_m)
+            if since_fresh < STALE_SECONDS_BEFORE_AGING:
+                continue
+            if now_m - self._last_ageout_mono.get(cam, 0.0) < STALE_AGE_OUT_INTERVAL:
+                continue
+            self._last_ageout_mono[cam] = now_m
+            self._ageout_counts[cam] = self._ageout_counts.get(cam, 0) + 1
+            fd = snapshot[cam]
+            h, w = fd.rgb_np.shape[:2]
+            stale_futures.append(self._executor.submit(
+                self._tracker_pool.update,
+                cam, None, (h, w), test_size,
+                np.zeros((0, 2048), dtype=np.float32),
+            ))
+        return stale_futures
+
+    def _apply_masks(self, cameras, frames, all_dets, test_size) -> list:
+        """遮罩過濾：放在 ReID 之前，順便省掉被丟棄那些框的 feature 抽取。
+
+        dets 的座標在 detector 縮放後的空間，mask_filter 內部會 / scale
+        換回原始畫面座標（與 _extract_reid_features 的換算一致）。
+        """
+        if not (self._mask_enabled and self._masks):
+            return all_dets
+        filtered = []
+        for cam, frame_data, dets in zip(cameras, frames, all_dets, strict=True):
+            h, w = frame_data.rgb_np.shape[:2]
+            mask = self._mask_for(cam, w, h)
+            if mask is None:
+                filtered.append(dets)
+                continue
+            scale = min(test_size[0] / h, test_size[1] / w)
+            filtered.append(filter_detections(dets, mask, scale))
+        return filtered
+
+    def _extract_reid_features(self, frames, all_dets, test_size) -> list:
+        """ReID: GPU sequential。每台相機一組 feature，順序與 frames 對齊。"""
+        all_id_feats: list[np.ndarray] = []
+        for frame_data, dets in zip(frames, all_dets, strict=True):
+            if dets is None or len(dets) == 0:
+                all_id_feats.append(np.zeros((0, 2048), dtype=np.float32))
+            else:
+                h, w = frame_data.rgb_np.shape[:2]
+                scale = min(test_size[0] / h, test_size[1] / w)
+                bbox_orig = (dets[:, :4] / scale).astype(np.float32)
+                all_id_feats.append(self._reid.extract(frame_data.rgb_np, bbox_orig))
+        return all_id_feats
+
+    def _publish_camera_result(self, cam: str, frame_data: FrameData, online_targets) -> None:
+        """把一台相機這一幀的追蹤結果寫進 DB、記 presence、推上 WS。"""
+        objects = []
+        # pool 在整批 target 之間不會變，取一次就好；放在迴圈裡
+        # 等於每隻豬每一幀都查一次模組全域。
+        pool = database.get_pool()
+        for t in online_targets:
+            x1, y1, x2, y2 = float(t[0]), float(t[1]), float(t[2]), float(t[3])
+            obj_id = int(t[4])
+            conf = float(t[5]) if len(t) > 5 else 0.0
+            fh, fw = frame_data.rgb_np.shape[:2]
+            ti = _compute_thermal_celsius(
+                frame_data.thermal_np, x1, y1, x2, y2, fw, fh,
+                self._thermal_align.get(cam),
+            )
+            objects.append({
+                "object_id": obj_id,
+                "bbox": [x1, y1, x2 - x1, y2 - y1],
+                "confidence": conf,
+                # 體溫只進 DB，不進 live WS payload
+            })
+            if pool is not None:
+                asyncio.run_coroutine_threadsafe(
+                    write_tracking_log(
+                        pool,
+                        camera_id=cam,
+                        timestamp=frame_data.ts,
+                        frame_id=frame_data.frame_id,
+                        object_id=obj_id,
+                        bb_left=x1,
+                        bb_top=y1,
+                        bb_width=x2 - x1,
+                        bb_height=y2 - y1,
+                        confidence=conf,
+                        thermal_celsius=ti,
+                    ),
+                    self._event_loop,
+                )
+        # 「這個編號最後一次被看到」的權威來源。要在這裡記而不是
+        # 讓前端自己算：前端重整頁面就失憶，關注清單的「最近消失」
+        # 會空掉。用 frame_data.ts（擷取時間）而不是 time.time()，
+        # 跟 tracking_logs 的 timestamp 同源。
+        presence.mark_seen(
+            cam, [o["object_id"] for o in objects], frame_data.ts
+        )
+        _fh, _fw = frame_data.rgb_np.shape[:2]
+        payload = {
+            "frame_id": frame_data.frame_id,
+            "timestamp": frame_data.ts,
+            "objects": objects,
+            # bbox 的座標系尺寸。前端不能拿 <video> 的
+            # videoWidth 當分母：熱像那條串流是 640x480，
+            # 而 bbox 是 rgb 1280x720 的座標，除錯了框就整片位移。
+            "frame_width": int(_fw),
+            "frame_height": int(_fh),
+        }
+        asyncio.run_coroutine_threadsafe(
+            self._broadcast_fn(cam, payload), self._event_loop
+        )
+
+    def _process_fresh_cams(self, cameras, snapshot, now_m, test_size) -> None:
+        """有新幀的 camera：偵測 → 遮罩 → ReID → tracker → 發佈。"""
+        frames = [snapshot[c] for c in cameras]
+        batch_imgs = [f.rgb_np for f in frames]
+
+        all_dets = self._detector.infer(batch_imgs)
+        # detector 回傳的組數必須跟 camera 數一樣。對不上時偵測與相機的
+        # 對應關係就是未知的：少回一組會讓 cam_02 的框配到 cam_03 的畫面，
+        # 寫進 tracking_logs 的 bbox 與 object_id 全是別台的，而每個數字
+        # 看起來都正常，一路錯到活動量與採血判斷。
+        # 以前四處 zip() 會安靜截尾，等於預設「錯位比停一輪好」——反了。
+        # 這裡丟例外由外層接住＝整批放掉，下一幀重來。
+        if len(all_dets) != len(cameras):
+            raise RuntimeError(
+                f"detector 回傳 {len(all_dets)} 組偵測，但這批有 "
+                f"{len(cameras)} 台相機（{cameras}）：對應關係不明，整批跳過"
+            )
+        for c, fd in zip(cameras, frames, strict=True):
+            self._last_processed_fid[c] = fd.frame_id
+            self._last_fresh_mono[c] = now_m
+            self._fresh_ticks[c] = self._fresh_ticks.get(c, 0) + 1
+
+        all_dets = self._apply_masks(cameras, frames, all_dets, test_size)
+        all_id_feats = self._extract_reid_features(frames, all_dets, test_size)
+
+        # Tracker: CPU parallel
+        futures = []
+        for cam, frame_data, dets, id_feats in zip(
+                cameras, frames, all_dets, all_id_feats, strict=True):
+            h, w = frame_data.rgb_np.shape[:2]
+            fut = self._executor.submit(
+                self._tracker_pool.update,
+                cam, dets, (h, w), test_size, id_feats,
+            )
+            futures.append((cam, frame_data, fut))
+
+        # 每支 camera 各自 try：任一支丟例外都只跳過那一支，迴圈continue
+        # 下去把其餘 future 取回。若讓例外往外傳，後面 camera 的 future 就
+        # 永遠不會被 result()，下一輪 loop 會對同一支再送一次 update ——
+        # 違反 tracker_pool.py 明載的「每 camera 同時至多一個 update」不變式
+        # （tracker 內部狀態無鎖，並行更新會讓軌跡錯亂 → ID 亂跳 → 活動量算錯）。
+        for cam, frame_data, fut in futures:
+            try:
+                self._publish_camera_result(cam, frame_data, fut.result())
+            except Exception:
+                logger.exception(f"[{cam}] tracker update/publish failed, skipping camera")
+
     def _process_batch(self, snapshot: dict[str, FrameData]) -> None:
         try:
             if not self._active:
@@ -294,149 +468,15 @@ class InferencePipeline:
                           if self._last_processed_fid.get(c) != fd.frame_id]
             stale_cams = [c for c in snapshot if c not in fresh_cams]
 
-            # 停滯 camera：停滯超過 STALE_SECONDS_BEFORE_AGING 秒才開始餵空偵測，
-            # 讓 tracker 內部殘留 track 正常 age out（避免送幀恢復時舊 track 殘留
-            # 跳位）；且兩次之間至少隔 STALE_AGE_OUT_INTERVAL 秒。未達門檻完全跳過
-            # tracker，不擾動健康軌跡的 hit_streak／frame_count——慢速相機的常態就是
-            # 停滯，餵空偵測會讓它永遠達不到 min_hits。
-            # 全程不重跑 detector／不寫 DB／不重播 WS。
             now_m = self._clock()
-            stale_futures = []
-            for cam in stale_cams:
-                self._stale_ticks[cam] = self._stale_ticks.get(cam, 0) + 1
-                # 沒有 last_fresh 紀錄（剛啟動就看到這支）→ 以現在起算，先不 age out
-                since_fresh = now_m - self._last_fresh_mono.get(cam, now_m)
-                if since_fresh < STALE_SECONDS_BEFORE_AGING:
-                    continue
-                if now_m - self._last_ageout_mono.get(cam, 0.0) < STALE_AGE_OUT_INTERVAL:
-                    continue
-                self._last_ageout_mono[cam] = now_m
-                self._ageout_counts[cam] = self._ageout_counts.get(cam, 0) + 1
-                fd = snapshot[cam]
-                h, w = fd.rgb_np.shape[:2]
-                stale_futures.append(self._executor.submit(
-                    self._tracker_pool.update,
-                    cam, None, (h, w), test_size,
-                    np.zeros((0, 2048), dtype=np.float32),
-                ))
+            stale_futures = self._submit_stale_ageouts(
+                stale_cams, snapshot, now_m, test_size
+            )
 
             try:
                 if not fresh_cams:
                     return
-
-                cameras = fresh_cams
-                frames = [snapshot[c] for c in cameras]
-                batch_imgs = [f.rgb_np for f in frames]
-
-                all_dets = self._detector.infer(batch_imgs)
-                for c, fd in zip(cameras, frames):
-                    self._last_processed_fid[c] = fd.frame_id
-                    self._last_fresh_mono[c] = now_m
-                    self._fresh_ticks[c] = self._fresh_ticks.get(c, 0) + 1
-
-                # 遮罩過濾：放在 ReID 之前，順便省掉被丟棄那些框的 feature 抽取。
-                # dets 的座標在 detector 縮放後的空間，mask_filter 內部會 / scale
-                # 換回原始畫面座標（與下面餵給 ReID 的換算一致）。
-                if self._mask_enabled and self._masks:
-                    filtered = []
-                    for cam, frame_data, dets in zip(cameras, frames, all_dets):
-                        h, w = frame_data.rgb_np.shape[:2]
-                        mask = self._mask_for(cam, w, h)
-                        if mask is None:
-                            filtered.append(dets)
-                            continue
-                        scale = min(test_size[0] / h, test_size[1] / w)
-                        filtered.append(filter_detections(dets, mask, scale))
-                    all_dets = filtered
-
-                # ReID: GPU sequential
-                all_id_feats: list[np.ndarray] = []
-                for frame_data, dets in zip(frames, all_dets):
-                    if dets is None or len(dets) == 0:
-                        all_id_feats.append(np.zeros((0, 2048), dtype=np.float32))
-                    else:
-                        h, w = frame_data.rgb_np.shape[:2]
-                        scale = min(test_size[0] / h, test_size[1] / w)
-                        bbox_orig = (dets[:, :4] / scale).astype(np.float32)
-                        all_id_feats.append(self._reid.extract(frame_data.rgb_np, bbox_orig))
-
-                # Tracker: CPU parallel
-                futures = []
-                for cam, frame_data, dets, id_feats in zip(cameras, frames, all_dets, all_id_feats):
-                    h, w = frame_data.rgb_np.shape[:2]
-                    fut = self._executor.submit(
-                        self._tracker_pool.update,
-                        cam, dets, (h, w), test_size, id_feats,
-                    )
-                    futures.append((cam, frame_data, fut))
-
-                # 每支 camera 各自 try：任一支丟例外都只跳過那一支，迴圈continue
-                # 下去把其餘 future 取回。若讓例外往外傳，後面 camera 的 future 就
-                # 永遠不會被 result()，下一輪 loop 會對同一支再送一次 update ——
-                # 違反 tracker_pool.py 明載的「每 camera 同時至多一個 update」不變式
-                # （tracker 內部狀態無鎖，並行更新會讓軌跡錯亂 → ID 亂跳 → 活動量算錯）。
-                for cam, frame_data, fut in futures:
-                    try:
-                        online_targets = fut.result()
-                        objects = []
-                        # pool 在整批 target 之間不會變，取一次就好；放在迴圈裡
-                        # 等於每隻豬每一幀都查一次模組全域。
-                        pool = database.get_pool()
-                        for t in online_targets:
-                            x1, y1, x2, y2 = float(t[0]), float(t[1]), float(t[2]), float(t[3])
-                            obj_id = int(t[4])
-                            conf = float(t[5]) if len(t) > 5 else 0.0
-                            fh, fw = frame_data.rgb_np.shape[:2]
-                            ti = _compute_thermal_celsius(
-                                frame_data.thermal_np, x1, y1, x2, y2, fw, fh,
-                                self._thermal_align.get(cam),
-                            )
-                            objects.append({
-                                "object_id": obj_id,
-                                "bbox": [x1, y1, x2 - x1, y2 - y1],
-                                "confidence": conf,
-                                # 體溫只進 DB，不進 live WS payload
-                            })
-                            if pool is not None:
-                                asyncio.run_coroutine_threadsafe(
-                                    write_tracking_log(
-                                        pool,
-                                        camera_id=cam,
-                                        timestamp=frame_data.ts,
-                                        frame_id=frame_data.frame_id,
-                                        object_id=obj_id,
-                                        bb_left=x1,
-                                        bb_top=y1,
-                                        bb_width=x2 - x1,
-                                        bb_height=y2 - y1,
-                                        confidence=conf,
-                                        thermal_celsius=ti,
-                                    ),
-                                    self._event_loop,
-                                )
-                        # 「這個編號最後一次被看到」的權威來源。要在這裡記而不是
-                        # 讓前端自己算：前端重整頁面就失憶，關注清單的「最近消失」
-                        # 會空掉。用 frame_data.ts（擷取時間）而不是 time.time()，
-                        # 跟 tracking_logs 的 timestamp 同源。
-                        presence.mark_seen(
-                            cam, [o["object_id"] for o in objects], frame_data.ts
-                        )
-                        _fh, _fw = frame_data.rgb_np.shape[:2]
-                        payload = {
-                            "frame_id": frame_data.frame_id,
-                            "timestamp": frame_data.ts,
-                            "objects": objects,
-                            # bbox 的座標系尺寸。前端不能拿 <video> 的
-                            # videoWidth 當分母：熱像那條串流是 640x480，
-                            # 而 bbox 是 rgb 1280x720 的座標，除錯了框就整片位移。
-                            "frame_width": int(_fw),
-                            "frame_height": int(_fh),
-                        }
-                        asyncio.run_coroutine_threadsafe(
-                            self._broadcast_fn(cam, payload), self._event_loop
-                        )
-                    except Exception:
-                        logger.exception(f"[{cam}] tracker update/publish failed, skipping camera")
+                self._process_fresh_cams(fresh_cams, snapshot, now_m, test_size)
             finally:
                 # 無論 fresh 路徑成功或丟例外，都要 await 停滯 camera 的 age-out 更新，
                 # 維持 tracker_pool 明載的「每 camera 同時至多一個 update」不變式。

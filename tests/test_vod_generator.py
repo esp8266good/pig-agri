@@ -142,7 +142,7 @@ def _write_hour(base: Path, cam: str, st: str, hour_name: str,
     d = base / cam / st / hour_name
     d.mkdir(parents=True, exist_ok=True)
     lines = ["#EXTM3U", "#EXT-X-VERSION:3", "#EXT-X-TARGETDURATION:5"]
-    for seg, e in zip(segs, extinfs):
+    for seg, e in zip(segs, extinfs, strict=True):
         lines += [f"#EXTINF:{e:.6f},", seg]
     (d / "index.m3u8").write_text("\n".join(lines) + "\n")
     for seg in segs:

@@ -29,10 +29,19 @@ class FakeSettings:
 
 @pytest.fixture(autouse=True)
 def clear_cache():
+    """scheduler 的兩份模組全域都要清。
+
+    以前只清 _anomaly_cache，_camera_state 會漏到後面的檔案：routers/alerts.py
+    把 camera_state 當權威來源（見 focus_list.select_focus），所以這裡跑完留下
+    一個 herd_ok=True 的 cam_01，就會讓 test_alerts_router 那邊本來該回
+    herd_low 的測試拿到 ok。失敗會出現在別的檔案、指不回這裡。
+    """
     import analysis.scheduler as sched_mod
     sched_mod._anomaly_cache.clear()
+    sched_mod._camera_state.clear()
     yield
     sched_mod._anomaly_cache.clear()
+    sched_mod._camera_state.clear()
 
 
 def _log(bb_left, ts, bb_top=0.0, thermal=None):
@@ -62,6 +71,23 @@ def _track(total_px, n=5, span=120.0, thermal=None, end_ts=None):
     ]
 
 
+def _cam_rows(*tracks, ids=None):
+    """把每隻豬各自的軌跡併成「一台相機一次查詢」的回傳值。
+
+    scheduler 現在是一台相機發一次 fetch、回來自己依 object_id 分組
+    （以前是每隻豬各發一次），所以 mock 也要給同一個形狀：一個扁平的 list，
+    每一列帶自己的 object_id，且照 (object_id, timestamp) 排好。
+    ids 不給就依序當成 1, 2, 3...，跟各測試 DISTINCT 那一段的編號一致。
+    """
+    if ids is None:
+        ids = range(1, len(tracks) + 1)
+    rows = []
+    for oid, track in zip(ids, tracks, strict=True):
+        for lg in track:
+            rows.append({**lg, "object_id": oid})
+    return rows
+
+
 def _thermal_track(temps, span=120.0, end_ts=None):
     """原地不動、只有體溫變化的軌跡。時間戳同樣要落在真實時間軸上，
     理由見 _track。"""
@@ -80,7 +106,7 @@ def test_low_activity_pig_triggers_alert():
         [{"camera_id": "cam_01", "object_id": 1},
          {"camera_id": "cam_01", "object_id": 2},
          {"camera_id": "cam_01", "object_id": 3}],
-        _track(600.0), _track(480.0), _track(30.0),
+        _cam_rows(_track(600.0), _track(480.0), _track(30.0)),
     ]
     pool.fetchrow.return_value = {"id": 1}
 
@@ -104,7 +130,7 @@ def test_all_resting_no_alert():
         [{"camera_id": "cam_01", "object_id": 1},
          {"camera_id": "cam_01", "object_id": 2},
          {"camera_id": "cam_01", "object_id": 3}],
-        _track(30.0), _track(24.0), _track(6.0),  # rates 0.25/0.2/0.05, median 0.2 < 2.0
+        _cam_rows(_track(30.0), _track(24.0), _track(6.0)),  # rates 0.25/0.2/0.05, median 0.2 < 2.0
     ]
 
     asyncio.run(Scheduler(pool, FakeSettings())._run_analysis())
@@ -120,7 +146,7 @@ def test_single_pig_no_baseline_no_alert():
     pool = AsyncMock()
     pool.fetch.side_effect = [
         [{"camera_id": "cam_01", "object_id": 7}],
-        _track(5.0),
+        _cam_rows(_track(5.0), ids=[7]),
     ]
 
     asyncio.run(Scheduler(pool, FakeSettings())._run_analysis())
@@ -138,8 +164,8 @@ def test_low_coverage_pig_excluded():
         [{"camera_id": "cam_01", "object_id": 1},
          {"camera_id": "cam_01", "object_id": 2},
          {"camera_id": "cam_01", "object_id": 3}],
-        _track(600.0), _track(480.0),
-        _track(1.0, span=40.0),  # 低涵蓋率
+        _cam_rows(_track(600.0), _track(480.0),
+                  _track(1.0, span=40.0)),  # 低涵蓋率
     ]
 
     asyncio.run(Scheduler(pool, FakeSettings())._run_analysis())
@@ -167,9 +193,9 @@ def test_long_window_does_not_require_window_proportional_span():
          {"camera_id": "cam_01", "object_id": 2},
          {"camera_id": "cam_01", "object_id": 3}],
         # 每隻只連續追蹤 600s（遠 < 0.5×7200），但 ≥ 絕對門檻 60s
-        _track(6000.0, span=600.0),   # rate 10.0
-        _track(4800.0, span=600.0),   # rate  8.0
-        _track(300.0, span=600.0),    # rate  0.5 → < median(8.0)*0.3
+        _cam_rows(_track(6000.0, span=600.0),   # rate 10.0
+                  _track(4800.0, span=600.0),   # rate  8.0
+                  _track(300.0, span=600.0)),    # rate  0.5 → < median(8.0)*0.3
     ]
     pool.fetchrow.return_value = {"id": 1}
 
@@ -189,11 +215,11 @@ def test_no_duplicate_alert_while_still_low():
         [{"camera_id": "cam_01", "object_id": 1},
          {"camera_id": "cam_01", "object_id": 2},
          {"camera_id": "cam_01", "object_id": 3}],
-        _track(600.0), _track(480.0), _track(30.0),
+        _cam_rows(_track(600.0), _track(480.0), _track(30.0)),
         [{"camera_id": "cam_01", "object_id": 1},
          {"camera_id": "cam_01", "object_id": 2},
          {"camera_id": "cam_01", "object_id": 3}],
-        _track(600.0), _track(480.0), _track(30.0),
+        _cam_rows(_track(600.0), _track(480.0), _track(30.0)),
     ]
     pool.fetchrow.return_value = {"id": 1}
     sch = Scheduler(pool, FakeSettings())
@@ -212,15 +238,15 @@ def test_recovery_then_realert():
         [{"camera_id": "cam_01", "object_id": 1},
          {"camera_id": "cam_01", "object_id": 2},
          {"camera_id": "cam_01", "object_id": 3}],
-        _track(600.0), _track(480.0), _track(30.0),
+        _cam_rows(_track(600.0), _track(480.0), _track(30.0)),
         [{"camera_id": "cam_01", "object_id": 1},
          {"camera_id": "cam_01", "object_id": 2},
          {"camera_id": "cam_01", "object_id": 3}],
-        _track(600.0), _track(480.0), _track(360.0),
+        _cam_rows(_track(600.0), _track(480.0), _track(360.0)),
         [{"camera_id": "cam_01", "object_id": 1},
          {"camera_id": "cam_01", "object_id": 2},
          {"camera_id": "cam_01", "object_id": 3}],
-        _track(600.0), _track(480.0), _track(30.0),
+        _cam_rows(_track(600.0), _track(480.0), _track(30.0)),
     ]
     pool.fetchrow.return_value = {"id": 1}
     sch = Scheduler(pool, FakeSettings())
@@ -246,7 +272,7 @@ def test_temp_anomaly_triggers_when_enabled():
     pool.fetch.side_effect = [
         [{"camera_id": "cam_01", "object_id": 1},
          {"camera_id": "cam_01", "object_id": 5}],
-        _track(600.0), logs,
+        _cam_rows(_track(600.0), logs, ids=[1, 5]),
     ]
     pool.fetchrow.return_value = {"id": 1}
 
@@ -267,7 +293,7 @@ def test_temp_detection_skipped_when_disabled():
     pool.fetch.side_effect = [
         [{"camera_id": "cam_01", "object_id": 1},
          {"camera_id": "cam_01", "object_id": 5}],
-        _track(600.0), logs,
+        _cam_rows(_track(600.0), logs, ids=[1, 5]),
     ]
 
     asyncio.run(Scheduler(pool, s)._run_analysis())
@@ -305,7 +331,7 @@ def test_activity_mean_updated_even_when_herd_below_floor():
         [{"camera_id": "cam_01", "object_id": 1},
          {"camera_id": "cam_01", "object_id": 2},
          {"camera_id": "cam_01", "object_id": 3}],
-        _track(30.0), _track(24.0), _track(6.0),  # rates≈0.25/0.2/0.05, median≈0.2 < abs_floor 2.0
+        _cam_rows(_track(30.0), _track(24.0), _track(6.0)),  # rates≈0.25/0.2/0.05, median≈0.2 < abs_floor 2.0
     ]
 
     asyncio.run(Scheduler(pool, FakeSettings())._run_analysis())
@@ -342,8 +368,8 @@ def test_temp_state_recovers_to_normal():
         {"camera_id": "cam_01", "object_id": 5},
     ]
     pool.fetch.side_effect = [
-        distinct_rows, _track(600.0), logs_anomalous,
-        distinct_rows, _track(600.0), logs_steady,
+        distinct_rows, _cam_rows(_track(600.0), logs_anomalous, ids=[1, 5]),
+        distinct_rows, _cam_rows(_track(600.0), logs_steady, ids=[1, 5]),
     ]
     pool.fetchrow.return_value = {"id": 1}
     sch = Scheduler(pool, FakeSettings())
@@ -383,7 +409,7 @@ def test_disabled_temp_evicts_stale_cache_entry_outside_window():
     pool = AsyncMock()
     pool.fetch.side_effect = [
         [{"camera_id": "cam_01", "object_id": 1}],
-        _track(600.0),
+        _cam_rows(_track(600.0)),
     ]
 
     asyncio.run(Scheduler(pool, s)._run_analysis())
@@ -403,7 +429,7 @@ def test_prune_evicts_vanished_object_ids_but_keeps_live_ones():
     pool = AsyncMock()
     pool.fetch.side_effect = [
         [{"camera_id": "cam_01", "object_id": 7}],
-        _track(600.0),
+        _cam_rows(_track(600.0), ids=[7]),
     ]
 
     asyncio.run(Scheduler(pool, FakeSettings())._run_analysis())
@@ -429,7 +455,7 @@ def test_prune_does_not_reset_state_of_still_present_pig():
     pool = AsyncMock()
     pool.fetch.side_effect = [
         [{"camera_id": "cam_01", "object_id": 7}],
-        _track(600.0),
+        _cam_rows(_track(600.0), ids=[7]),
     ]
 
     asyncio.run(Scheduler(pool, FakeSettings())._run_analysis())
@@ -507,8 +533,8 @@ def test_alerted_pig_stays_flagged_when_herd_unmeasurable():
         {"camera_id": "cam_01", "object_id": 3},
     ]
     pool.fetch.side_effect = [
-        distinct_rows_r1, _track(600.0), _track(480.0), _track(30.0),
-        distinct_rows_r2, _track(30.0), _track(24.0), _track(6.0),
+        distinct_rows_r1, _cam_rows(_track(600.0), _track(480.0), _track(30.0)),
+        distinct_rows_r2, _cam_rows(_track(30.0), _track(24.0), _track(6.0)),
     ]
     pool.fetchrow.return_value = {"id": 1}
     sch = Scheduler(pool, FakeSettings())
@@ -544,7 +570,7 @@ def test_last_seen_records_actual_last_appearance_not_analysis_time():
     pool.fetch.side_effect = [
         [{"camera_id": "cam_01", "object_id": 7},
          {"camera_id": "cam_01", "object_id": 8}],
-        fresh, gone,
+        _cam_rows(fresh, gone, ids=[7, 8]),
     ]
 
     asyncio.run(Scheduler(pool, FakeSettings())._run_analysis())
@@ -554,3 +580,35 @@ def test_last_seen_records_actual_last_appearance_not_analysis_time():
     assert cache[8]["last_seen"] == pytest.approx(gone[-1]["timestamp"])
     # 兩者相差就是那 30 秒；寫 now 的舊做法會讓它們一模一樣。
     assert cache[7]["last_seen"] - cache[8]["last_seen"] == pytest.approx(30.0)
+
+
+def test_one_fetch_per_camera_not_one_per_pig():
+    """每輪的查詢次數是「1 次列編號 + 每台相機 1 次」，不隨豬的數量增加。
+
+    以前是每個 object_id 各發一次 fetch：正式機實測一輪 281 次 round-trip
+    （rpi5_dual 72 隻 + cam_03 117 + rpi_sensors 92），每一次都要重掃一遍
+    tracking_logs 的索引。改回去的話這裡會紅。
+    """
+    from analysis.scheduler import Scheduler
+    pool = AsyncMock()
+    pool.fetch.side_effect = [
+        [{"camera_id": "cam_01", "object_id": 1},
+         {"camera_id": "cam_01", "object_id": 2},
+         {"camera_id": "cam_01", "object_id": 3},
+         {"camera_id": "cam_02", "object_id": 1},
+         {"camera_id": "cam_02", "object_id": 2}],
+        _cam_rows(_track(600.0), _track(480.0), _track(30.0)),   # cam_01
+        _cam_rows(_track(600.0), _track(480.0)),                 # cam_02
+    ]
+    pool.fetchrow.return_value = {"id": 1}
+
+    asyncio.run(Scheduler(pool, FakeSettings())._run_analysis())
+
+    assert pool.fetch.call_count == 3, (
+        f"5 隻豬分佈在 2 台相機應該只查 1+2=3 次，實際 {pool.fetch.call_count} 次"
+    )
+    # 每台相機那一次都必須帶 camera_id，且不帶 object_id（不是逐豬查）。
+    for call in pool.fetch.call_args_list[1:]:
+        sql = call[0][0]
+        assert "camera_id=$1" in sql
+        assert "object_id=$2" not in sql

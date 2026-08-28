@@ -86,10 +86,12 @@ def test_settings_get_returns_defaults_when_no_pool(client):
     assert "hls_retention_days" in data
 
 
-def test_notes_get_returns_stub(client):
-    resp = client.get("/notes")
-    assert resp.status_code == 200
-    assert resp.json() == {"status": "not implemented"}
+def test_notes_route_is_not_registered(client):
+    """/notes 兩個端點以前只回 {\"status\": \"not implemented\"}，卻掛在路由上，
+    對外看起來像是一條能用的 API。掛回去之前先把它拿掉：pig_notes 表留在
+    sql/init.sql，真的要做的時候直接接就好。"""
+    assert client.get("/notes").status_code == 404
+    assert client.post("/notes", json={}).status_code == 404
 
 
 def test_cameras_returns_list(client):

@@ -206,6 +206,143 @@ class Scheduler:
         except Exception:
             logger.exception("Scheduler._rebuild_cache error")
 
+    async def _load_camera_logs(
+        self, camera_id: str, window_start: float, now: float
+    ) -> dict:
+        """這台相機在視窗內的所有 tracking_logs，依 object_id 分組。
+
+        一台相機一次查詢，回來自己分組。以前是「每個 object_id 發一次 fetch」，
+        正式機實測一輪 281 次 round-trip（rpi5_dual 72 + cam_03 117 +
+        rpi_sensors 92），每一次都要重新掃一遍 tracking_logs 的索引。
+        記憶體沒有變差：呼叫端本來就把整台相機的 log 全留著到這台跑完，
+        尖峰一直都是「整台相機的視窗」而不是「一隻豬」。
+        ORDER BY object_id, timestamp：分組後每個 object 的順序仍是時間升序，
+        _activity_rate 依賴這件事。
+        """
+        rows_all = await self._pool.fetch(
+            """SELECT object_id, bb_left, bb_top, bb_width, bb_height,
+                      thermal_celsius, timestamp
+               FROM tracking_logs
+               WHERE camera_id=$1 AND timestamp >= $2 AND timestamp < $3
+               ORDER BY object_id, timestamp""",
+            camera_id, window_start, now,
+        )
+        logs_by_obj: dict[int, list] = defaultdict(list)
+        for r in rows_all:
+            logs_by_obj[r["object_id"]].append(r)
+        return logs_by_obj
+
+    async def _update_activity_state(
+        self, entry: dict, camera_id: str, object_id: int,
+        rate, median_rate, herd_ok: bool,
+    ) -> None:
+        """活動量的遲滯狀態機。低於 median×low_ratio 開警報，回到
+        median×recover_ratio 以上才解除。
+
+        當 herd_ok 為 False（全欄休息 / 豬數不足 / median < abs_floor）時，
+        整個跳過——已在 alerted 的豬不會被自動清旗，
+        確保真正低活動的採血警報持續留存，直到該豬自行恢復為止。
+        """
+        entry["activity_mean"] = median_rate
+        entry["herd_ok"] = herd_ok
+        entry["analyzed"] = True
+
+        if not (herd_ok and rate is not None):
+            return
+        low = rate < median_rate * self._low_ratio
+        recovered = rate > median_rate * self._recover_ratio
+        if entry["activity_state"] == "normal":
+            if low:
+                await write_health_alert(
+                    self._pool, camera_id=camera_id, object_id=object_id,
+                    metric="activity", current_value=rate,
+                    mean_value=median_rate, std_value=0.0,
+                )
+                entry["activity_state"] = "alerted"
+        else:  # alerted
+            if recovered:
+                entry["activity_state"] = "normal"
+        entry["activity_anomaly"] = entry["activity_state"] == "alerted"
+
+    async def _update_temp_state(
+        self, entry: dict, camera_id: str, object_id: int, logs: list
+    ) -> None:
+        """體溫的遲滯狀態機。停用時清旗標，不是留著上一輪的結論。"""
+        if not self._temp_enabled:
+            entry["temp_anomaly"] = False
+            entry["temp_state"] = "normal"
+            return
+
+        temps = [
+            lg["thermal_celsius"] for lg in logs
+            if lg["thermal_celsius"] is not None
+        ]
+        if len(temps) < self._settings.anomaly_min_samples:
+            return
+        mean_t = float(np.mean(temps))
+        std_t = float(np.std(temps))
+        current_t = temps[-1]
+        entry.update({
+            "temp_current": current_t,
+            "temp_mean": mean_t,
+            "temp_std": std_t,
+        })
+        anomalous = std_t > 0 and abs(current_t - mean_t) > self._threshold * std_t
+        if entry["temp_state"] == "normal":
+            if anomalous:
+                await write_health_alert(
+                    self._pool, camera_id=camera_id, object_id=object_id,
+                    metric="temperature", current_value=current_t,
+                    mean_value=mean_t, std_value=std_t,
+                )
+                entry["temp_state"] = "alerted"
+        else:  # alerted
+            if not anomalous:
+                entry["temp_state"] = "normal"
+        entry["temp_anomaly"] = entry["temp_state"] == "alerted"
+
+    async def _analyse_camera(
+        self, camera_id: str, object_ids: list, window_start: float, now: float
+    ) -> None:
+        """一台相機這一輪的完整判斷：算速率 → 定基準 → 逐豬跑兩個狀態機。"""
+        rates: dict[int, float] = {}
+        logs_by_obj = await self._load_camera_logs(camera_id, window_start, now)
+
+        for object_id in object_ids:
+            logs = logs_by_obj[object_id]
+            entry = _anomaly_cache.setdefault(camera_id, {}).setdefault(
+                object_id, _default_entry()
+            )
+            # 這個 id 最後一次「真的出現」的時刻，不是「最後一次被分析到」。
+            # 寫 now 的話，視窗最前緣出現一次就死掉的 id 在下一輪仍然落在
+            # [window_start, now] 裡面，要多撐 1~2 輪才逐得掉；而且 last_seen
+            # 這個欄位就沒辦法回答「牠離開畫面多久了」。
+            entry["last_seen"] = (
+                float(logs[-1]["timestamp"]) if logs else now
+            )
+            rate = _activity_rate(logs, self._min_span_seconds)
+            entry["activity_current"] = rate
+            if rate is not None:
+                rates[object_id] = rate
+
+        median_rate = (
+            float(np.median(list(rates.values()))) if len(rates) >= 2 else None
+        )
+        herd_ok = median_rate is not None and median_rate >= self._abs_floor
+        _camera_state[camera_id] = {
+            "analyzed": True, "herd_ok": herd_ok, "updated_at": now,
+        }
+
+        for object_id in object_ids:
+            entry = _anomaly_cache[camera_id][object_id]
+            await self._update_activity_state(
+                entry, camera_id, object_id,
+                rates.get(object_id), median_rate, herd_ok,
+            )
+            await self._update_temp_state(
+                entry, camera_id, object_id, logs_by_obj[object_id]
+            )
+
     async def _run_analysis(self) -> None:
         if self._pool is None:
             return
@@ -237,100 +374,7 @@ class Scheduler:
                 }
 
         for camera_id, object_ids in by_cam.items():
-            rates: dict[int, float] = {}
-            logs_by_obj: dict[int, list] = {}
-
-            for object_id in object_ids:
-                logs = await self._pool.fetch(
-                    """SELECT bb_left, bb_top, bb_width, bb_height,
-                              thermal_celsius, timestamp
-                       FROM tracking_logs
-                       WHERE camera_id=$1 AND object_id=$2
-                         AND timestamp >= $3 AND timestamp < $4
-                       ORDER BY timestamp""",
-                    camera_id, object_id, window_start, now,
-                )
-                logs_by_obj[object_id] = logs
-                entry = _anomaly_cache.setdefault(camera_id, {}).setdefault(
-                    object_id, _default_entry()
-                )
-                # 這個 id 最後一次「真的出現」的時刻，不是「最後一次被分析到」。
-                # 寫 now 的話，視窗最前緣出現一次就死掉的 id 在下一輪仍然落在
-                # [window_start, now] 裡面，要多撐 1~2 輪才逐得掉；而且 last_seen
-                # 這個欄位就沒辦法回答「牠離開畫面多久了」。
-                entry["last_seen"] = (
-                    float(logs[-1]["timestamp"]) if logs else now
-                )
-                rate = _activity_rate(logs, self._min_span_seconds)
-                entry["activity_current"] = rate
-                if rate is not None:
-                    rates[object_id] = rate
-
-            median_rate = (
-                float(np.median(list(rates.values()))) if len(rates) >= 2 else None
-            )
-            herd_ok = median_rate is not None and median_rate >= self._abs_floor
-            _camera_state[camera_id] = {
-                "analyzed": True, "herd_ok": herd_ok, "updated_at": now,
-            }
-
-            for object_id in object_ids:
-                entry = _anomaly_cache[camera_id][object_id]
-                rate = rates.get(object_id)
-
-                entry["activity_mean"] = median_rate
-                entry["herd_ok"] = herd_ok
-                entry["analyzed"] = True
-
-                # 當 herd_ok 為 False（全欄休息 / 豬數不足 / median < abs_floor）時，
-                # 此區塊整個跳過——已在 alerted 的豬不會被自動清旗，
-                # 確保真正低活動的採血警報持續留存，直到該豬自行恢復為止。
-                if herd_ok and rate is not None:
-                    low = rate < median_rate * self._low_ratio
-                    recovered = rate > median_rate * self._recover_ratio
-                    if entry["activity_state"] == "normal":
-                        if low:
-                            await write_health_alert(
-                                self._pool, camera_id=camera_id, object_id=object_id,
-                                metric="activity", current_value=rate,
-                                mean_value=median_rate, std_value=0.0,
-                            )
-                            entry["activity_state"] = "alerted"
-                    else:  # alerted
-                        if recovered:
-                            entry["activity_state"] = "normal"
-                    entry["activity_anomaly"] = entry["activity_state"] == "alerted"
-
-                if self._temp_enabled:
-                    temps = [
-                        lg["thermal_celsius"] for lg in logs_by_obj[object_id]
-                        if lg["thermal_celsius"] is not None
-                    ]
-                    if len(temps) >= self._settings.anomaly_min_samples:
-                        mean_t = float(np.mean(temps))
-                        std_t = float(np.std(temps))
-                        current_t = temps[-1]
-                        entry.update({
-                            "temp_current": current_t,
-                            "temp_mean": mean_t,
-                            "temp_std": std_t,
-                        })
-                        anomalous = std_t > 0 and abs(current_t - mean_t) > self._threshold * std_t
-                        if entry["temp_state"] == "normal":
-                            if anomalous:
-                                await write_health_alert(
-                                    self._pool, camera_id=camera_id, object_id=object_id,
-                                    metric="temperature", current_value=current_t,
-                                    mean_value=mean_t, std_value=std_t,
-                                )
-                                entry["temp_state"] = "alerted"
-                        else:  # alerted
-                            if not anomalous:
-                                entry["temp_state"] = "normal"
-                        entry["temp_anomaly"] = entry["temp_state"] == "alerted"
-                else:
-                    entry["temp_anomaly"] = False
-                    entry["temp_state"] = "normal"
+            await self._analyse_camera(camera_id, object_ids, window_start, now)
 
         removed = self._prune_stale(window_start)
         if removed:

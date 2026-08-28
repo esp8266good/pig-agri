@@ -584,3 +584,54 @@ def test_process_batch_marks_presence_with_capture_time():
         assert presence.last_seen_map("cam_01") == {1: 1234.5}
     finally:
         presence.clear()
+
+
+def test_detector_returning_wrong_count_skips_batch_instead_of_misaligning():
+    """detector 回傳的組數跟 camera 數對不上時，整批放掉，不可以「處理前幾台」。
+
+    原本四處 zip() 都會安靜截尾。真正的危險不是少處理一台，是**對不齊**：
+    如果 detector 少回一組，cam_02 的偵測就會被配到 cam_03 的畫面上，
+    寫進 tracking_logs 的 bbox 與 object_id 全是別台相機的。那條路一路錯到
+    活動量與採血判斷，而且每個數字看起來都正常。
+
+    對不齊時偵測與相機的對應關係是未知的，唯一安全的動作是整批不要。
+    """
+    from inference.pipeline import FrameData
+    p, mock_detector, mock_pool, broadcast_calls = _make_processing_pipeline(n_cams=3)
+    # 三台相機送幀，detector 只回兩組
+    mock_detector.infer.return_value = [
+        np.ones((2, 7), dtype=np.float32) for _ in range(2)
+    ]
+
+    rgb = np.zeros((480, 640, 3), dtype=np.uint8)
+    snapshot = {
+        c: FrameData(rgb_np=rgb, thermal_np=None, ts=1.0, frame_id=1)
+        for c in ("cam_01", "cam_02", "cam_03")
+    }
+    p._process_batch(snapshot)
+    p._event_loop.run_until_complete(asyncio.sleep(0.05))
+    p._event_loop.close()
+    p._executor.shutdown(wait=False)
+
+    assert broadcast_calls == [], "對不齊時不可以播出任何一台的 bbox"
+    assert mock_pool.update.call_count == 0, "對不齊時不可以更新任何 tracker"
+
+
+def test_detector_returning_extra_results_also_skips_batch():
+    """多回一組同樣是對不齊，同樣整批放掉（zip 截尾會讓它看起來完全正常）。"""
+    from inference.pipeline import FrameData
+    p, mock_detector, mock_pool, broadcast_calls = _make_processing_pipeline(n_cams=1)
+    mock_detector.infer.return_value = [
+        np.ones((2, 7), dtype=np.float32) for _ in range(2)
+    ]
+
+    rgb = np.zeros((480, 640, 3), dtype=np.uint8)
+    p._process_batch(
+        {"cam_01": FrameData(rgb_np=rgb, thermal_np=None, ts=1.0, frame_id=1)}
+    )
+    p._event_loop.run_until_complete(asyncio.sleep(0.05))
+    p._event_loop.close()
+    p._executor.shutdown(wait=False)
+
+    assert broadcast_calls == []
+    assert mock_pool.update.call_count == 0

@@ -21,7 +21,7 @@ from db_writer import (get_all_settings, get_protected_hours,
                        write_health_alert)
 from auth_middleware import AuthMiddleware
 from inference.pipeline import inference_pipeline
-from routers import (alerts, auth, manual, masks, notes, stream, thermal,
+from routers import (alerts, auth, manual, masks, stream, thermal,
                      storage, tracking)
 from routers import settings as settings_router
 from zmq_receiver import zmq_receiver
@@ -323,5 +323,4 @@ app.include_router(masks.router)
 app.include_router(thermal.router)
 app.include_router(manual.router)
 app.include_router(settings_router.router)
-app.include_router(notes.router)
 app.include_router(storage.router)

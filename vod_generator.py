@@ -153,7 +153,8 @@ def _parse_hour_m3u8(
 
     # 缺 sidecar（舊錄影 / thermal）→ 回退舊 hour_unix+ΣEXTINF（byte-compatible）
     accumulated = 0.0
-    for name, e in zip(seg_names, seg_extinf):
+    # 兩個 list 在同一個迴圈裡成對 append，長度必然相等；strict 是免費的斷言。
+    for name, e in zip(seg_names, seg_extinf, strict=True):
         seg_start = float(hour_unix) + accumulated
         url = f"/stream/hls/{camera_id}/{stream_type}/{dir_name}/{name}"
         segments.append((seg_start, e, url, False))
