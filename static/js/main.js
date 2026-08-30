@@ -316,8 +316,13 @@ document.querySelectorAll('#pig-status-table th.sortable').forEach(th => {
     moreMenu.addEventListener('click', (e) => {
       if (e.target.closest('button, a')) closeMoreMenu();
     });
+    // Escape 先關選單就好。放大影片那條 Escape 也掛在 window 上，不擋掉的話
+    // 一次按鍵會同時關選單又退出放大，使用者只想收掉選單卻掉出放大模式。
     window.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && !moreMenu.hidden) closeMoreMenu();
+      if (e.key === 'Escape' && !moreMenu.hidden) {
+        closeMoreMenu();
+        e.stopImmediatePropagation();
+      }
     });
   }
 }
