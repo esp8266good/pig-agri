@@ -114,6 +114,11 @@
       <path d="M10 7h4a2 2 0 0 1 2 2v2l5-3v8l-2.4-1.44"/>
       <line x1="2" y1="2" x2="22" y2="22"/>
     </symbol>
+    <symbol id="i-more" viewBox="0 0 24 24">
+      <circle cx="5" cy="12" r="1.6" fill="currentColor" stroke="none"/>
+      <circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/>
+      <circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none"/>
+    </symbol>
   </svg>
 
   <!-- Header -->
@@ -151,13 +156,23 @@
     <div class="header-status">
       <button class="icon-btn" id="bell-btn" aria-label="通知中心">
         <svg class="icon"><use href="#i-bell"/></svg><span id="bell-badge" style="display:none">0</span></button>
-      <button class="icon-btn" id="help-btn" aria-label="說明模式" aria-pressed="false">?</button>
-      <a class="icon-btn manual-link" id="manual-link" href="/manual" target="_blank"
-         rel="noopener" aria-label="操作手冊" title="操作手冊（另開分頁）">手冊</a>
       <button class="icon-btn" id="settings-btn" aria-label="設定">
         <svg class="icon"><use href="#i-gear"/></svg></button>
-      <!-- 只有 AUTH_ENABLED=true 時 auth.js 才會取消 hidden -->
-      <button class="icon-btn" id="logout-btn" aria-label="登出" hidden>登出</button>
+      <!-- 「更多」收納低頻項目：說明模式／操作手冊／登出。開關邏輯仿
+           timeline.js 的 slot-action-menu（點外部關閉、避免開啟當下的
+           click 立刻自關），差別是這裡的錨點固定在 header，改用純 CSS
+           相對定位，不用 JS 算 getBoundingClientRect。 -->
+      <div class="more-wrap">
+        <button class="icon-btn" id="more-btn" aria-label="更多" aria-haspopup="true" aria-expanded="false">
+          <svg class="icon"><use href="#i-more"/></svg></button>
+        <div class="slot-action-menu more-menu" id="more-menu" hidden role="menu">
+          <button id="help-btn" role="menuitem" aria-label="說明模式" aria-pressed="false">說明模式</button>
+          <a id="manual-link" href="/manual" target="_blank" role="menuitem"
+             rel="noopener" aria-label="操作手冊" title="操作手冊（另開分頁）">操作手冊</a>
+          <!-- 只有 AUTH_ENABLED=true 時 auth.js 才會取消 hidden -->
+          <button id="logout-btn" role="menuitem" aria-label="登出" hidden>登出</button>
+        </div>
+      </div>
       <span id="storage-pill" class="storage-pill" title="儲存狀態" style="display:none">●</span>
     </div>
   </header>
@@ -401,8 +416,9 @@
         <svg class="icon"><use href="#i-x"/></svg></button>
     </div>
     <div class="drawer-body">
-      <section class="settings-group">
-        <h3>異常分析</h3><p class="group-desc">決定多久評估一次活動量、以及判定異常的敏感度。</p>
+      <details class="settings-group" open>
+        <summary><svg class="icon icon-sm settings-chev"><use href="#i-chev-r"/></svg>
+          <span class="settings-group-head"><b>異常分析</b><small>決定多久評估一次活動量、以及判定異常的敏感度。</small></span></summary>
         <div class="settings-form">
           <div class="settings-field">
             <label for="set-analysis-interval">分析間隔（分鐘）</label>
@@ -440,9 +456,10 @@
             <span class="settings-hint">只作用在體溫。活動量偏低是拿同一欄豬的中位數當基準，不用這個值。</span>
           </div>
         </div>
-      </section>
-      <section class="settings-group">
-        <h3>關注清單</h3><p class="group-desc">右欄「現在該去看哪幾隻豬」。異常永遠優先；沒有異常時才列出活動量最低的幾隻。</p>
+      </details>
+      <details class="settings-group">
+        <summary><svg class="icon icon-sm settings-chev"><use href="#i-chev-r"/></svg>
+          <span class="settings-group-head"><b>關注清單</b><small>右欄「現在該去看哪幾隻豬」。異常永遠優先；沒有異常時才列出活動量最低的幾隻。</small></span></summary>
         <div class="settings-form">
           <div class="settings-field settings-field-row">
             <label for="set-focus_lowest_enabled">沒有異常時列出最低活動量的豬</label>
@@ -457,9 +474,10 @@
             <input type="number" id="set-focus_top_n" min="0" max="20" step="1">
           </div>
         </div>
-      </section>
-      <section class="settings-group">
-        <h3>遮罩</h3><p class="group-desc">擋掉走道、牆面這種不該被當成豬的區域。遮罩不會改變畫面，只是讓落在裡面的偵測被忽略。</p>
+      </details>
+      <details class="settings-group">
+        <summary><svg class="icon icon-sm settings-chev"><use href="#i-chev-r"/></svg>
+          <span class="settings-group-head"><b>遮罩</b><small>擋掉走道、牆面這種不該被當成豬的區域。遮罩不會改變畫面，只是讓落在裡面的偵測被忽略。</small></span></summary>
         <div class="settings-form">
           <div class="settings-field settings-field-row">
             <label for="set-mask_enabled">啟用遮罩</label>
@@ -473,9 +491,10 @@
             <button type="button" id="mask-edit-btn" class="mask-edit-btn">編輯這台相機的遮罩</button>
           </div>
         </div>
-      </section>
-      <section class="settings-group">
-        <h3>錄影排程</h3><p class="group-desc">停錄時段仍可看直播，只是不落地存檔。</p>
+      </details>
+      <details class="settings-group">
+        <summary><svg class="icon icon-sm settings-chev"><use href="#i-chev-r"/></svg>
+          <span class="settings-group-head"><b>錄影排程</b><small>停錄時段仍可看直播，只是不落地存檔。</small></span></summary>
         <div class="settings-form">
           <div class="settings-field">
             <label for="set-recording_schedule_enabled">夜間不錄影</label>
@@ -490,9 +509,10 @@
             <input type="time" id="set-recording_off_end" value="06:30">
           </div>
         </div>
-      </section>
-      <section class="settings-group">
-        <h3>儲存空間</h3><p class="group-desc">空間不足時自動停止落地並推播警告。</p>
+      </details>
+      <details class="settings-group">
+        <summary><svg class="icon icon-sm settings-chev"><use href="#i-chev-r"/></svg>
+          <span class="settings-group-head"><b>儲存空間</b><small>空間不足時自動停止落地並推播警告。</small></span></summary>
         <div class="settings-form">
           <div class="settings-field">
             <label for="set-hls-retention">影像保留天數（1–365）</label>
@@ -507,9 +527,10 @@
             <input type="number" id="set-storage_check_interval_seconds" min="5" step="5">
           </div>
         </div>
-      </section>
-      <section class="settings-group">
-        <h3>推播通知</h3>
+      </details>
+      <details class="settings-group">
+        <summary><svg class="icon icon-sm settings-chev"><use href="#i-chev-r"/></svg>
+          <span class="settings-group-head"><b>推播通知</b></span></summary>
         <div class="settings-form">
           <div class="settings-field">
             <label for="set-ntfy_enabled">ntfy 推播</label>
@@ -530,8 +551,10 @@
             </select>
           </div>
         </div>
-      </section>
-      <details class="settings-group advanced"><summary>進階</summary>
+      </details>
+      <details class="settings-group">
+        <summary><svg class="icon icon-sm settings-chev"><use href="#i-chev-r"/></svg>
+          <span class="settings-group-head"><b>進階</b></span></summary>
         <div class="settings-form">
           <div class="settings-field">
             <label for="set-gpu_off_schedule_enabled">夜間停 GPU</label>

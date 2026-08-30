@@ -30,15 +30,18 @@
   --accent-border: rgba(47,201,138,0.3);
   --accent-glow:   rgba(47,201,138,0.22);
   --accent-hover:  #27b57a;
-  --vod:        #e8a13c;
-  --vod-dim:    rgba(232,161,60,0.14);
-  --vod-border: rgba(232,161,60,0.3);
+  /* vod／thermal 兩個語意色以前色相只差 12°（35° vs 24°），旁邊還有 error
+     的 0°，三色擠在一小段，容易分不出是哪個狀態。拉開到 vod 42°／thermal 14°，
+     error 不動（危險紅是最不該挪的錨點）。 */
+  --vod:        #e6b23c;
+  --vod-dim:    rgba(230,178,60,0.14);
+  --vod-border: rgba(230,178,60,0.3);
   --error:        #e05252;
   --error-dim:    rgba(224,82,82,0.14);
   --error-border: rgba(224,82,82,0.3);
-  --thermal:        #ff8c42;
-  --thermal-dim:    rgba(255,140,66,0.14);
-  --thermal-border: rgba(255,140,66,0.3);
+  --thermal:        #ff7043;
+  --thermal-dim:    rgba(255,112,67,0.14);
+  --thermal-border: rgba(255,112,67,0.3);
   --info:        #4da3ff;
   --info-dim:    rgba(77,163,255,0.14);
   --info-border: rgba(77,163,255,0.3);
@@ -630,18 +633,24 @@
       gap: 2px;
       min-width: 140px;
     }
-    .slot-action-menu button {
+    .slot-action-menu button, .slot-action-menu a {
       background: transparent;
       border: none;
       color: var(--text);
       padding: 8px 12px;
       cursor: pointer;
       text-align: left;
+      text-decoration: none;
       font-size: 13px;
       border-radius: 4px;
       font: inherit;
+      white-space: nowrap;
     }
-    .slot-action-menu button:hover { background: var(--surface-2); }
+    .slot-action-menu button:hover, .slot-action-menu a:hover { background: var(--surface-2); }
+    /* header 的「更多」選單：跟 timeline 的 slot-action-menu 共用視覺語言，
+       差別是錨點固定在 header，用 CSS 相對定位取代 JS 算座標。 */
+    .more-wrap { position: relative; }
+    .more-menu { top: calc(100% + 6px); right: 0; }
     /* ── 底部固定面板堆疊 ─────────────────────────────────────
        說明條與儲存操作列以前各自 `position: fixed; bottom: 0`，等於搶同一塊位置，
        z-index 高的那個把另一個整條蓋掉。改成裝進同一個 flex column 之後它們垂直
@@ -1260,9 +1269,23 @@
     .drawer-body { overflow-y: auto; padding: var(--space-4); flex: 1;
       /* 說明條蓋在畫面底部時，抽屜最後一個欄位會被吃掉 */
       padding-bottom: calc(var(--space-4) + var(--bottom-inset, 0px)); }
-    .settings-group { margin-bottom: var(--space-6); }
-    .settings-group h3 { font-size: var(--text-sm); margin-bottom: var(--space-1); }
-    .group-desc { font-size: var(--text-xs); color: var(--text-muted); margin-bottom: var(--space-3); }
+    /* 手風琴：標題＋說明永遠看得到（放在 summary 裡，<details> 收合時只有
+       summary 的內容還看得到），欄位收合。仿 panels.js:128 用原生 <details>
+       收合「最近消失」清單的手法：省掉自己維護一份開合狀態。 */
+    .settings-group { border-top: 1px solid var(--divider); }
+    .settings-group:first-child { border-top: none; }
+    .settings-group summary {
+      list-style: none; cursor: pointer;
+      display: flex; align-items: flex-start; gap: var(--space-2);
+      padding: var(--space-3) 0;
+    }
+    .settings-group summary::-webkit-details-marker { display: none; }
+    .settings-chev { margin-top: 3px; color: var(--text-muted); transition: transform var(--transition); flex-shrink: 0; }
+    .settings-group[open] .settings-chev { transform: rotate(90deg); }
+    .settings-group-head { display: flex; flex-direction: column; gap: 2px; }
+    .settings-group-head b { font-size: var(--text-sm); font-weight: 600; color: var(--text); }
+    .settings-group-head small { font-size: var(--text-xs); color: var(--text-muted); line-height: 1.5; }
+    .settings-group .settings-form { padding: 0 0 var(--space-4) calc(14px + var(--space-2)); }
     /* 欄位底下的一句話補充。用在「這個設定的作用範圍比名字看起來窄」的地方。 */
     .settings-hint {
       display: block; font-size: var(--text-xs); color: var(--text-faint);

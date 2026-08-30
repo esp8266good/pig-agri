@@ -275,6 +275,43 @@ document.querySelectorAll('#pig-status-table th.sortable').forEach(th => {
     settingsBtn.addEventListener('click', () => openSettingsDrawer());
   }
 }
+
+// #more-btn：收納說明模式／操作手冊／登出的浮動選單。
+// 開關手法仿 timeline.js 的 slot-action-menu（點外部關閉、延遲掛
+// outside-click listener 避免開啟當下的那次 click 立刻被當外部點擊自關）；
+// 差別是這裡錨點固定在 header，位置交給 CSS 相對定位，不用 JS 算座標。
+{
+  const moreBtn = document.getElementById('more-btn');
+  const moreMenu = document.getElementById('more-menu');
+  if (moreBtn && moreMenu) {
+    const closeMoreMenu = () => {
+      moreMenu.hidden = true;
+      moreBtn.setAttribute('aria-expanded', 'false');
+      document.removeEventListener('click', onOutsideClick);
+    };
+    const onOutsideClick = (e) => {
+      if (!moreMenu.contains(e.target) && e.target !== moreBtn) closeMoreMenu();
+    };
+    moreBtn.addEventListener('click', () => {
+      const willOpen = moreMenu.hidden;
+      if (willOpen) {
+        moreMenu.hidden = false;
+        moreBtn.setAttribute('aria-expanded', 'true');
+        setTimeout(() => document.addEventListener('click', onOutsideClick), 0);
+      } else {
+        closeMoreMenu();
+      }
+    });
+    // 選單裡任一項目按下去之後就收合，不管該項目自己的行為是什麼
+    // （切換說明模式／開新分頁看手冊／登出）。
+    moreMenu.addEventListener('click', (e) => {
+      if (e.target.closest('button, a')) closeMoreMenu();
+    });
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !moreMenu.hidden) closeMoreMenu();
+    });
+  }
+}
 // ── 放大影片 ──────────────────────────────────────────────
 // 收起右欄與時間軸，把整個版面讓給影片。純視覺切換，不碰播放器也不碰資料，
 // 所以離開時什麼都不用還原。每個瀏覽器各自記住上次的選擇。
