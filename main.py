@@ -4,7 +4,7 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from loguru import logger
@@ -297,6 +297,16 @@ app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
 @app.get("/", include_in_schema=False)
 async def index():
     return RedirectResponse(url="/static/index.html")
+
+
+# 瀏覽器不管 <link rel="icon"> 指到哪，都還是會自己去要一次根目錄的
+# /favicon.ico；沒有這條路由就是每次開頁面都在 console 留一筆 404，
+# 真正的錯誤會被這種固定噪音蓋掉。
+# GET + HEAD 都要：@app.get 不含 HEAD，而瀏覽器與 curl -I 都會發 HEAD，
+# 只註冊 GET 的話它們拿到的是 405 而不是圖示。
+@app.api_route("/favicon.ico", methods=["GET", "HEAD"], include_in_schema=False)
+async def favicon():
+    return FileResponse(_static_dir / "favicon.ico")
 
 
 @app.get("/health", tags=["system"])
