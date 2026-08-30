@@ -8,6 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300..600&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/css/app.css">
+  <link rel="icon" href="/static/favicon.ico" sizes="any">
 </head>
 <body>
 
@@ -118,14 +119,18 @@
   <!-- Header -->
   <header>
     <div class="logo">
-      <svg class="logo-mark" viewBox="0 0 28 28" fill="none" aria-label="豬隻監測系統">
-        <!-- 豬鼻輪廓 SVG logo -->
-        <circle cx="14" cy="14" r="12" stroke="currentColor" stroke-width="1.5"/>
-        <ellipse cx="14" cy="15" rx="6" ry="5" stroke="currentColor" stroke-width="1.5"/>
-        <circle cx="11.5" cy="15" r="1.5" fill="currentColor"/>
-        <circle cx="16.5" cy="15" r="1.5" fill="currentColor"/>
-        <path d="M9 9.5 C9 7.5 11 6 11 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-        <path d="M19 9.5 C19 7.5 17 6 17 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      <svg class="logo-mark" viewBox="0 0 32 32" fill="none" aria-label="豬隻監測系統">
+        <!-- 品牌標記：豬臉 + 四角追蹤框，呼應 MOT bounding box 追蹤活動量的核心機制 -->
+        <circle cx="16" cy="17" r="8.5" stroke="currentColor" stroke-width="1.6"/>
+        <ellipse cx="16" cy="18.5" rx="4.2" ry="3.2" stroke="currentColor" stroke-width="1.6"/>
+        <circle cx="14.3" cy="18.5" r="0.9" fill="currentColor"/>
+        <circle cx="17.7" cy="18.5" r="0.9" fill="currentColor"/>
+        <path d="M11 10.5 C10.3 8.6 12 7 12 7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        <path d="M21 10.5 C21.7 8.6 20 7 20 7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        <path d="M4 9V5.5A1.5 1.5 0 0 1 5.5 4H9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        <path d="M23 4h3.5A1.5 1.5 0 0 1 28 5.5V9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        <path d="M28 23v3.5a1.5 1.5 0 0 1-1.5 1.5H23" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        <path d="M9 28H5.5A1.5 1.5 0 0 1 4 26.5V23" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
       </svg>
       <span class="logo-text">豬隻監測 Live</span>
     </div>

@@ -31,6 +31,7 @@ _PAGE = """<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>操作手冊 — 豬隻監測系統</title>
+<link rel="icon" href="/static/favicon.ico" sizes="any">
 <link rel="stylesheet" href="/static/css/app.css">
 <style>
   .manual-page {{
