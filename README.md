@@ -56,8 +56,8 @@ YOLOX detector · HybridSORT-ReID tracker · uv · pytest
 Actively developed, **pre-publication research** (this system is the basis of the author's
 thesis). The codebase is built spec-first: every feature has a design spec and an
 implementation plan under [`docs/superpowers/specs`](docs/superpowers/specs) and
-[`docs/superpowers/plans`](docs/superpowers/plans). The suite has **571 tests**; CI runs
-the external-dependency-free core subset on every push.
+[`docs/superpowers/plans`](docs/superpowers/plans). The suite has **590 tests**; CI runs
+the whole suite on every push.
 
 ## Getting started
 
@@ -133,7 +133,7 @@ restricting the port to the proxy host. The trade-offs are laid out in
 | `storage_monitor.py`, `hls_retention.py` | Storage health + retention |
 | `static/` | Single-page web UI (`index.html` + `css/` + `js/`, ES modules, zero build) |
 | `auth.py`, `auth_middleware.py` | Optional session-cookie authentication |
-| `scripts/` | Operational tooling (dedup, credential hashing, instance-to-instance migration) |
+| `scripts/` | Operational tooling (dedup, credential hashing, migration) plus the pre-push checks: `check_js.sh`, `check_frontend_ux.py` |
 | `tests/` | Test suite |
 | `docs/` | Deployment guide, incident handoffs, design specs + implementation plans |
 

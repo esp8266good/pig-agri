@@ -384,12 +384,27 @@ ss -lntp | grep ':5005'
 ### 3. 在主機本機測試 HTTP 回應
 
 ```bash
-curl -v http://127.0.0.1:5005/
+curl -sI http://127.0.0.1:5005/          # 預期 307，Location 是 /static/index.html
+curl -sI http://127.0.0.1:5005/favicon.ico   # 預期 200
 ```
 
-即使應用程式的 `/` 路由回傳 `404 Not Found`，只要成功連上 Uvicorn，仍代表服務程序和連接埠正在運作。
+`/` 是轉址到前端首頁，所以 307 才是正常的，不是錯誤。就算這裡拿到 4xx，只要
+連得上 Uvicorn，仍代表服務程序與連接埠正在運作。
 
-### 4. 測試 ntfy
+### 4. 前端真的載得起來（不只是「有回應」）
+
+`curl` 只證明 HTTP 通了，證明不了 JS 載得起來。一個 import 錯誤就足以讓所有事件
+綁定都沒執行、畫面整片黑而 `curl` 全綠。從**開發機**對這台跑：
+
+```bash
+uv run python scripts/check_frontend_ux.py --url http://<這台的 IP>:5005 --mode polished
+uv run python scripts/check_frontend_ux.py --url http://<這台的 IP>:5005 --mode polished --viewport 390x844
+```
+
+兩次都要退出碼 0、console 錯誤 0 筆。這支腳本**只讀不寫**（不改設定、不存遮罩、
+不刪錄影、不發通知），對著正在服務的正式機跑是安全的。
+
+### 5. 測試 ntfy
 
 ```bash
 curl \
@@ -402,7 +417,7 @@ curl \
   'https://ntfy.example.com/your-topic'
 ```
 
-### 5. 測試異常重啟
+### 6. 測試異常重啟
 
 先連入 tmux：
 

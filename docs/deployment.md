@@ -150,7 +150,7 @@ for h in <相機1> <相機2>; do nc -vz "$h" 5555; done
 ```bash
 cd ~/pig-agri
 docker compose up -d                    # PostgreSQL，schema 由 sql/init.sql 自動建
-uv run pytest -p no:cacheprovider -q    # 重點是 0 failed（2026-08-28 是 571 passed）
+uv run pytest -p no:cacheprovider -q    # 重點是 0 failed（2026-08-31 是 590 passed）
 uv run uvicorn main:app --host 127.0.0.1 --port 5005   # 前景跑，看 log
 ```
 
@@ -225,7 +225,12 @@ systemctl --user is-active  pig-agri-tmux.service   # active
 loginctl show-user "$USER" -p Linger --value        # yes
 
 # 測試
-uv run pytest -p no:cacheprovider -q                # 0 failed（2026-08-28 是 571）
+uv run pytest -p no:cacheprovider -q                # 0 failed（2026-08-31 是 590）
+
+# 前端：curl 只證明 HTTP 通了，證明不了 JS 載得起來。
+# 一個 import 錯誤就能讓所有事件綁定都沒執行、畫面整片黑，而 curl 全綠。
+# 這支只讀不寫，對著正在服務的機器跑是安全的。要退出碼 0、console 錯誤 0 筆。
+uv run python scripts/check_frontend_ux.py --url http://<本機IP>:5005 --mode polished
 
 # 端點（不帶任何 cookie）
 for p in /health /cameras /auth/status /storage/health /alerts/active /settings; do
