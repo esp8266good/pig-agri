@@ -287,17 +287,26 @@ document.querySelectorAll('#pig-status-table th.sortable').forEach(th => {
     const closeMoreMenu = () => {
       moreMenu.hidden = true;
       moreBtn.setAttribute('aria-expanded', 'false');
-      document.removeEventListener('click', onOutsideClick);
+      // 拆 listener 的 capture 旗標要跟掛的時候一致，否則拆不掉，
+      // 選單關了之後這條還留在 document 上。
+      document.removeEventListener('click', onOutsideClick, true);
     };
     const onOutsideClick = (e) => {
-      if (!moreMenu.contains(e.target) && e.target !== moreBtn) closeMoreMenu();
+      // 點按鈕自己不算「外部」：捕獲階段比按鈕自己的 handler 早跑，
+      // 這裡先把選單關掉的話，按鈕的 handler 會看到 hidden=true 又把它開回來，
+      // 於是再按一次關不掉。用 closest 而不是 e.target !== moreBtn，因為
+      // 實際被點到的是按鈕裡的 <svg>。
+      if (e.target.closest?.('#more-btn')) return;
+      if (!moreMenu.contains(e.target)) closeMoreMenu();
     };
     moreBtn.addEventListener('click', () => {
       const willOpen = moreMenu.hidden;
       if (willOpen) {
         moreMenu.hidden = false;
         moreBtn.setAttribute('aria-expanded', 'true');
-        setTimeout(() => document.addEventListener('click', onOutsideClick), 0);
+        // 掛捕獲階段：說明模式的攔截器（help.js）在捕獲階段就 stopPropagation，
+        // 掛冒泡階段的話說明模式下點畫面別處收不到事件，選單永遠關不掉。
+        setTimeout(() => document.addEventListener('click', onOutsideClick, true), 0);
       } else {
         closeMoreMenu();
       }
